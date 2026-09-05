@@ -30224,13 +30224,9 @@ function useGridModel(opts) {
     modelRef.current = next;
     setModel(next);
   }, [chunk, viewScale]);
-  const mutate = React36__namespace.useCallback(
-    (fn) => {
+  const writeModel = React36__namespace.useCallback(
+    (next) => {
       const o = optsRef.current;
-      const prev = modelRef.current;
-      if (prev == null) return;
-      const next = fn(prev);
-      if (next === prev) return;
       const atDocument = o.collapseToDocument ? o.collapseToDocument(next) : null;
       const spellsRefinement = atDocument === null;
       const toWrite = atDocument ?? next;
@@ -30250,7 +30246,18 @@ function useGridModel(opts) {
     },
     [applyEdit]
   );
-  return { model, chunk, mutate, beginGesture, endGesture };
+  const mutate = React36__namespace.useCallback(
+    (fn) => {
+      const prev = modelRef.current;
+      if (prev == null) return;
+      const next = fn(prev);
+      if (next === prev) return;
+      writeModel(next);
+    },
+    [writeModel]
+  );
+  const settle = React36__namespace.useCallback((next) => writeModel(next), [writeModel]);
+  return { model, chunk, mutate, settle, beginGesture, endGesture };
 }
 __name(useGridModel, "useGridModel");
 
@@ -32755,7 +32762,7 @@ function PianoRollGrid({
   onResolution
 } = {}) {
   const [viewScale, setViewScale] = React36__namespace.useState(UNREFINED);
-  const { chunk, model, mutate, beginGesture, endGesture } = useGridModel({
+  const { chunk, model, mutate, settle, beginGesture, endGesture } = useGridModel({
     source: "roll",
     eligible: opensPianoRoll,
     parse: parsePianoRoll,
@@ -32828,27 +32835,23 @@ function PianoRollGrid({
       }
       if (d.mode === "resize" && d.moved && d.askedDur != null) {
         const asked = d.askedDur;
-        let refused2 = false;
-        mutate(() => {
-          const settled = resizeNote(d.base, d.origStart, d.origPitch, asked, {
-            readback: true
-          });
-          refused2 = settled === d.base;
-          return settled;
+        const settled = resizeNote(d.base, d.origStart, d.origPitch, asked, {
+          readback: true
         });
+        const refused2 = settled === d.base;
+        if (refused2) settle(d.base);
+        else mutate(() => settled);
         if (refused2) reportRefusal("Couldn't set that length");
       }
       if (d.mode === "move" && d.moved && d.askedPitch != null && d.askedStart != null) {
         const toPitch = d.askedPitch;
         const toStart = d.askedStart;
-        let refused2 = false;
-        mutate(() => {
-          const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
-            readback: true
-          });
-          refused2 = settled === d.base;
-          return settled;
+        const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
+          readback: true
         });
+        const refused2 = settled === d.base;
+        if (refused2) settle(d.base);
+        else mutate(() => settled);
         if (refused2) reportRefusal("Couldn't move that note there");
       }
       endGesture();

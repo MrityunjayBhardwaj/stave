@@ -82,6 +82,20 @@ export interface GridModel<M> {
   chunk: ChunkInfo | null
   /** transform the model and write the serialized result over the mini range */
   mutate: (fn: (model: M) => M) => void
+  /**
+   * Write `model` over the mini range UNCONDITIONALLY — no live-model guard, no
+   * identity short-circuit (#1453).
+   *
+   * `mutate` is a transform OF the current model, so it correctly declines when
+   * there is no current model and when the transform changed nothing. A gesture's
+   * commit-time settle is a different question: the gesture already knows the model
+   * it started from, and it is asserting what the document must now hold. Routing
+   * that through `mutate` made it silently skippable — a mid-drag frame can leave
+   * the document unparseable, which nulls the live model, which made `mutate`
+   * return before running the callback that computes the refusal. The gate was
+   * disabled by the write it exists to undo.
+   */
+  settle: (model: M) => void
   beginGesture: () => void
   endGesture: () => void
 }
@@ -196,13 +210,15 @@ export function useGridModel<M extends { viewScale?: ViewScale }>(
     setModel(next)
   }, [chunk, viewScale])
 
-  const mutate = React.useCallback(
-    (fn: (m: M) => M): void => {
+  /**
+   * The write half, shared by `mutate` and `settle` — everything from "what
+   * resolution should this spell" down to the edit. Holds no opinion about whether
+   * the write SHOULD happen; its callers decide that, and they decide it
+   * differently (#1453).
+   */
+  const writeModel = React.useCallback(
+    (next: M): void => {
       const o = optsRef.current
-      const prev = modelRef.current
-      if (prev == null) return
-      const next = fn(prev)
-      if (next === prev) return
       // WHAT RESOLUTION SHOULD THIS WRITE SPELL? Only an edit that used a column
       // the document does not have needs the finer one; a velocity drag does not,
       // and respelling for it rewrites the file to record how closely someone was
@@ -236,5 +252,19 @@ export function useGridModel<M extends { viewScale?: ViewScale }>(
     [applyEdit],
   )
 
-  return { model, chunk, mutate, beginGesture, endGesture }
+  const mutate = React.useCallback(
+    (fn: (m: M) => M): void => {
+      const prev = modelRef.current
+      if (prev == null) return
+      const next = fn(prev)
+      if (next === prev) return
+      writeModel(next)
+    },
+    [writeModel],
+  )
+
+  /** See {@link GridModel.settle}. Deliberately skips both of `mutate`'s guards. */
+  const settle = React.useCallback((next: M): void => writeModel(next), [writeModel])
+
+  return { model, chunk, mutate, settle, beginGesture, endGesture }
 }

@@ -254,7 +254,7 @@ export function PianoRollGrid({
   // absorbs it. A roll length is measured in columns, so a refine magnifies note
   // DURATIONS alongside their starts and the picture stays proportional.
   const [viewScale, setViewScale] = React.useState<ViewScale>(UNREFINED)
-  const { chunk, model, mutate, beginGesture, endGesture } = useGridModel<PianoRollModel>({
+  const { chunk, model, mutate, settle, beginGesture, endGesture } = useGridModel<PianoRollModel>({
     source: 'roll',
     eligible: opensPianoRoll,
     parse: parsePianoRoll,
@@ -471,14 +471,21 @@ export function PianoRollGrid({
         // `mutate` writes it — a real write that puts the note back. `next === prev` is
         // therefore false here, and asking `mutate` whether anything changed would report
         // nothing. Only `settled === d.base` distinguishes "went home" from "accepted".
-        let refused = false
-        mutate(() => {
-          const settled = resizeNote(d.base, d.origStart, d.origPitch, asked, {
-            readback: true,
-          })
-          refused = settled === d.base
-          return settled
+        // ⚠ THE VERDICT IS COMPUTED HERE, NOT INSIDE `mutate` (#1453). Read off the
+        // writer as before — only the place moved. A commit-time settle that computes
+        // its refusal inside the callback is only as reliable as the callback running,
+        // and `mutate` declines whenever the live model is null. A lossy mid-drag frame
+        // can leave the document unparseable, which is precisely when the model IS null
+        // — so the gate went quiet exactly in the cases it exists for.
+        const settled = resizeNote(d.base, d.origStart, d.origPitch, asked, {
+          readback: true,
         })
+        const refused = settled === d.base
+        // A refusal must go home, and it must be able to go home from a document the
+        // panel can no longer parse — hence `settle`, which does not consult the live
+        // model. An acceptance keeps the ordinary path.
+        if (refused) settle(d.base)
+        else mutate(() => settled)
         if (refused) reportRefusal("Couldn't set that length")
       }
       // ⚠ SETTLE A MOVE THE SAME WAY (#1340). A move drag fires per pointermove and wrote
@@ -493,14 +500,17 @@ export function PianoRollGrid({
       if (d.mode === 'move' && d.moved && d.askedPitch != null && d.askedStart != null) {
         const toPitch = d.askedPitch
         const toStart = d.askedStart
-        let refused = false
-        mutate(() => {
-          const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
-            readback: true,
-          })
-          refused = settled === d.base
-          return settled
+        // ⚠ SAME AS THE RESIZE ABOVE, AND FOR THE SAME REASON (#1453). Observed: a
+        // gate-only drag wrote the lossy spelling mid-drag, the document stopped
+        // parsing, the live model went null, and `mutate` returned before running the
+        // callback — so `refused` stayed false, the note never went home, and nothing
+        // was reported. The gate was disabled by the write it exists to undo.
+        const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
+          readback: true,
         })
+        const refused = settled === d.base
+        if (refused) settle(d.base)
+        else mutate(() => settled)
         if (refused) reportRefusal("Couldn't move that note there")
       }
       endGesture()
