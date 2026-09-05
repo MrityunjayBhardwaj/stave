@@ -204,6 +204,46 @@ test.describe('#1427 — a weighted section timeline is a song', () => {
     ).toEqual({ arranged: 1, picked: 1, unweighted: 0, loop: 0 })
   })
 
+  test('the picked spelling is offered the WHOLE SONG to bounce', async ({ page }) => {
+    // The third thing `kind: 'arranged'` gates (#1373), and the one a musician
+    // actually leaves with. A song whose length is unknown is offered repeats of
+    // its period instead — useful, and not the same promise.
+    test.setTimeout(180_000)
+    await boot(page)
+
+    const offersFor = async (code: string): Promise<string[]> => {
+      await setStrudelCode(page, code)
+      await pressPlay(page)
+      // The offer needs the tempo from the running scheduler AND the analysis,
+      // which walks a growing horizon — so give it real time, not a token wait.
+      await page.waitForTimeout(4000)
+      await page.getByRole('button', { name: 'File', exact: true }).click()
+      await page.getByText('Bounce to WAV...').click()
+      await expect(page.getByRole('dialog', { name: 'Bounce to WAV' })).toBeVisible()
+      const labels = await page.getByTestId('bounce-song-offers').getByRole('button').allTextContents()
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(500)
+      await stopIfPlaying(page)
+      return labels
+    }
+
+    const picked = await offersFor(PICKED)
+    const arranged = await offersFor(ARRANGED)
+    const looping = await offersFor(LOOP_DOC)
+    // eslint-disable-next-line no-console
+    console.log(`[#1427] bounce offers — picked=${JSON.stringify(picked)} arranged=${JSON.stringify(arranged)} loop=${JSON.stringify(looping)}`)
+
+    // 16 cycles at 0.5 cps = 32s, and the two spellings must agree on it.
+    expect(picked, 'the section timeline was not offered its own length').toEqual([`Whole song0:32`])
+    expect(picked, 'the two spellings disagree about what to bounce').toEqual(arranged)
+
+    // ⚠ THE CONTROL IS WHAT MAKES "Whole song" MEAN ANYTHING. A modal that always
+    // said that would satisfy both assertions above; a document with no definite
+    // end must still be offered REPEATS instead.
+    expect(looping.some((l) => l.includes('Whole song'))).toBe(false)
+    expect(looping.length, 'a looping document must still be offered something').toBeGreaterThan(0)
+  })
+
   test('the picked spelling stops at its own end once asked to', async ({ page }) => {
     // The affordance appearing is not the promise; STOPPING is. The extent has to
     // be measured AND reach the watcher, and only the running app shows both.
