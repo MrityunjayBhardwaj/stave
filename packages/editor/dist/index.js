@@ -32708,11 +32708,13 @@ function gainInScope2(model) {
 }
 __name(gainInScope2, "gainInScope");
 var tokenForRow = /* @__PURE__ */ __name((numeric, midi) => numeric ? String(midi) : midiToPitch(midi), "tokenForRow");
-function reportRefusal(attempted) {
+var LEFT_UNCHANGED = "so it was left unchanged";
+var STAYED_AT_LAST_ACCEPTED = "so it stayed at the last spot it could go";
+function reportRefusal(attempted, outcome = LEFT_UNCHANGED) {
   emitLog({
     level: "warn",
     runtime: "stave",
-    message: `${attempted} \u2014 writing it would change the pattern in ways you didn't ask for, so it was left unchanged.`
+    message: `${attempted} \u2014 writing it would change the pattern in ways you didn't ask for, ${outcome}.`
   });
 }
 __name(reportRefusal, "reportRefusal");
@@ -32736,6 +32738,7 @@ function PianoRollGrid({
   onResolution
 } = {}) {
   const [viewScale, setViewScale] = React36.useState(UNREFINED);
+  const [declinedCell, setDeclinedCell] = React36.useState(null);
   const { chunk, model, mutate, settle, beginGesture, endGesture } = useGridModel({
     source: "roll",
     eligible: opensPianoRoll,
@@ -32817,17 +32820,26 @@ function PianoRollGrid({
         else mutate(() => settled);
         if (refused2) reportRefusal("Couldn't set that length");
       }
-      if (d.mode === "move" && d.moved && d.askedPitch != null && d.askedStart != null) {
-        const toPitch = d.askedPitch;
-        const toStart = d.askedStart;
-        const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
-          readback: true
-        });
-        const refused2 = settled === d.base;
-        if (refused2) settle(d.base);
-        else mutate(() => settled);
-        if (refused2) reportRefusal("Couldn't move that note there");
+      if (d.mode === "move" && d.moved) {
+        let wentHome = false;
+        if (d.askedPitch != null && d.askedStart != null) {
+          const toPitch = d.askedPitch;
+          const toStart = d.askedStart;
+          const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
+            readback: true
+          });
+          wentHome = settled === d.base;
+          if (wentHome) settle(d.base);
+          else mutate(() => settled);
+        }
+        if (wentHome) reportRefusal("Couldn't move that note there");
+        else if (d.dropRefused)
+          reportRefusal(
+            "Couldn't move that note there",
+            d.askedPitch != null ? STAYED_AT_LAST_ACCEPTED : LEFT_UNCHANGED
+          );
       }
+      setDeclinedCell(null);
       endGesture();
     }, "onUp");
     window.addEventListener("pointerup", onUp);
@@ -32971,7 +32983,10 @@ function PianoRollGrid({
     const newPitch = tokenForRow(!!d.base.numeric, midi);
     const next = moveNote(d.base, d.origPitch, d.origStart, newPitch, newStart);
     d.moved = true;
-    if (next === d.base) return;
+    const declined = next === d.base;
+    d.dropRefused = declined;
+    setDeclinedCell(declined ? `${midi}:${step}` : null);
+    if (declined) return;
     mutate(() => next);
     d.askedPitch = newPitch;
     d.askedStart = newStart;
@@ -33200,6 +33215,7 @@ function PianoRollGrid({
                             const isTail = on && tailColumn(note) === step;
                             const isSel = selected?.kind === "roll" && selected.start === step && selected.pitch === tokenForRow(!!model.numeric, midi);
                             const canPlace = on || placesNotes;
+                            const dropRefused = declinedCell === `${midi}:${step}`;
                             const resizeInert = on && isTail && resizable?.has(note) === false;
                             return /* @__PURE__ */ jsxs(
                               "button",
@@ -33212,6 +33228,7 @@ function PianoRollGrid({
                                 "data-roll-selected": isSel ? "true" : void 0,
                                 "data-playing": step === playingStep ? "true" : void 0,
                                 "data-roll-cell-inert": canPlace ? void 0 : "true",
+                                "data-roll-drop-refused": dropRefused ? "true" : void 0,
                                 "data-roll-resize-inert": resizeInert ? "true" : void 0,
                                 "aria-disabled": canPlace ? void 0 : true,
                                 title: !canPlace ? "This pattern edits its existing notes \u2014 add notes in the code view." : resizeInert ? "This note has no other length the pattern can hold \u2014 change its length in the code view." : void 0,
@@ -33234,7 +33251,7 @@ function PianoRollGrid({
                                   // that a note occupying part of a column occupies part of the box
                                   // (#1074). The cell keeps its own empty-cell background.
                                   background: step === playingStep ? "var(--background, #34343c)" : black ? "var(--background, #1c1c20)" : "var(--background-elevated, #26262c)",
-                                  cursor: "pointer"
+                                  cursor: dropRefused ? "not-allowed" : "pointer"
                                   // The selection ring (#432) is NOT here — see the overlay that
                                   // is the cell's last child (#1077).
                                 },
