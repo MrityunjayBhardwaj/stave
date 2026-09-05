@@ -603,7 +603,13 @@ type SongExtent =
  *   spans `n` WHOLE cycles at the pattern's natural rate, so a longer inner
  *   arrangement is TRUNCATED by its arm, not extended by it. Taking a max that
  *   descended would over-report exactly the documents most likely to be nested.
- * - `Stack` → the MAX over tracks, never the sum. Tracks are parallel.
+ * - `NamedPick` whose selector is a WEIGHTED `Cycle` → `Σ` slot weights, slots
+ *   without an `Elongate` counting 1, entries not descended into (#1427). The
+ *   second spelling of an arrangement; the case body says why the RECEIVER, not
+ *   the weighting alone, is what keeps it narrow.
+ * - `Stack` → the MAX over tracks, never the sum. Tracks are parallel. That is
+ *   also the answer for a song whose tracks carry DIFFERENT section timelines:
+ *   the piece is as long as its longest track, never their sum.
  * - `Track` / `Loop` → transparent.
  * - `Fast` / `Slow` → scale what is below them.
  * - `Code` → TAINT. A `Code` node is either an opaque wrapper around a
@@ -617,13 +623,15 @@ type SongExtent =
  *
  * ⚠ WHAT THE WALK DELIBERATELY DOES NOT FOLLOW. Only `body`, `Stack.tracks` and
  * `Code.via.inner` are traversed — not `Seq.children`, `Cycle.items`,
- * `Choice.then`/`else_`, or the `Pick`/`NamedPick` selectors. Every one of those
+ * `Choice.then`/`else_`, or the `Pick` selector. Every one of those
  * constructs repeats once per cycle (a `Seq` is fastcat, which COMPRESSES its
  * children into a single cycle; a `Cycle` alternates between them), so a
  * document whose only arrangement sits inside one still loops forever and `loop`
  * is the correct verdict, not a miss. Checked rather than assumed: a probe
  * walking EVERY object field finds arrangements in the same 5 corpus documents
  * this walk classifies, so the narrower traversal loses nothing on real code.
+ * ⚠ ONE EXCEPTION SINCE #1427: a `NamedPick`'s selector is READ for its weights,
+ * though still not walked into — reading a shape is not traversing it.
  * `Sleep.duration` is likewise unmodelled — it contributes time that this
  * function does not count.
  *

@@ -1126,6 +1126,22 @@ function songExtent(ir) {
         if (sum > 0) best = Math.max(best, scaled(sum, factor));
         return;
       }
+      case "NamedPick": {
+        const sel = node.selector;
+        if (!sel || sel.tag !== "Cycle") return;
+        if (!sel.items.some((i) => i != null && i.tag === "Elongate")) return;
+        found = true;
+        if (opaque) {
+          tainted = true;
+          return;
+        }
+        const sum = sel.items.reduce(
+          (acc, i) => acc + (i != null && i.tag === "Elongate" && i.factor > 0 && Number.isFinite(i.factor) ? i.factor : 1),
+          0
+        );
+        if (sum > 0) best = Math.max(best, scaled(sum, factor));
+        return;
+      }
       case "Stack":
         for (const t of node.tracks) walk4(t, factor, opaque);
         return;
