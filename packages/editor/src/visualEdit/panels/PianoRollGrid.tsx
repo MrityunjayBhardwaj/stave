@@ -290,8 +290,25 @@ export function PianoRollGrid({
    *
    * ⚠ ONE CELL, NOT A MAP, AND THAT IS WHAT MAKES IT AFFORDABLE. The docblock above rules
    * out gating the whole grid at offer time: the answer depends on the note being dragged,
-   * so a map would be rebuilt every frame. The HOVERED cell costs nothing extra — the
-   * frame already computed the writer's verdict for it to decide whether to write.
+   * so a map would be rebuilt every frame. The HOVERED cell costs the writer nothing extra
+   * — the frame already computed its verdict to decide whether to write.
+   *
+   * ⚠ THE RENDER IS NOT FREE, AND THE NUMBER IS THE POINT. A declined frame used to render
+   * nothing at all (it returned early), so every render this causes is new. Measured over
+   * 130 declined frames per arm, same gesture, two builds differing only in this line
+   * (CDP `Performance.ScriptDuration`, so the harness's own cost is excluded):
+   *
+   *   declined frame, marking on    4.49 ms      declined frame, marking off   0.24 ms
+   *   accepted frame, marking on    8.99 ms      accepted frame, marking off   9.11 ms
+   *
+   * So it adds ~4.3ms, on a frame that is HALF what an accepted frame already costs, and
+   * inside a 16.7ms budget. The accepted column is the control: the marking never fires
+   * there and the two builds agree to 1.4%, which is what makes the declined column's
+   * difference attributable to this line rather than to the machine.
+   *
+   * It fires once per newly-entered declined CELL, not per pointermove — `pointerenter`
+   * does not repeat within a cell, and an unchanged value bails out of the re-render. The
+   * worst case measured here is a sweep down the 13 declined cells of one column.
    */
   const [declinedCell, setDeclinedCell] = React.useState<string | null>(null)
   const { chunk, model, mutate, settle, beginGesture, endGesture } = useGridModel<PianoRollModel>({
