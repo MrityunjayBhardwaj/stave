@@ -120,6 +120,21 @@ const tokenForRow = (numeric: boolean, midi: number): string =>
   numeric ? String(midi) : midiToPitch(midi)
 
 /**
+ * The outcome clause a refusal ends on. Every refusal but one leaves the document exactly
+ * as it was, so this is the default.
+ *
+ * ⚠ A DECLINED MOVE DROP IS THE EXCEPTION, AND IT IS WHY THE CLAUSE IS A PARAMETER
+ * (#1452). Three positions are reachable when a move ends: where the note was grabbed,
+ * the last frame the cheap rule accepted, and the cell the pointer was over at release.
+ * A readback refusal sends the note HOME — "left unchanged" is true of it. A cheap
+ * decline leaves the note at the LAST ACCEPTED FRAME, which is neither home nor the
+ * drop, so the same sentence would describe an outcome that did not happen. One message
+ * meaning two different resting places is worse than the silence it replaces.
+ */
+const LEFT_UNCHANGED = 'so it was left unchanged'
+const STAYED_AT_LAST_ACCEPTED = 'so it stayed at the last spot it could go'
+
+/**
  * SAY THAT THE EDIT DID NOT HAPPEN (#1336).
  *
  * The readback gate (#1331/#1333) refuses a write the document would not reopen holding —
@@ -150,11 +165,11 @@ const tokenForRow = (numeric: boolean, midi: number): string =>
  * this edit. `emitLog` coalesces identical entries into a count, so a user repeatedly
  * trying the same impossible edit gets one row that ticks up rather than a flood.
  */
-function reportRefusal(attempted: string): void {
+function reportRefusal(attempted: string, outcome: string = LEFT_UNCHANGED): void {
   emitLog({
     level: 'warn',
     runtime: 'stave',
-    message: `${attempted} — writing it would change the pattern in ways you didn't ask for, so it was left unchanged.`,
+    message: `${attempted} — writing it would change the pattern in ways you didn't ask for, ${outcome}.`,
   })
 }
 
@@ -232,6 +247,21 @@ interface DragState {
    */
   askedPitch?: string
   askedStart?: number
+  /**
+   * Whether the LAST frame's ask was DECLINED by the cheap rule (#1452).
+   *
+   * ⚠ THIS IS A VERDICT, NOT AN ASK, AND THAT SEPARATION IS THE WHOLE POINT. `askedPitch`
+   * / `askedStart` are recorded only for frames that were ACCEPTED, because the commit-time
+   * re-run must pose a gesture the document already took — recording the ask above the
+   * decline check is what broke the accepted-position semantics in #1325/#1326. But that
+   * ordering also means nothing anywhere records that the pointer was ever over the cell
+   * the user actually released on. So the panel could not tell that the drop was refused;
+   * not for want of a check, for want of a record.
+   *
+   * Kept as a separate boolean so both facts survive: the drop was declined, AND we stand
+   * at the last accepted frame. It is read at commit to REPORT, never to re-run or write.
+   */
+  dropRefused?: boolean
 }
 
 export interface PianoRollGridProps {
@@ -254,6 +284,16 @@ export function PianoRollGrid({
   // absorbs it. A roll length is measured in columns, so a refine magnifies note
   // DURATIONS alongside their starts and the picture stays proportional.
   const [viewScale, setViewScale] = React.useState<ViewScale>(UNREFINED)
+  /**
+   * The `midi:step` cell a move drag is currently hovering that the writer will NOT take,
+   * or null (#1452) — the same refusal the Console row reports, said before the fact.
+   *
+   * ⚠ ONE CELL, NOT A MAP, AND THAT IS WHAT MAKES IT AFFORDABLE. The docblock above rules
+   * out gating the whole grid at offer time: the answer depends on the note being dragged,
+   * so a map would be rebuilt every frame. The HOVERED cell costs nothing extra — the
+   * frame already computed the writer's verdict for it to decide whether to write.
+   */
+  const [declinedCell, setDeclinedCell] = React.useState<string | null>(null)
   const { chunk, model, mutate, settle, beginGesture, endGesture } = useGridModel<PianoRollModel>({
     source: 'roll',
     eligible: opensPianoRoll,
@@ -497,22 +537,45 @@ export function PianoRollGrid({
       //
       // ⚠ READ OFF THE WRITER, not off `mutate`, for the same reason resize is: a refused
       // move writes the base back, so `next === prev` is false exactly when it matters.
-      if (d.mode === 'move' && d.moved && d.askedPitch != null && d.askedStart != null) {
-        const toPitch = d.askedPitch
-        const toStart = d.askedStart
-        // ⚠ SAME AS THE RESIZE ABOVE, AND FOR THE SAME REASON (#1453). Observed: a
-        // gate-only drag wrote the lossy spelling mid-drag, the document stopped
-        // parsing, the live model went null, and `mutate` returned before running the
-        // callback — so `refused` stayed false, the note never went home, and nothing
-        // was reported. The gate was disabled by the write it exists to undo.
-        const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
-          readback: true,
-        })
-        const refused = settled === d.base
-        if (refused) settle(d.base)
-        else mutate(() => settled)
-        if (refused) reportRefusal("Couldn't move that note there")
+      if (d.mode === 'move' && d.moved) {
+        // ⚠ EXACTLY ONE MESSAGE, AND THE READBACK VERDICT WINS (#1452). Both refusals can
+        // be true of one gesture: the standing frame can fail readback AND the drop cell
+        // can have been declined. But a readback refusal sends the note HOME, so saying it
+        // stayed at the last accepted frame would describe a position it no longer holds.
+        // The settle therefore runs first and its verdict, when it fires, is the one told.
+        let wentHome = false
+        if (d.askedPitch != null && d.askedStart != null) {
+          const toPitch = d.askedPitch
+          const toStart = d.askedStart
+          // ⚠ SAME AS THE RESIZE ABOVE, AND FOR THE SAME REASON (#1453). Observed: a
+          // gate-only drag wrote the lossy spelling mid-drag, the document stopped
+          // parsing, the live model went null, and `mutate` returned before running the
+          // callback — so `refused` stayed false, the note never went home, and nothing
+          // was reported. The gate was disabled by the write it exists to undo.
+          const settled = moveNote(d.base, d.origPitch, d.origStart, toPitch, toStart, {
+            readback: true,
+          })
+          wentHome = settled === d.base
+          if (wentHome) settle(d.base)
+          else mutate(() => settled)
+        }
+        // A declined drop is REPORTED AND NOTHING ELSE — no re-run, no write (#1452).
+        // Nothing lossy was ever written for it: the cheap rule returned the base and the
+        // frame never landed. The document stands at the last accepted frame, which is
+        // #1325/#1326's ruling and still right — the user can see that position and it is
+        // good. All that was missing is saying that the drop itself did not take.
+        //
+        // `askedPitch` doubles as "did any frame land", which is exactly what picks the
+        // outcome clause: with one, the note sits somewhere other than where it was
+        // grabbed; with none, it never moved and "left unchanged" is the true sentence.
+        if (wentHome) reportRefusal("Couldn't move that note there")
+        else if (d.dropRefused)
+          reportRefusal(
+            "Couldn't move that note there",
+            d.askedPitch != null ? STAYED_AT_LAST_ACCEPTED : LEFT_UNCHANGED,
+          )
       }
+      setDeclinedCell(null)
       endGesture()
     }
     window.addEventListener('pointerup', onUp)
@@ -753,7 +816,20 @@ export function PianoRollGrid({
     // A refusal leaves the document exactly as it was — which is what used to happen
     // anyway when the write serialized to null, only now the op says so and
     // `canMoveNote` can be asked the same question.
-    if (next === d.base) return
+    //
+    // ⚠ THE VERDICT IS RECORDED HERE, ABOVE THE RETURN — THE ASK IS STILL NOT (#1452).
+    // These are two different facts and the ordering below is what keeps them apart. The
+    // panel used to record neither on a declined frame, so a drop the writer refused left
+    // no trace at all and the commit could only ever re-ask a target the cheap rule had
+    // already accepted. Recording the ASK here is the thing that must not happen; the
+    // verdict costs nothing and disturbs nothing.
+    const declined = next === d.base
+    d.dropRefused = declined
+    // The refusal is also said BEFORE the fact, on the cell itself, using the comparison
+    // this frame already made (#1452). Identical values bail out of the re-render, so a
+    // drag across a run of declined cells renders once, not once per frame.
+    setDeclinedCell(declined ? `${midi}:${step}` : null)
+    if (declined) return
     mutate(() => next)
     // Kept for the commit-time re-run on release (#1340), exactly as a resize keeps its
     // asked length. The per-frame write stays cheap and unchecked.
@@ -1057,6 +1133,9 @@ export function PianoRollGrid({
                   // move, resize, delete, velocity — and so does ⌘-click, which
                   // selects a paste target without editing anything.
                   const canPlace = on || placesNotes
+                  // The cell a move drag is over that the writer declines (#1452). Only
+                  // ever one at a time, and only during a drag.
+                  const dropRefused = declinedCell === `${midi}:${step}`
                   // THE NOTE'S LENGTH IS FIXED HERE, THOUGH THE CELL IS NOT (#1322).
                   // Move, delete, select and the velocity drag all still work on this
                   // note — only the length handle is gone, because no length this drag
@@ -1091,6 +1170,7 @@ export function PianoRollGrid({
                       data-roll-selected={isSel ? 'true' : undefined}
                       data-playing={step === playingStep ? 'true' : undefined}
                       data-roll-cell-inert={canPlace ? undefined : 'true'}
+                      data-roll-drop-refused={dropRefused ? 'true' : undefined}
                       data-roll-resize-inert={resizeInert ? 'true' : undefined}
                       aria-disabled={canPlace ? undefined : true}
                       // Two different absences, and a cell can only carry one tooltip.
@@ -1139,7 +1219,7 @@ export function PianoRollGrid({
                             : black
                               ? 'var(--background, #1c1c20)'
                               : 'var(--background-elevated, #26262c)',
-                        cursor: 'pointer',
+                        cursor: dropRefused ? 'not-allowed' : 'pointer',
                         // The selection ring (#432) is NOT here — see the overlay that
                         // is the cell's last child (#1077).
                       }}

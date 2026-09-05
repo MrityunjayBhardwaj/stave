@@ -70,14 +70,25 @@ export async function openConsole(page: Page): Promise<void> {
  * note"). Asserting it is what stops this from passing on any warning that
  * happened to be raised for some other reason.
  */
-export async function expectRefusalReported(page: Page, phrase: string): Promise<void> {
+export async function expectRefusalReported(
+  page: Page,
+  phrase: string,
+  outcome: string = 'left unchanged',
+): Promise<void> {
   await openConsole(page)
   await expect(staveWarnings(page), 'a refused gesture must tell the user it did not happen')
     .toHaveCount(1, { timeout: 10_000 })
   await expect(staveWarnings(page).first()).toContainText(phrase)
   // The refusal explains itself rather than only naming the gesture — the
   // sentence is the whole reason `warn` was chosen over a silent snap-back.
-  await expect(staveWarnings(page).first()).toContainText('left unchanged')
+  //
+  // ⚠ THE OUTCOME CLAUSE IS A PARAMETER BECAUSE ONE REFUSAL DOES NOT LEAVE THE DOCUMENT
+  // ALONE (#1452). A move drag whose drop cell the writer declines has usually already
+  // written accepted frames, so the note stands at the last one — not where it was
+  // grabbed. "left unchanged" is the default because it is true of every other refusal,
+  // and asserting it is what stops this from passing on a message that names the right
+  // gesture and then describes a resting place the note is not in.
+  await expect(staveWarnings(page).first()).toContainText(outcome)
 }
 
 /**
