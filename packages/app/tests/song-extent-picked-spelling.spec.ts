@@ -1,5 +1,5 @@
 /**
- * The SAME song written two ways is the same song (#1427).
+ * The SAME song written three ways is the same song (#1427, #1456).
  *
  * ─── WHY THIS EXISTS ────────────────────────────────────────────────────────────
  * `songExtent` gave a definite end to `arrange(...)` and called a weighted section
@@ -58,16 +58,40 @@ const ARRANGED = `${HEAD}arrange([4, intro], [8, verse], [4, outro])
  * Spelling B — the same song as a weighted section timeline, over the SAME three
  * section consts. Sharing `HEAD` is what makes "one song, two spellings" a fact
  * about the document rather than about two documents that happen to be 16 cycles.
- *
- * ⚠ WRITTEN `key: value`, NOT `{ intro, verse, outro }`, AND THAT IS NOT A STYLE
- * CHOICE (#1456). The ES shorthand does not parse to a `NamedPick` at all — it
- * falls back to an opaque `Code`, so the document is a `loop` no matter what this
- * file's subject does. A first draft used the shorthand and read `picked: 0` while
- * `arranged: 1`, which looks exactly like the fix not working. It is a separate,
- * pre-existing gap in the object-literal reader; when #1456 lands, the shorthand
- * belongs here as a third positive row.
  */
 const PICKED = `${HEAD}"<intro@4 verse@8 outro@4>".pickRestart({ intro: intro, verse: verse, outro: outro })
+`
+
+/**
+ * Spelling C — the SAME song again, in ES object shorthand (#1456).
+ *
+ * ⚠ THIS ROW WAS ONCE THE REASON THIS FILE SAID `key: value` WAS "NOT A STYLE
+ * CHOICE". A first draft of the #1427 arm used the shorthand and read `picked: 0`
+ * while `arranged: 1` — which looks exactly like the #1427 fix not working, and
+ * was in fact a separate, pre-existing gap: the object-literal reader bailed on
+ * the WHOLE object at the first property with no colon, so the document fell to
+ * an opaque `Code` and was a `loop` no matter what #1427 did. Two independent
+ * causes, one indistinguishable symptom.
+ *
+ * It earns a row of its own rather than replacing spelling B, because the two
+ * failures compose: B alone cannot tell you the shorthand reader works, and C
+ * alone cannot tell you whether a green result came from #1456 or #1427. Sharing
+ * `HEAD` and the same control string with B is what makes the difference between
+ * them exactly one thing — how the properties are spelled.
+ *
+ * ⚠ Being green here is NOT a claim that this is a niche spelling made to work,
+ * and the number carries its denominator because this repo has more than one
+ * corpus and they are not interchangeable. Of 328 distinct documents in the
+ * bakery run inputs, 12 use the pick family, 7 pass an object literal, and 5 of
+ * those 7 are written SHORTHAND — so most real object-form pick documents were
+ * falling to opaque `Code`. Naming sections as consts first is what makes a
+ * timeline readable, so shorthand is what gets reached for.
+ *
+ * ⚠ Note this is a DIFFERENT corpus and a different class from the `songExtent`
+ * census in the header above, which speaks only about `NamedPick` over a
+ * weighted `Cycle` and remains the no-widening control for #1427.
+ */
+const PICKED_SHORTHAND = `${HEAD}"<intro@4 verse@8 outro@4>".pickRestart({ intro, verse, outro })
 `
 
 /**
@@ -186,6 +210,7 @@ test.describe('#1427 — a weighted section timeline is a song', () => {
     for (const [label, code] of [
       ['arranged', ARRANGED],
       ['picked', PICKED],
+      ['pickedShorthand', PICKED_SHORTHAND],
       ['unweighted', UNWEIGHTED],
       ['loop', LOOP_DOC],
     ] as const) {
@@ -200,8 +225,8 @@ test.describe('#1427 — a weighted section timeline is a song', () => {
 
     expect(
       seen,
-      'the two spellings of one song must agree, and neither negative may be offered an end',
-    ).toEqual({ arranged: 1, picked: 1, unweighted: 0, loop: 0 })
+      'all three spellings of one song must agree, and neither negative may be offered an end',
+    ).toEqual({ arranged: 1, picked: 1, pickedShorthand: 1, unweighted: 0, loop: 0 })
   })
 
   test('the picked spelling is offered the WHOLE SONG to bounce', async ({ page }) => {
@@ -228,14 +253,18 @@ test.describe('#1427 — a weighted section timeline is a song', () => {
     }
 
     const picked = await offersFor(PICKED)
+    const shorthand = await offersFor(PICKED_SHORTHAND)
     const arranged = await offersFor(ARRANGED)
     const looping = await offersFor(LOOP_DOC)
     // eslint-disable-next-line no-console
-    console.log(`[#1427] bounce offers — picked=${JSON.stringify(picked)} arranged=${JSON.stringify(arranged)} loop=${JSON.stringify(looping)}`)
+    console.log(`[#1427] bounce offers — picked=${JSON.stringify(picked)} shorthand=${JSON.stringify(shorthand)} arranged=${JSON.stringify(arranged)} loop=${JSON.stringify(looping)}`)
 
-    // 16 cycles at 0.5 cps = 32s, and the two spellings must agree on it.
+    // 16 cycles at 0.5 cps = 32s, and all three spellings must agree on it.
     expect(picked, 'the section timeline was not offered its own length').toEqual([`Whole song0:32`])
     expect(picked, 'the two spellings disagree about what to bounce').toEqual(arranged)
+    // #1456 — the offer is the thing a musician actually leaves with, so the
+    // shorthand has to reach it too, not merely parse.
+    expect(shorthand, 'the shorthand spelling was not offered the whole song').toEqual(arranged)
 
     // ⚠ THE CONTROL IS WHAT MAKES "Whole song" MEAN ANYTHING. A modal that always
     // said that would satisfy both assertions above; a document with no definite

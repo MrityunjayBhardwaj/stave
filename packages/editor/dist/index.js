@@ -1782,10 +1782,14 @@ function classifyLiteralRhs(rhs) {
   return { tag: "Code", code: t, lang: "strudel", via: { literal: true, raw: t } };
 }
 __name(classifyLiteralRhs, "classifyLiteralRhs");
+function isBareIdent(t) {
+  return /^[A-Za-z_$][\w$]*$/.test(t);
+}
+__name(isBareIdent, "isBareIdent");
 function substituteBoundIdentInArg(args, bindings) {
   if (!bindings) return args;
   const t = args.trim();
-  if (!/^[A-Za-z_$][\w$]*$/.test(t)) return args;
+  if (!isBareIdent(t)) return args;
   const node = bindings.get(t);
   if (!node) return args;
   if (node.tag === "Code" && node.via !== void 0 && "literal" in node.via) {
@@ -2951,14 +2955,15 @@ function parseNamedPickEntries(args, baseOffset, bindings) {
   const entries3 = [];
   for (const part of parts) {
     const colon = topLevelColonIndex(part.value);
-    if (colon < 0) return null;
-    const rawKey = part.value.slice(0, colon);
-    const rawVal = part.value.slice(colon + 1);
+    const shorthand = colon < 0 && isBareIdent(part.value);
+    if (colon < 0 && !shorthand) return null;
+    const rawKey = shorthand ? part.value : part.value.slice(0, colon);
+    const rawVal = shorthand ? part.value : part.value.slice(colon + 1);
     const key2 = normalizePickKey(rawKey);
     if (key2 == null) return null;
     const keyStart = baseOffset + bodyOffsetInArgs + part.offset;
     const keyLoc = { start: keyStart, end: keyStart + rawKey.trim().length };
-    const valOffset = baseOffset + bodyOffsetInArgs + part.offset + colon + 1;
+    const valOffset = shorthand ? keyStart : baseOffset + bodyOffsetInArgs + part.offset + colon + 1;
     const pattern = parseArrayLiteralElement(rawVal, "note", valOffset, bindings);
     entries3.push({ key: key2, pattern, keyLoc });
   }
