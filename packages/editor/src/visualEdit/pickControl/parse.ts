@@ -14,6 +14,11 @@
  * Scope: the receiver must be a bare string literal `"<…>"` (the canonical
  * `"<…>".pickRestart({…})` form). A `mini("<…>")`-wrapped receiver or a non-`<>`
  * control returns null (the caller then no-ops, as today).
+ *
+ * #1417 Stage 1 adds the OTHER half of the call: the section object's key ranges.
+ * A pick-spelled section's name is that object KEY (`{verse: bassLine}`), not a
+ * binding — which is why renaming one here touches no symbol the user didn't
+ * point at, and why it is a different operation from the `arrange` rename.
  */
 import { parse } from 'acorn'
 
@@ -36,6 +41,25 @@ export interface PickControlArm {
   weight: number
 }
 
+/**
+ * One `{key: pattern}` entry of the pick call's section object (#1417 Stage 1).
+ *
+ * The section's NAME lives here, not in a binding: `{verse: bassLine}` names the
+ * section `verse` while the pattern keeps its own name. That is what makes the
+ * pick rename the smaller of the two — it never rewrites a symbol the user
+ * didn't point at.
+ */
+export interface PickSectionEntry {
+  /** The key as the selector spells it — quotes stripped (`"verse"` → `verse`). */
+  key: string
+  /** Absolute `[start, end)` of the key TOKEN, INCLUDING quotes when the key is
+   *  written as a string literal (so a rewrite preserves the quoting style). */
+  keyRange: [number, number]
+  /** ES shorthand `{verse}` — the key token IS the value token, so a rename must
+   *  EXPAND it (`{intro: verse}`) rather than rewrite it in place. */
+  shorthand: boolean
+}
+
 /** A detected `pick*` call and the arms of its `<…@w …>` control string. */
 export interface PickControl {
   method: PickMethod
@@ -48,6 +72,11 @@ export interface PickControl {
   innerRange: [number, number]
   /** Arms in source order; clip order = arm order. */
   arms: PickControlArm[]
+  /** Object-literal section entries in source order — EMPTY when the call's
+   *  first argument isn't an object literal (the array form `pick([a, b])`
+   *  names nothing). Selector order and object order are independent, so an
+   *  arm is joined to an entry by KEY STRING, never by slot (#1467). */
+  entries: PickSectionEntry[]
 }
 
 function parseProgram(doc: string): any | null {
@@ -164,6 +193,38 @@ function scanControlArms(
   return { arms, innerRange: [innerBase, innerBase + inner.length] }
 }
 
+/**
+ * Collect the `{key: pattern}` entries of a pick call's first argument (#1417
+ * Stage 1). Ranges come from the SAME acorn parse the call was found with, so
+ * there is no second grammar here.
+ *
+ * A property this can't name — a computed key `{[k]: p}`, a spread `{...rest}`,
+ * a method `{verse() {}}` — is SKIPPED, not fatal: the entries list stays a
+ * partial but truthful view, and a rename of a section it couldn't name simply
+ * finds no entry and declines. (An all-or-nothing bail here would lose the
+ * nameable sections of a document because of one it can't name — [[P745]].)
+ */
+function collectSectionEntries(node: any): PickSectionEntry[] {
+  const arg = node.arguments?.[0]
+  if (!arg || arg.type !== 'ObjectExpression') return []
+  const entries: PickSectionEntry[] = []
+  for (const prop of arg.properties ?? []) {
+    if (prop.type !== 'Property' || prop.kind !== 'init' || prop.computed) continue
+    const key = prop.key
+    let name: string | null = null
+    if (key?.type === 'Identifier') name = key.name
+    else if (key?.type === 'Literal' && typeof key.value === 'string') name = key.value
+    else if (key?.type === 'Literal' && typeof key.value === 'number') name = String(key.value)
+    if (name == null) continue
+    entries.push({
+      key: name,
+      keyRange: [key.start, key.end],
+      shorthand: prop.shorthand === true,
+    })
+  }
+  return entries
+}
+
 function buildControl(doc: string, node: any): PickControl | null {
   const lit = node.callee.object
   const raw = doc.slice(lit.start, lit.end)
@@ -175,6 +236,7 @@ function buildControl(doc: string, node: any): PickControl | null {
     stringRange: [lit.start, lit.end],
     innerRange: scanned.innerRange,
     arms: scanned.arms,
+    entries: collectSectionEntries(node),
   }
 }
 

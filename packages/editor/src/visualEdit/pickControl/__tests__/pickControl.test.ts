@@ -9,8 +9,17 @@
  */
 import { describe, it, expect } from 'vitest'
 import { detectPickControlAt } from '../parse'
-import { setWeight, splitArm, removeArm, silenceArm, reorderArm, duplicateArm } from '../serialize'
-import type { OffsetEdit } from '../../writeback'
+import {
+  setWeight,
+  splitArm,
+  removeArm,
+  silenceArm,
+  reorderArm,
+  duplicateArm,
+  renameSection,
+  countSectionArms,
+} from '../serialize'
+import { normalizeEdits, type OffsetEdit } from '../../writeback'
 
 const SONG = '"<~@2 verse@2 chorus@2>".pickRestart({verse: s("bd"), chorus: s("hh")})'
 // The control `<…>` starts at index 1 (after the opening quote).
@@ -165,5 +174,127 @@ describe('#1462 — the pick spelling deletes to a GAP, like arrange does', () =
     const out = apply(SONG, removeArm(SONG, ctl, 1))
     expect(out).toContain('<~@2 chorus@2>')
     expect(detectPickControlAt(out, CTRL_POS)!.arms).toHaveLength(2)
+  })
+})
+
+/**
+ * #1417 Stage 1 — rename a pick-spelled section.
+ *
+ * The section's name is the OBJECT KEY, so a rename here moves the key and every
+ * selector token that names it, and touches no binding. Every arm asserts the
+ * resulting SOURCE STRING, because a rename's whole risk surface is the bytes —
+ * the IR is a model of the runtime object, not the runtime path.
+ */
+const SHORTHAND = '"<verse@8 chorus@4>".pickRestart({verse, chorus})'
+const RETURNING = '"<verse@8 chorus@4 verse@8>".pickRestart({verse: s("bd"), chorus: s("hh")})'
+
+describe('#1417 Stage 1 — section entries', () => {
+  it('carries each object key with a range that slices back to its token', () => {
+    const ctl = detectPickControlAt(SONG, CTRL_POS)!
+    expect(ctl.entries.map((e) => e.key)).toEqual(['verse', 'chorus'])
+    expect(ctl.entries.map((e) => SONG.slice(e.keyRange[0], e.keyRange[1]))).toEqual(['verse', 'chorus'])
+    expect(ctl.entries.map((e) => e.shorthand)).toEqual([false, false])
+  })
+
+  it('marks ES shorthand — the key token IS the value token', () => {
+    const ctl = detectPickControlAt(SHORTHAND, CTRL_POS)!
+    expect(ctl.entries.map((e) => e.key)).toEqual(['verse', 'chorus'])
+    expect(ctl.entries.every((e) => e.shorthand)).toBe(true)
+  })
+
+  it('reads a quoted key and spans the quotes', () => {
+    const doc = '"<verse@2>".pickRestart({"verse": s("bd")})'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(ctl.entries[0].key).toBe('verse')
+    expect(doc.slice(ctl.entries[0].keyRange[0], ctl.entries[0].keyRange[1])).toBe('"verse"')
+  })
+
+  it('SKIPS a property it cannot name rather than losing the whole object', () => {
+    const doc = '"<verse@2 chorus@2>".pickRestart({["ver" + "se"]: s("bd"), chorus: s("hh")})'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    // The computed key is unnameable; `chorus` beside it is still nameable.
+    expect(ctl.entries.map((e) => e.key)).toEqual(['chorus'])
+  })
+
+  it('is empty for the array form — those sections have no names to rename', () => {
+    const doc = '"<0@2 1@2>".pick([s("bd"), s("hh")])'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(ctl.arms).toHaveLength(2)
+    expect(ctl.entries).toEqual([])
+  })
+})
+
+describe('#1417 Stage 1 — renameSection (source write-back)', () => {
+  it('renames the key and the selector token, leaving the pattern alone', () => {
+    const ctl = detectPickControlAt(SONG, CTRL_POS)!
+    const out = apply(SONG, renameSection(SONG, ctl, 1, 'intro'))
+    expect(out).toBe('"<~@2 intro@2 chorus@2>".pickRestart({intro: s("bd"), chorus: s("hh")})')
+  })
+
+  it('EXPANDS shorthand — the section is renamed, the binding is not', () => {
+    const ctl = detectPickControlAt(SHORTHAND, CTRL_POS)!
+    const out = apply(SHORTHAND, renameSection(SHORTHAND, ctl, 0, 'intro'))
+    expect(out).toBe('"<intro@8 chorus@4>".pickRestart({intro: verse, chorus})')
+  })
+
+  it('keeps the quoting style of a quoted key', () => {
+    const doc = '"<verse@2>".pickRestart({"verse": s("bd")})'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(apply(doc, renameSection(doc, ctl, 0, 'intro'))).toBe(
+      '"<intro@2>".pickRestart({"intro": s("bd")})',
+    )
+  })
+
+  it('renames a RETURNING section in every arm it occupies', () => {
+    const ctl = detectPickControlAt(RETURNING, CTRL_POS)!
+    expect(countSectionArms(RETURNING, ctl, 0)).toBe(2)
+    const out = apply(RETURNING, renameSection(RETURNING, ctl, 0, 'intro'))
+    expect(out).toBe('"<intro@8 chorus@4 intro@8>".pickRestart({intro: s("bd"), chorus: s("hh")})')
+  })
+
+  it('leaves arm COUNT and ORDER untouched — a rename is not a restructure', () => {
+    const ctl = detectPickControlAt(RETURNING, CTRL_POS)!
+    const out = apply(RETURNING, renameSection(RETURNING, ctl, 1, 'bridge'))
+    const after = detectPickControlAt(out, CTRL_POS)!
+    expect(after.arms).toHaveLength(ctl.arms.length)
+    expect(after.arms.map((a) => a.weight)).toEqual(ctl.arms.map((a) => a.weight))
+    expect(after.arms.map((a) => out.slice(a.headRange[0], a.headRange[1]))).toEqual([
+      'verse',
+      'bridge',
+      'verse',
+    ])
+  })
+
+  it('produces edits writeback accepts (no overlap, no inverted range)', () => {
+    const ctl = detectPickControlAt(RETURNING, CTRL_POS)!
+    expect(() => normalizeEdits(renameSection(RETURNING, ctl, 0, 'intro'))).not.toThrow()
+  })
+
+  it('DECLINES an arm that is not a named section (`~`, inline pattern)', () => {
+    const ctl = detectPickControlAt(SONG, CTRL_POS)!
+    expect(renameSection(SONG, ctl, 0, 'intro')).toEqual([])
+    const inline = '"<[bd,sd]@2 verse@2>".pickRestart({verse: s("bd")})'
+    const ctl2 = detectPickControlAt(inline, CTRL_POS)!
+    expect(renameSection(inline, ctl2, 0, 'intro')).toEqual([])
+  })
+
+  it('DECLINES a collision with another section in the same object', () => {
+    const ctl = detectPickControlAt(SONG, CTRL_POS)!
+    expect(renameSection(SONG, ctl, 1, 'chorus')).toEqual([])
+  })
+
+  it('DECLINES a name that is not a bare identifier, and a no-op rename', () => {
+    const ctl = detectPickControlAt(SONG, CTRL_POS)!
+    for (const bad of ['', 'my verse', 'verse@2', '2verse', '[bd]', '~', 'a-b']) {
+      expect(renameSection(SONG, ctl, 1, bad)).toEqual([])
+    }
+    expect(renameSection(SONG, ctl, 1, 'verse')).toEqual([])
+  })
+
+  it('DECLINES on the array form — no key to carry the name', () => {
+    const doc = '"<0@2 1@2>".pick([s("bd"), s("hh")])'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(renameSection(doc, ctl, 0, 'intro')).toEqual([])
+    expect(countSectionArms(doc, ctl, 0)).toBe(0)
   })
 })

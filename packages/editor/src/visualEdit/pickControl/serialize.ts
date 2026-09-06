@@ -147,4 +147,78 @@ export function duplicateArm(doc: string, control: PickControl, i: number): Offs
   return insertArm(doc, control, i + 1, armText(doc, control, i))
 }
 
+/**
+ * A legal section name: a bare identifier, which is both a valid object key
+ * (needs no quoting) and a valid mini-notation word (no `@`, no space, no
+ * bracket). Anything else is declined rather than escaped — a name the user
+ * can't also type into the selector isn't a name this feature can honour.
+ */
+const SECTION_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+
+/**
+ * How many selector arms carry section `i`'s name — 1 normally, more when the
+ * section RETURNS (`<verse@8 chorus@4 verse@8>`). A rename moves all of them,
+ * so the caller can say "this renames 2 sections" BEFORE writing (#1417).
+ * Returns 0 when arm `i` isn't a named section at all.
+ */
+export function countSectionArms(doc: string, control: PickControl, i: number): number {
+  const arm = control.arms[i]
+  if (!arm) return 0
+  const name = headText(doc, control, i)
+  if (!control.entries.some((e) => e.key === name)) return 0
+  return control.arms.filter((_, k) => headText(doc, control, k) === name).length
+}
+
+/**
+ * Rename section `i` — the object KEY plus every selector arm that names it.
+ *
+ * `{verse: bassLine}` + `<verse@8>` → `{intro: bassLine}` + `<intro@8>`: the
+ * section is renamed and the pattern keeps its own name, because in this
+ * spelling the section name is the key, not a binding reference. ES shorthand
+ * `{verse}` is the majority spelling and the one case where the two coincide,
+ * so it EXPANDS — `{intro: verse}` — which renames the section and leaves the
+ * binding `verse` exactly where the user put it.
+ *
+ * A returning section is renamed in every arm it occupies: they aren't two
+ * sections sharing a name, they're one pattern arranged twice.
+ *
+ * Declines (no edits) when:
+ *  - the new name isn't a bare identifier, or is already the current name;
+ *  - the arm isn't a named section — `~`, an inline `[bd,sd]`, or a key this
+ *    parser couldn't name (computed, spread);
+ *  - the new name collides with another key in the same object.
+ */
+export function renameSection(
+  doc: string,
+  control: PickControl,
+  i: number,
+  newName: string,
+): OffsetEdit[] {
+  const arm = control.arms[i]
+  if (!arm) return []
+  if (!SECTION_NAME.test(newName)) return []
+  const oldName = headText(doc, control, i)
+  if (newName === oldName) return []
+  const entry = control.entries.find((e) => e.key === oldName)
+  if (!entry) return []
+  if (control.entries.some((e) => e.key === newName)) return []
+
+  const keyText = entry.shorthand
+    ? `${newName}: ${oldName}`
+    : quoteLike(doc.slice(entry.keyRange[0], entry.keyRange[1]), newName)
+  const edits: OffsetEdit[] = [{ range: entry.keyRange, text: keyText }]
+  for (const a of control.arms) {
+    if (doc.slice(a.headRange[0], a.headRange[1]) === oldName) {
+      edits.push({ range: a.headRange, text: newName })
+    }
+  }
+  return edits
+}
+
+/** Re-quote `name` the way the old key token was written (`"verse"` → `"intro"`). */
+function quoteLike(oldToken: string, name: string): string {
+  const q = oldToken[0]
+  return q === '"' || q === "'" ? `${q}${name}${q}` : name
+}
+
 export { armText, headText }
