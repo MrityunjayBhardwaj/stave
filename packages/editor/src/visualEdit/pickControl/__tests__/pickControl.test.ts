@@ -298,3 +298,38 @@ describe('#1417 Stage 1 — renameSection (source write-back)', () => {
     expect(countSectionArms(doc, ctl, 0)).toBe(0)
   })
 })
+
+describe('#1417 Stage 1 — the name must be uniquely and completely addressable', () => {
+  it('DECLINES a duplicate key — JS keeps the last, so renaming the first moves the music', () => {
+    // Real shape, from the corpus: `.pickRestart({arp, lead, glitch, glitch})`.
+    const doc = '"<a@2 g@2>".pickRestart({a: s("bd"), g: s("hh"), g: s("cp")})'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(ctl.entries.map((e) => e.key)).toEqual(['a', 'g', 'g'])
+    expect(renameSection(doc, ctl, 1, 'glitch')).toEqual([])
+    expect(countSectionArms(doc, ctl, 1)).toBe(0)
+    // the section beside it is unaffected — one bad key costs only itself
+    expect(renameSection(doc, ctl, 0, 'intro')).not.toEqual([])
+  })
+
+  it('DECLINES when the name also sits NESTED inside another arm head', () => {
+    // `[verse chorus]` is one arm whose head is the whole group; the `verse`
+    // inside it is a real reference this op would not rewrite.
+    const doc = '"<verse@8 [verse chorus]@4>".pickRestart({verse: s("bd"), chorus: s("hh")})'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(renameSection(doc, ctl, 0, 'intro')).toEqual([])
+    expect(countSectionArms(doc, ctl, 0)).toBe(0)
+  })
+
+  it('is not fooled by a LONGER name that merely starts with this one', () => {
+    const doc = '"<verse@8 verse2@4>".pickRestart({verse: s("bd"), verse2: s("hh")})'
+    const ctl = detectPickControlAt(doc, CTRL_POS)!
+    expect(apply(doc, renameSection(doc, ctl, 0, 'intro'))).toBe(
+      '"<intro@8 verse2@4>".pickRestart({intro: s("bd"), verse2: s("hh")})',
+    )
+  })
+
+  it('DECLINES `__proto__` — it sets a prototype, it does not make a key', () => {
+    const ctl = detectPickControlAt(SONG, CTRL_POS)!
+    expect(renameSection(SONG, ctl, 1, '__proto__')).toEqual([])
+  })
+})

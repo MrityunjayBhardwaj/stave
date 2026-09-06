@@ -156,16 +156,59 @@ export function duplicateArm(doc: string, control: PickControl, i: number): Offs
 const SECTION_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /**
+ * `{__proto__: p}` in an object literal sets the object's PROTOTYPE — it does
+ * not create a key — so a section renamed to it would vanish from the lookup
+ * while the selector still asked for it. The one identifier that isn't a key.
+ */
+const NOT_A_KEY = '__proto__'
+
+/** Escape a name for use inside a RegExp (a quoted key may hold anything). */
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Is every occurrence of `name` inside the control string one of the arm heads
+ * we are about to rename?
+ *
+ * A name can also appear NESTED inside another arm's head — `<verse@8 [verse
+ * chorus]@4>` — where it is a real reference to the same key that this op does
+ * not rewrite. Renaming the key would leave that occurrence pointing at a key
+ * that no longer exists, and the section would go silent. So the op declines
+ * instead. (This is a REFUSAL scan, not an interpretation of the notation: it
+ * can only narrow what the op will do, never decide what the notation means.)
+ */
+function everyOccurrenceIsAnArmHead(doc: string, control: PickControl, name: string): boolean {
+  const [from, to] = control.innerRange
+  const inner = doc.slice(from, to)
+  const re = new RegExp(`(^|[^A-Za-z0-9_$])(${escapeRe(name)})(?![A-Za-z0-9_$])`, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(inner)) !== null) {
+    const at = from + m.index + m[1].length
+    const covered = control.arms.some(
+      (a) => a.headRange[0] === at && a.headRange[1] === at + name.length,
+    )
+    if (!covered) return false
+    re.lastIndex = m.index + m[1].length + name.length
+  }
+  return true
+}
+
+/**
  * How many selector arms carry section `i`'s name — 1 normally, more when the
  * section RETURNS (`<verse@8 chorus@4 verse@8>`). A rename moves all of them,
  * so the caller can say "this renames 2 sections" BEFORE writing (#1417).
- * Returns 0 when arm `i` isn't a named section at all.
+ *
+ * Returns 0 whenever `renameSection` would decline on the OLD name's side, so a
+ * caller that shows the count and then writes can't be told "2 sections" and
+ * handed no edits.
  */
 export function countSectionArms(doc: string, control: PickControl, i: number): number {
   const arm = control.arms[i]
   if (!arm) return 0
   const name = headText(doc, control, i)
-  if (!control.entries.some((e) => e.key === name)) return 0
+  if (control.entries.filter((e) => e.key === name).length !== 1) return 0
+  if (!everyOccurrenceIsAnArmHead(doc, control, name)) return 0
   return control.arms.filter((_, k) => headText(doc, control, k) === name).length
 }
 
@@ -182,11 +225,20 @@ export function countSectionArms(doc: string, control: PickControl, i: number): 
  * A returning section is renamed in every arm it occupies: they aren't two
  * sections sharing a name, they're one pattern arranged twice.
  *
- * Declines (no edits) when:
- *  - the new name isn't a bare identifier, or is already the current name;
+ * Declines (no edits) when the name is not UNIQUELY AND COMPLETELY ADDRESSABLE,
+ * because every one of those cases writes a document that means something other
+ * than what the user asked for:
+ *  - the new name isn't a bare identifier, is `__proto__`, or is already the
+ *    current name;
  *  - the arm isn't a named section — `~`, an inline `[bd,sd]`, or a key this
  *    parser couldn't name (computed, spread);
- *  - the new name collides with another key in the same object.
+ *  - the new name collides with another key in the same object;
+ *  - the OLD name is written twice in the object (`{glitch: a, glitch: b}` —
+ *    real, and in the corpus). JS keeps the last; renaming the first would move
+ *    the selector onto the pattern that was being shadowed, silently changing
+ *    the music;
+ *  - the old name also occurs nested inside another arm's head, where this op
+ *    would not rewrite it and the reference would break.
  */
 export function renameSection(
   doc: string,
@@ -196,12 +248,14 @@ export function renameSection(
 ): OffsetEdit[] {
   const arm = control.arms[i]
   if (!arm) return []
-  if (!SECTION_NAME.test(newName)) return []
+  if (!SECTION_NAME.test(newName) || newName === NOT_A_KEY) return []
   const oldName = headText(doc, control, i)
   if (newName === oldName) return []
   const entry = control.entries.find((e) => e.key === oldName)
   if (!entry) return []
+  if (control.entries.filter((e) => e.key === oldName).length !== 1) return []
   if (control.entries.some((e) => e.key === newName)) return []
+  if (!everyOccurrenceIsAnArmHead(doc, control, oldName)) return []
 
   const keyText = entry.shorthand
     ? `${newName}: ${oldName}`
