@@ -5,6 +5,23 @@ import { songExtent } from '../songExtent'
 const bd = IR.play('bd')
 const arm = (weight: number, pattern: PatternIR = bd) => ({ weight, pattern })
 
+/**
+ * The second spelling of an arrangement (#1427): a weighted section timeline
+ * driving `pickRestart`. `slots` are `[key, weight]`, and a `null` weight is an
+ * unweighted slot — the distinction the narrow rule turns on.
+ */
+const timeline = (...slots: Array<[string, number | null]>): PatternIR =>
+  IR.namedPick(
+    IR.cycle(
+      ...slots.map(([key, w]) =>
+        w == null ? IR.play(key) : IR.elongate(w, IR.play(key)),
+      ),
+    ),
+    [...new Set(slots.map(([key]) => key))].map((key) => ({ key, pattern: bd })),
+    'pickRestart',
+    '{}',
+  )
+
 describe('songExtent', () => {
   it('a document with no arrangement is a LOOP, not a zero-length song', () => {
     // The distinction the typed answer exists for: `0` cannot tell "ends
@@ -85,6 +102,67 @@ describe('songExtent', () => {
       via: { method: 'x', args: '', callSiteRange: [0, 0], inner: IR.arrange('arrange', [arm(4)]) },
     }
     expect(songExtent(IR.stack(clean, dirty))).toEqual({ kind: 'opaque' })
+  })
+
+  // ── the second spelling of an arrangement (#1427) ─────────────────────────
+  //
+  // `pickControl/` already parses this form, draws it on the timeline and writes
+  // edits back byte-verbatim. The song layer then declined to call it a song, so
+  // it got no end, no Cycle/Loop toggle and a bounce that did not know its length.
+
+  it('two spellings of ONE song agree on its length', () => {
+    // The whole issue in one assertion. Same 40-cycle piece, written both ways.
+    const written = IR.arrange('arrange', [arm(4), arm(8), arm(8), arm(8), arm(8), arm(4)])
+    const picked = timeline(
+      ['~', 4], ['verse', 8], ['chorus', 8], ['verse', 8], ['chorus', 8], ['~', 4],
+    )
+    expect(songExtent(written)).toEqual({ kind: 'arranged', cycles: 40 })
+    expect(songExtent(picked)).toEqual(songExtent(written))
+  })
+
+  it('an unweighted slot in a weighted timeline counts 1, as a cat arm does', () => {
+    expect(songExtent(timeline(['verse', 8], ['tag', null], ['chorus', 8]))).toEqual({
+      kind: 'arranged',
+      cycles: 17,
+    })
+  })
+
+  it('tracks with DIFFERENT section timelines take the max, never the sum', () => {
+    // The question the issue left open, and the existing Stack rule answers it:
+    // the piece is as long as its longest track. The fixture that motivated this
+    // has every track summing to 40, so only a synthetic arm can tell max from
+    // sum — 40 vs 76 here.
+    const drums = timeline(['~', 4], ['verse', 8], ['chorus', 8], ['verse', 8], ['chorus', 8], ['~', 4])
+    const keys = timeline(['pads', 12], ['chorus', 8], ['pads', 8], ['chorus', 8], ['pads', 4])
+    expect(songExtent(IR.stack(drums, keys))).toEqual({ kind: 'arranged', cycles: 40 })
+  })
+
+  it('an UNWEIGHTED pick selector stays a loop — a bare alternation is not song form', () => {
+    // `<verse chorus>.pickRestart(…)` says nothing about ending. Being wrong
+    // towards `loop` costs nothing; being wrong towards `arranged` truncates.
+    expect(songExtent(timeline(['verse', null], ['chorus', null]))).toEqual({ kind: 'loop' })
+  })
+
+  it('a weighted cycle that is NOT a pick selector stays a loop', () => {
+    // The arm that keeps the scope narrow. 42 of the 150 corpus documents carry
+    // an `Elongate`; they are melodies like `note("<[a3,c4,e4]@2 [g3,b3,d4]>")`,
+    // and reading those as songs would hand a bounce a confident wrong length.
+    const melody = IR.cycle(IR.elongate(2, IR.play('a3')), IR.play('g3'))
+    expect(songExtent(melody)).toEqual({ kind: 'loop' })
+    expect(songExtent(IR.stack(melody, bd))).toEqual({ kind: 'loop' })
+  })
+
+  it('a section timeline under an unparsed transform is OPAQUE, not measured', () => {
+    // Same taint rule the `arrange` spelling gets: an unknown transform on the
+    // path may scale time, so the length is found but not trusted.
+    const picked = timeline(['verse', 8], ['chorus', 8])
+    const wrapped: PatternIR = {
+      tag: 'Code',
+      code: '.someUnknownMethod(2)',
+      lang: 'strudel',
+      via: { method: 'someUnknownMethod', args: '2', callSiteRange: [0, 0], inner: picked },
+    }
+    expect(songExtent(wrapped)).toEqual({ kind: 'opaque' })
   })
 
   it('a Code node with NO arrangement under it stays a loop', () => {

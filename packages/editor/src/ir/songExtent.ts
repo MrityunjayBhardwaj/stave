@@ -59,7 +59,13 @@ function scaled(cycles: number, factor: number): number {
  *   spans `n` WHOLE cycles at the pattern's natural rate, so a longer inner
  *   arrangement is TRUNCATED by its arm, not extended by it. Taking a max that
  *   descended would over-report exactly the documents most likely to be nested.
- * - `Stack` → the MAX over tracks, never the sum. Tracks are parallel.
+ * - `NamedPick` whose selector is a WEIGHTED `Cycle` → `Σ` slot weights, slots
+ *   without an `Elongate` counting 1, entries not descended into (#1427). The
+ *   second spelling of an arrangement; the case body says why the RECEIVER, not
+ *   the weighting alone, is what keeps it narrow.
+ * - `Stack` → the MAX over tracks, never the sum. Tracks are parallel. That is
+ *   also the answer for a song whose tracks carry DIFFERENT section timelines:
+ *   the piece is as long as its longest track, never their sum.
  * - `Track` / `Loop` → transparent.
  * - `Fast` / `Slow` → scale what is below them.
  * - `Code` → TAINT. A `Code` node is either an opaque wrapper around a
@@ -73,13 +79,15 @@ function scaled(cycles: number, factor: number): number {
  *
  * ⚠ WHAT THE WALK DELIBERATELY DOES NOT FOLLOW. Only `body`, `Stack.tracks` and
  * `Code.via.inner` are traversed — not `Seq.children`, `Cycle.items`,
- * `Choice.then`/`else_`, or the `Pick`/`NamedPick` selectors. Every one of those
+ * `Choice.then`/`else_`, or the `Pick` selector. Every one of those
  * constructs repeats once per cycle (a `Seq` is fastcat, which COMPRESSES its
  * children into a single cycle; a `Cycle` alternates between them), so a
  * document whose only arrangement sits inside one still loops forever and `loop`
  * is the correct verdict, not a miss. Checked rather than assumed: a probe
  * walking EVERY object field finds arrangements in the same 5 corpus documents
  * this walk classifies, so the narrower traversal loses nothing on real code.
+ * ⚠ ONE EXCEPTION SINCE #1427: a `NamedPick`'s selector is READ for its weights,
+ * though still not walked into — reading a shape is not traversing it.
  * `Sleep.duration` is likewise unmodelled — it contributes time that this
  * function does not count.
  *
@@ -106,6 +114,50 @@ export function songExtent(ir: PatternIR | null): SongExtent {
         }
         const sum = node.arms.reduce((s, a) => s + (a.weight > 0 ? a.weight : 0), 0)
         // Arms are NOT walked — see the header. An arm truncates what it holds.
+        if (sum > 0) best = Math.max(best, scaled(sum, factor))
+        return
+      }
+      case 'NamedPick': {
+        // A WEIGHTED SECTION TIMELINE IS THE OTHER SPELLING OF AN ARRANGEMENT (#1427).
+        // `"<~@4 verse@8 chorus@8 …>".pickRestart({…})` and the `arrange(…)` of the same
+        // song describe one piece; only the first was being called a loop. The header's
+        // rule that a `Cycle` repeats once per cycle and so loops forever is true — and
+        // it is equally true of `arrange`, which is `timeCat(...).slow(Σweight)`, itself
+        // a weighted sequence that loops. So the definite end was never a fact about
+        // `arrange()`; it is Stave reading a finite weighted sequence of sections AS a
+        // song. That reading is right — it was being applied to one of two spellings.
+        //
+        // ⚠ NARROW ON PURPOSE, AND THE RECEIVER IS THE NARROWING. Only a `NamedPick`'s
+        // own selector qualifies. Any weighted `Cycle` anywhere would sweep in melodic
+        // alternations like `note("<[a3,c4,e4]@2 [g3,b3,d4]>")`, which are emphatically
+        // not song form — 42 of the 150 corpus documents carry an `Elongate` somewhere
+        // and not one of them is a section timeline. The existing bias holds: wrong
+        // towards `loop` costs nothing, wrong towards `arranged` truncates a bounce.
+        const sel = node.selector
+        if (!sel || sel.tag !== 'Cycle') return
+        // ⚠ AT LEAST ONE WEIGHT REQUIRED. A bare `<verse chorus>` selector is an
+        // alternation the author is likelier jamming with than ending on, and nothing in
+        // the shape says otherwise. Unweighted arms DO count under `Arrange`, where the
+        // CALL declares the intent; here the shape is all there is, so the weight is what
+        // separates a section timeline from an alternation.
+        if (!sel.items.some((i) => i != null && i.tag === 'Elongate')) return
+        found = true
+        if (opaque) {
+          tainted = true
+          return
+        }
+        // Slots without an `Elongate` weigh 1, exactly as `cat` arms do.
+        const sum = sel.items.reduce(
+          (acc, i) =>
+            acc +
+            (i != null && i.tag === 'Elongate' && i.factor > 0 && Number.isFinite(i.factor)
+              ? i.factor
+              : 1),
+          0,
+        )
+        // Entries are NOT walked, for the same reason `Arrange` arms are not: a slot
+        // spans whole cycles, so it truncates a longer inner arrangement rather than
+        // being extended by it.
         if (sum > 0) best = Math.max(best, scaled(sum, factor))
         return
       }

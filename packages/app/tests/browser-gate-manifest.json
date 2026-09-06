@@ -599,6 +599,10 @@
     "runs": "gate",
     "why": "collected by the gate \u2014 it runs the whole chromium project"
   },
+  "song-extent-picked-spelling.spec.ts": {
+    "runs": "gate",
+    "why": "The same song written as arrange(...) and as a weighted section timeline must get the same ending (#1427). Two positives and two negatives in one run, plus a stop-at-end watch — the extent is measured on EVAL, so only the running app shows whether the verdict is reached at all."
+  },
   "playback-that-ends.spec.ts": {
     "runs": "gate",
     "why": "collected by the gate \u2014 it runs the whole chromium project"
