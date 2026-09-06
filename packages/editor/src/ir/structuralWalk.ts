@@ -238,6 +238,35 @@ function withWrapperLoc(items: LaneItem[], wrapper?: PatternIR['loc']): LaneItem
   return items.map((it) => ({ ...it, loc: it.loc ? [...it.loc, range] : [range] }))
 }
 
+/**
+ * The source range of the section a `NamedPick`'s selector has landed on (#1467) —
+ * its object key, which is where the musician wrote the name.
+ *
+ * The join is the KEY STRING, not the slot number. A selector slot holds the key
+ * as its `Play.note` (an `Elongate` wraps it when the slot carries a weight), and
+ * `NamedPickEntry.key` is that same normalized string — so the two are matched by
+ * name. Slot order and object order are independent, and a returning section
+ * appears in several slots pointing at ONE entry, which is exactly the behaviour
+ * wanted: both slots caption with the name that entry was written under.
+ *
+ * `undefined` on anything that isn't a plain named slot — an unresolved selector,
+ * a slot whose body isn't a `Play`, a key with no entry, or an entry parsed
+ * without a `keyLoc`. The caller then leaves `armRange` unset and the section
+ * keeps its positional `§n`, which is the same answer it gives today.
+ */
+function selectedEntryRange(
+  ir: Extract<PatternIR, { tag: 'NamedPick' }>,
+  selectedArm: number | undefined,
+): readonly [number, number] | undefined {
+  if (selectedArm === undefined) return undefined
+  const slot = ir.selector.tag === 'Cycle' ? ir.selector.items[selectedArm] : undefined
+  if (!slot) return undefined
+  const body = slot.tag === 'Elongate' ? slot.body : slot
+  if (!body || body.tag !== 'Play' || typeof body.note !== 'string') return undefined
+  const keyLoc = ir.entries.find((e) => e.key === body.note)?.keyLoc
+  return keyLoc ? ([keyLoc.start, keyLoc.end] as const) : undefined
+}
+
 /** Count voice-leaves a subtree contributes to its Track, tolerating a malformed sub-node — a
  *  best-effort 1 keeps the leafIndex counter advancing so a bad arm degrades only itself (PV212)
  *  instead of throwing out of the Stack loop (which runs OUTSIDE `recurse`'s per-node guard). */
@@ -533,11 +562,36 @@ function walkCycle(ir: PatternIR, ctx: StructCtx): LaneItem[] {
           }
         }
       }
+      const inherited = ctx.armIndex !== undefined
       const armIndex = ctx.armIndex ?? selectedArm
+      // The section's own source range — the object key it was written as (#1467).
+      // `NamedPickEntry.keyLoc` has pointed at that token since #463 and nothing
+      // read it, so a `{verse, chorus}` song drew `§1`/`§2` while naming its
+      // sections in plain sight. The `Arrange` case above supplies the same thing
+      // from the arm's `[n, pat]` tuple; this is that branch's missing half.
+      //
+      // ⚠ RESOLVED BY KEY, NEVER BY POSITION. `selectedArm` indexes the SELECTOR's
+      // slots; `ir.entries` is in OBJECT order, and the two need not agree —
+      // `"<chorus@4 verse@8>".pickRestart({verse, chorus})` maps slot 0 to
+      // `entries[1]`. Indexing entries with the slot would caption a section with
+      // another section's name, which is worse than the ordinal it replaces. The
+      // selector slot carries the key as its own `Play.note`, which is the same
+      // string `entries` is keyed by (PatternIR: "selector's STRING value keys
+      // `entries`"), so that is the join.
+      //
+      // ⚠ INDEX AND RANGE ARE ONE IDENTITY — the `Arrange` case's rule, and it
+      // binds harder here: every entry is recursed for lane discovery while they
+      // ALL carry the selected slot's index, so a range taken from the entry being
+      // walked would name the clip after whichever entry the loop was on.
+      const armRange = inherited ? ctx.armRange : selectedEntryRange(ir, selectedArm)
       const out: LaneItem[] = []
       const selectorLoc = ir.selector.loc?.[0]
       for (const entry of ir.entries) {
-        const childCtx: StructCtx = { ...ctx, ...(armIndex !== undefined ? { armIndex } : {}) }
+        const childCtx: StructCtx = {
+          ...ctx,
+          ...(armIndex !== undefined ? { armIndex } : {}),
+          ...(armRange !== undefined ? { armRange } : {}),
+        }
         for (const it of recurse(entry.pattern, childCtx)) {
           const childLoc = it.loc ?? []
           const newLoc = [...childLoc, ...(selectorLoc ? [selectorLoc] : [])]

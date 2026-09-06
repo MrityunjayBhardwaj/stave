@@ -524,6 +524,16 @@ function withWrapperLoc(items, wrapper) {
   return items.map((it) => ({ ...it, loc: it.loc ? [...it.loc, range2] : [range2] }));
 }
 __name(withWrapperLoc, "withWrapperLoc");
+function selectedEntryRange(ir, selectedArm) {
+  if (selectedArm === void 0) return void 0;
+  const slot = ir.selector.tag === "Cycle" ? ir.selector.items[selectedArm] : void 0;
+  if (!slot) return void 0;
+  const body = slot.tag === "Elongate" ? slot.body : slot;
+  if (!body || body.tag !== "Play" || typeof body.note !== "string") return void 0;
+  const keyLoc = ir.entries.find((e) => e.key === body.note)?.keyLoc;
+  return keyLoc ? [keyLoc.start, keyLoc.end] : void 0;
+}
+__name(selectedEntryRange, "selectedEntryRange");
 function safeCountLeaves(node) {
   try {
     return countLeavesInIR(node);
@@ -760,11 +770,17 @@ function walkCycle(ir, ctx) {
           }
         }
       }
+      const inherited = ctx.armIndex !== void 0;
       const armIndex = ctx.armIndex ?? selectedArm;
+      const armRange = inherited ? ctx.armRange : selectedEntryRange(ir, selectedArm);
       const out = [];
       const selectorLoc = ir.selector.loc?.[0];
       for (const entry of ir.entries) {
-        const childCtx = { ...ctx, ...armIndex !== void 0 ? { armIndex } : {} };
+        const childCtx = {
+          ...ctx,
+          ...armIndex !== void 0 ? { armIndex } : {},
+          ...armRange !== void 0 ? { armRange } : {}
+        };
         for (const it of recurse(entry.pattern, childCtx)) {
           const childLoc = it.loc ?? [];
           const newLoc = [...childLoc, ...selectorLoc ? [selectorLoc] : []];
