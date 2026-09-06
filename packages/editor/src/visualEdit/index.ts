@@ -47,6 +47,7 @@ export {
   setWeight as pickSetWeight,
   splitArm as pickSplitArm,
   removeArm as pickRemoveArm,
+  silenceArm as pickSilenceArm,
   reorderArm as pickReorderArm,
   insertArm as pickInsertArm,
   duplicateArm as pickDuplicateArm,

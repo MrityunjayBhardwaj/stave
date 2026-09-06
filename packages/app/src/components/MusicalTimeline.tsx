@@ -62,7 +62,7 @@ import {
   materializeBareSplit,
   detectPickControlAt,
   pickSetWeight,
-  pickRemoveArm,
+  pickSilenceArm,
   pickReorderArm,
   pickDuplicateArm,
   pickSplitArm,
@@ -680,7 +680,16 @@ export function MusicalTimeline(
   // a ripple `removeArm`). Routed through the write-back (`arrange.structure`).
   // Deleting an already-silent clip is a no-op; silencing every arm (a muted
   // track) is allowed. The debounced re-eval republishes the IR and the lane
-  // re-derives. (`removeArm` stays in @stave/editor for a future ripple-delete.)
+  // re-derives.
+  //
+  // ⚠ ALL THREE BRANCHES BELOW LEAVE A GAP, AND THAT AGREEMENT IS THE POINT
+  // (#1462). A user did not choose a "spelling" — they wrote a song, and Delete
+  // has to mean one thing. `arrange` silences the arm in place, the pick control
+  // writes `~` in the arm's head, and a bare loop materializes an arrange around
+  // the silenced bar; all three keep the song's length. Ripple delete — the
+  // gesture that DOES shorten a song — is a separate, second gesture that does
+  // not exist yet on either spelling (#1460); `removeArm`/`pickRemoveArm` are its
+  // waiting substrate, which is why both stay exported with no caller.)
   const handleDeleteClip = React.useCallback(
     (req: { sourceOffset: number | null; armIndex: number; barIndex?: number; span?: number }) => {
       if (!snapshot?.source || req.sourceOffset == null) return
@@ -691,11 +700,16 @@ export function MusicalTimeline(
         writeArrange(edits, 'arrange.structure', 'delete clip')
         return
       }
-      // #463 Stage 2 — pick* section clip.
+      // #463 Stage 2 — pick* section clip. #1462: GAP, exactly as the arrange
+      // branch above. `pickSilenceArm` writes `verse@8` → `~@8`, so the section
+      // goes quiet and keeps its width. It used to call `pickRemoveArm`, which
+      // rippled the section out and made the song shorter — the same keypress on
+      // the same canvas meaning two different things depending only on how the
+      // arrangement happened to be spelled.
       const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
       if (ctl) {
         if (req.armIndex < 0 || req.armIndex >= ctl.arms.length) return
-        const edits = pickRemoveArm(snapshot.code, ctl, req.armIndex)
+        const edits = pickSilenceArm(snapshot.code, ctl, req.armIndex)
         writeArrange(edits, 'arrange.structure', 'delete clip')
         return
       }

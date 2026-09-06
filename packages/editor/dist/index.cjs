@@ -45406,6 +45406,13 @@ function splitArm2(doc, control, i, firstWeight) {
   return [{ range: arm.armRange, text: `${head}@${n1} ${head}@${n2}` }];
 }
 __name(splitArm2, "splitArm");
+function silenceArm2(doc, control, i) {
+  const arm = control.arms[i];
+  if (!arm) return [];
+  if (headText(doc, control, i) === "~") return [];
+  return [{ range: arm.headRange, text: "~" }];
+}
+__name(silenceArm2, "silenceArm");
 function removeArm2(doc, control, i) {
   const n = control.arms.length;
   if (i < 0 || i >= n || n <= 1) return [];
@@ -46104,6 +46111,7 @@ exports.pickInsertArm = insertArm2;
 exports.pickRemoveArm = removeArm2;
 exports.pickReorderArm = reorderArm2;
 exports.pickSetWeight = setWeight2;
+exports.pickSilenceArm = silenceArm2;
 exports.pickSplitArm = splitArm2;
 exports.pitchToMidi = pitchToMidi;
 exports.placeNote = placeNote;

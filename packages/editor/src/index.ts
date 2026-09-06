@@ -608,6 +608,7 @@ export {
   pickSetWeight,
   pickSplitArm,
   pickRemoveArm,
+  pickSilenceArm,
   pickReorderArm,
   pickInsertArm,
   pickDuplicateArm,

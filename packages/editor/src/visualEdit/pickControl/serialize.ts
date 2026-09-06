@@ -63,6 +63,37 @@ export function splitArm(doc: string, control: PickControl, i: number, firstWeig
 }
 
 /**
+ * #1462 — GAP delete, the pick spelling of `arrange/silenceArm` (#491).
+ *
+ * Replace ONLY the arm's HEAD with `~` (a mini rest), keeping its `@weight`:
+ *   `verse@8`  →  `~@8`      (width 8 kept)
+ *   `verse`    →  `~`        (implicit width 1 kept)
+ *
+ * ⚠ WHY THIS EXISTS AT ALL: the same Delete key on the same canvas used to mean
+ * two different things depending on how the arrangement was SPELLED. `arrange()`
+ * left a gap (#491, the DAW convention — the timeline is absolute, so later clips
+ * do not slide left); the pick spelling called `removeArm` and rippled the section
+ * out, shortening the song. The arrange side carried an explicit justification and
+ * the pick side carried none, which is what marked it as an unconsidered
+ * divergence rather than a design choice. Gap is the default on both now.
+ *
+ * GROUNDED against the real evaluator, not assumed: `<intro@4 ~@8 outro@4>` over
+ * the same three sections queries 1,1,1,1 · 0×8 · 1,1,1,1 haps per cycle, against
+ * 1,1,1,1 · 4×8 · 1,1,1,1 for the un-gapped control — the gap is silent, is
+ * exactly 8 cycles wide, and the outro does NOT move.
+ *
+ * Already-silent arm → no edits (mirrors arrange). Silencing EVERY arm is allowed
+ * — `<~@4 ~@8>` is a valid muted track — so unlike `removeArm` there is no
+ * sole-arm guard here: this op can never empty the control.
+ */
+export function silenceArm(doc: string, control: PickControl, i: number): OffsetEdit[] {
+  const arm = control.arms[i]
+  if (!arm) return []
+  if (headText(doc, control, i) === '~') return []
+  return [{ range: arm.headRange, text: '~' }]
+}
+
+/**
  * Remove arm `i`, taking one adjacent space with it. Refuses to empty the
  * control — a lane keeps ≥ 1 section (mirrors arrange/removeArm).
  */

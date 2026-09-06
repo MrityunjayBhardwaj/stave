@@ -11,4 +11,4 @@
  */
 export { detectPickControlAt, detectAllPickControls } from './parse'
 export type { PickControl, PickControlArm, PickMethod } from './parse'
-export { setWeight, splitArm, removeArm, reorderArm, insertArm, duplicateArm } from './serialize'
+export { setWeight, splitArm, removeArm, silenceArm, reorderArm, insertArm, duplicateArm } from './serialize'
