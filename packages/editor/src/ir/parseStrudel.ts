@@ -217,6 +217,24 @@ export function classifyLiteralRhs(
 }
 
 /**
+ * Is this token a bare ES identifier, and nothing else?
+ *
+ * ONE authority for the question, because two callers now ask it and they must
+ * agree: `substituteBoundIdentInArg` (is this arg a name I can resolve to its
+ * binding?) and `parseNamedPickEntries` (#1456 — is this colon-less property
+ * object shorthand, or something I must not pretend to understand?). Both are
+ * really the same question, and a shorthand key that the substituter would not
+ * recognise as a name would be a silent disagreement between them.
+ *
+ * Deliberately NOT the full ES identifier grammar (no unicode escapes, no
+ * reserved-word check) — it is a conservative admission test, so anything it
+ * declines simply keeps the existing opaque fallback (PV37).
+ */
+function isBareIdent(t: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(t)
+}
+
+/**
  * Phase 20-22 D-01 — round-trip fidelity primitive (F1 option iii).
  *
  * If `args` is EXACTLY a single bare identifier bound to a LITERAL-arm
@@ -256,7 +274,7 @@ function substituteBoundIdentInArg(
 ): string {
   if (!bindings) return args
   const t = args.trim()
-  if (!/^[A-Za-z_$][\w$]*$/.test(t)) return args
+  if (!isBareIdent(t)) return args
   const node = bindings.get(t)
   if (!node) return args
   // PV52 discriminated-union guard — only the literal arm carries `raw`.
@@ -3136,16 +3154,32 @@ function parseNamedPickEntries(
   const entries: import('./PatternIR').NamedPickEntry[] = []
   for (const part of parts) {
     const colon = topLevelColonIndex(part.value)
-    if (colon < 0) return null // malformed entry → bail to opaque
-    const rawKey = part.value.slice(0, colon)
-    const rawVal = part.value.slice(colon + 1)
+    // #1456 — ES object shorthand `{verse}`. The property has no colon because
+    // the key token IS the value token, so both read the SAME slice at the SAME
+    // offset; everything downstream (bindings lookup, sub-pattern grammar, loc
+    // fidelity) is then the `{verse: verse}` path unchanged. That equivalence is
+    // the whole specification — see namedPick.test.ts's oracle arms.
+    //
+    // The guard is deliberately the narrowest thing that admits it: a BARE
+    // IDENTIFIER, via the SAME `isBareIdent` authority `substituteBoundIdentInArg`
+    // uses — so a key admitted here is always a name that resolver can resolve.
+    // A spread (`...rest`) or a method shorthand (`verse() {}`) is colon-less
+    // too and is NOT an identifier, so it keeps returning null and keeps the
+    // conservative opaque fallback (PV37) by default rather than by enumeration.
+    const shorthand = colon < 0 && isBareIdent(part.value)
+    if (colon < 0 && !shorthand) return null // malformed entry → bail to opaque
+    const rawKey = shorthand ? part.value : part.value.slice(0, colon)
+    const rawVal = shorthand ? part.value : part.value.slice(colon + 1)
     const key = normalizePickKey(rawKey)
     if (key == null) return null
     // keyLoc: part.value is already trimmed, so the key starts at part.offset
     // within `body`; it spans the trimmed key token.
     const keyStart = baseOffset + bodyOffsetInArgs + part.offset
     const keyLoc: SourceLocation = { start: keyStart, end: keyStart + rawKey.trim().length }
-    const valOffset = baseOffset + bodyOffsetInArgs + part.offset + colon + 1
+    // Shorthand's value lives at the key's own offset — the one token is both.
+    const valOffset = shorthand
+      ? keyStart
+      : baseOffset + bodyOffsetInArgs + part.offset + colon + 1
     const pattern = parseArrayLiteralElement(rawVal, 'note', valOffset, bindings)
     entries.push({ key, pattern, keyLoc })
   }
