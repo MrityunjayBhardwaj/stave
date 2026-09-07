@@ -717,10 +717,16 @@ export const BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]
  * it would be "a second, weaker `buildBindingMap`" — so the fix EXTRACTS rather
  * than reimplements, and `buildBindingMap` is now a caller of it.
  *
- * Returns `null` on every shape the old fence rejected: no bindings at all, no
- * trailing statement, a duplicate name (reassignment/shadowing), or an RHS that
- * stays opaque once every other binding has resolved (cyclic or genuinely
- * unparseable). `null` means "resolve nothing", never a partial map.
+ * Returns `null` when there is nothing to resolve: no bindings at all, no
+ * trailing statement, a duplicate name (reassignment/shadowing), or a document
+ * in which not one binding resolved (a cycle, or total opacity).
+ *
+ * ⚠ #1468 B CHANGED WHAT "NOTHING TO RESOLVE" MEANS. It used to include "one
+ * RHS stayed opaque", so a single unreadable binding discarded the map and with
+ * it the whole document — even when nothing referenced that binding. It now
+ * returns the bindings that DID resolve and leaves the opaque one out. The
+ * result is still never a guess: a name absent from the map resolves to nothing,
+ * exactly as before. See the occurs-check terminal below for the measurement.
  */
 export function collectTopLevelBindings(
   body: string,
@@ -823,14 +829,32 @@ export function collectTopLevelBindings(
     }
     if (!progress) break
   }
-  // OCCURS-CHECK TERMINAL — the kept opaque-RHS fence, repositioned
-  // post-fixpoint, predicate TEXT byte-unchanged from the old in-loop
-  // form (`tag === 'Code' && via === undefined` now lives inside the
-  // `bare` computation above; this terminal turns the residual pending
-  // set — bindings whose RHS still parses to bareCode even with all
-  // OTHER bindings resolved = cyclic or genuinely opaque — into the
-  // same whole-program fallback the old single-pass produced inline).
-  if (pending.size > 0) return null
+  // OCCURS-CHECK TERMINAL — #1468 cause B: the residual `pending` set no longer
+  // costs the bindings that DID resolve.
+  //
+  // It used to read `if (pending.size > 0) return null`: one binding whose RHS
+  // stays opaque discarded the whole map, and with it the whole document — even
+  // when nothing referenced that binding. Measured on 329 real documents, that
+  // is the single most expensive refusal in this file. Returning the partial map
+  // instead lets the opaque binding stay opaque and the rest of the document be
+  // read, which is #1392's argument applied one level up: a structured tree with
+  // an opaque LEAF beats one opaque node standing for everything.
+  //
+  // ⚠ WHY THE `size === 0` CASE STILL RETURNS NULL, and it is not a special
+  // case. A map that resolved nothing has nothing to substitute, so handing it
+  // back would differ from `null` only in claiming to be an answer. It also
+  // keeps the cyclic shape (`const a=b; const b=a`) on the whole-program
+  // fallback it was deliberately pinned to — for free, with no cycle detection.
+  // Cycles and total opacity land here together, which is right: neither
+  // resolves anything.
+  //
+  // ⚠ The disposition this replaces was a SCOPE decision, not a correctness
+  // argument — its own pin says "E-1 ships the NON-relax disposition … the relax
+  // probe was a 20-16 prototype experiment, not the wave-E delivery" — and the
+  // prototype it rested on records that five of its six repros were pruned in
+  // #1292 and its verdicts "are not re-derivable from this tree". The 329-
+  // document corpus is the better basis, and it is what moved this.
+  if (bindings.size === 0) return null
   return { bindings, tail: stmts.slice(tailIdx) }
 }
 
