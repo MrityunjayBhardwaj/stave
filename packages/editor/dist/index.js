@@ -2258,6 +2258,44 @@ var CHAIN_ROOT_RECOGNISER = /* @__PURE__ */ new Map([
   ["chord", { tag: "Builder", kind: "chord" }],
   ["arrange", { tag: "Builder", kind: "arrange" }]
 ]);
+function opensCommentedLabel(line) {
+  const t = line.trimStart();
+  if (!t.startsWith("//")) return false;
+  const colon = t.indexOf(":");
+  return colon >= 0 && isBareIdent(t.slice(2, colon).trim());
+}
+__name(opensCommentedLabel, "opensCommentedLabel");
+function readsAsOneExpression(src) {
+  const t = src.trim();
+  if (!t) return false;
+  try {
+    parse("(" + t + "\n)", { ecmaVersion: "latest" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+__name(readsAsOneExpression, "readsAsOneExpression");
+function commentedLabelIsTrack(code, afterColon) {
+  const lineEnd = code.indexOf("\n", afterColon);
+  const firstEnd = lineEnd < 0 ? code.length : lineEnd;
+  const first = code.slice(afterColon, firstEnd);
+  if (!first.trim()) return true;
+  if (readsAsOneExpression(first)) return true;
+  const block = [first];
+  let i = firstEnd + 1;
+  while (i < code.length) {
+    const e = code.indexOf("\n", i);
+    const stop = e < 0 ? code.length : e;
+    const line = code.slice(i, stop);
+    const trimmed = line.trimStart();
+    if (!trimmed.startsWith("//") || opensCommentedLabel(line)) break;
+    block.push(trimmed.slice(2));
+    i = stop + 1;
+  }
+  return block.length > 1 && readsAsOneExpression(block.join("\n"));
+}
+__name(commentedLabelIsTrack, "commentedLabelIsTrack");
 function extractTracks(code) {
   const tracks = [];
   const dollarRe = /^[ \t]*(\/\/[ \t]*)?([A-Za-z_$][\w$]*)\s*:/gm;
@@ -2267,6 +2305,9 @@ function extractTracks(code) {
     const label = m[2];
     const st = lexStateAt(code, m.index);
     if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+      continue;
+    }
+    if (m[1] && !commentedLabelIsTrack(code, m.index + m[0].length)) {
       continue;
     }
     const after = m.index + m[0].length;
