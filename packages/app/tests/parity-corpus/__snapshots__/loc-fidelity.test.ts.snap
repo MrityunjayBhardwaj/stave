@@ -5028,7 +5028,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > meltingsubmarine — loc→source-slice map is stable & in-bounds 1`] = `
 [
   {
-    "tag": "Slow",
+    "tag": "Code",
     "text": ".slow(3/2)",
   },
   {
