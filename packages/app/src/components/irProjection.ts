@@ -126,6 +126,7 @@ export function projectedLabel(node: PatternIR): string | undefined {
     // Fall through to raw tag name as a fail-safe (visible bug, not
     // silent loss).
     case 'Slow':
+    case 'Range':
     case 'When':
     case 'Every':
     case 'Degrade':
@@ -281,6 +282,7 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     case 'Ramp':
     case 'Fast':
     case 'Slow':
+    case 'Range':
     case 'Elongate':
     case 'Late':
     case 'Degrade':
@@ -395,6 +397,7 @@ export function stripInnerLate(node: PatternIR): PatternIR {
     case 'Ramp':
     case 'Fast':
     case 'Slow':
+    case 'Range':
     case 'Elongate':
     case 'Late':
     case 'Degrade':
@@ -499,6 +502,7 @@ function peelSingleBodyWrapper(n: PatternIR): PatternIR | null {
     case 'Param':
     case 'Fast':
     case 'Slow':
+    case 'Range':
     case 'Elongate':
     case 'Late':
     case 'Degrade':

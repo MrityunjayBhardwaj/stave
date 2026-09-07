@@ -174,6 +174,15 @@ export function songExtent(ir: PatternIR | null): SongExtent {
       case 'Fast':
         walk(node.body, node.factor > 0 && Number.isFinite(node.factor) ? factor / node.factor : factor, opaque)
         return
+      case 'Range':
+        // #1481 — named explicitly rather than left to `default`, which would
+        // walk the body with `opaque = true`. That arm's stated justification is
+        // "a transform whose effect on TIME this module does not model", and it
+        // does not hold here: `.range(lo, hi)` rescales a signal's OUTPUT VALUES
+        // and provably leaves every event's position alone. So the factor is
+        // unchanged and the taint is passed through rather than set.
+        walk(node.body, factor, opaque)
+        return
       case 'Code': {
         // Everything below is reached through a transform we could not read.
         // `via` is a union: the opaque-fragment WRAPPER carries `inner` (the

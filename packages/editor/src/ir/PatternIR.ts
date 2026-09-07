@@ -83,6 +83,14 @@ export type PatternIR =
   | { tag: 'Ramp';   param: string; from: number; to: number; cycles: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
   | { tag: 'Fast';   factor: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
   | { tag: 'Slow';   factor: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
+  | { tag: 'Range';
+      lo: number;                               // #1481 — `.range(lo, hi)` maps a signal's OUTPUT
+      hi: number;                               //   range. It is a VALUE transform, not a time one.
+      rawArgs: string;                          // RAW (untrimmed) — byte-fidelity, the Param contract
+      body: PatternIR;                          //   (the corpus writes `.range(0.3,0.8)` unspaced, and
+      loc?: SourceLocation[];                   //   the opaque node it replaces preserved that for free)
+      userMethod?: string;
+    }
   | { tag: 'Elongate'; factor: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Mini-notation `a@N` — weights this slot inside a parent Seq
   | { tag: 'Late';   offset: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 — shifts events forward by `offset` cycles, preserving cycle length
   | { tag: 'Degrade'; p: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 — `p` is the per-event RETENTION probability; .degrade() ⇒ p=0.5; .degradeBy(x) ⇒ p=1-x
@@ -300,6 +308,8 @@ export const IR = {
     attachMeta({ tag: 'Fast', factor, body }, meta),
   slow: (factor: number, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Slow', factor, body }, meta),
+  range: (lo: number, hi: number, rawArgs: string, body: PatternIR, meta?: TagMeta): PatternIR =>
+    attachMeta({ tag: 'Range', lo, hi, rawArgs, body }, meta),
   elongate: (factor: number, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Elongate', factor, body }, meta),
   late: (offset: number, body: PatternIR, meta?: TagMeta): PatternIR =>

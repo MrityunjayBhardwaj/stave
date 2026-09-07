@@ -305,6 +305,9 @@ function countLeavesInIR(node: PatternIR): number {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    // #1481 — `range` rescales a signal's VALUES; it neither adds nor removes
+    // events, so the leaf count is exactly the body's.
+    case 'Range':
     // #1352 — `slice` carves the BODY into ranges; the leaves are the body's,
     // exactly as for `chop`. The index pattern chooses the ORDER those leaves
     // play in, which is a projection question rather than a leaf-count one.
@@ -524,6 +527,7 @@ function walkCycle(ir: PatternIR, ctx: StructCtx): LaneItem[] {
     case 'Scramble':
     case 'Chop':
     case 'Slice':
+    case 'Range':
     case 'Struct':
       return withWrapperLoc(recurse(ir.body, ctx), ir.loc)
 

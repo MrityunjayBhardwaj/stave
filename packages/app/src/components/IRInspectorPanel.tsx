@@ -99,6 +99,7 @@ const TAG_COLOR: Record<PatternIR["tag"], string> = {
   Ramp:     "var(--ir-ramp, #f97316)",
   Fast:     "var(--ir-fast, #f97316)",
   Slow:     "var(--ir-slow, #f97316)",
+  Range:    "var(--ir-range, #22d3ee)",
   Elongate: "var(--ir-elongate, #d946ef)",
   // Tier 4 (Phase 19-03) — late/degrade/chunk/ply each get a distinct
   // hue so a debugging user can see at a glance which transform shaped

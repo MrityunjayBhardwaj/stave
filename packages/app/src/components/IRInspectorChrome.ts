@@ -31,6 +31,7 @@ export function summarize(node: PatternIR): string {
     case 'Slow':
     case 'Elongate':
       return `factor=${node.factor}`
+    case 'Range':   return `${node.lo} → ${node.hi}`
     case 'Late':    return `offset=${node.offset}`
     case 'Degrade': return `p=${node.p}`
     case 'Chunk':   return `n=${node.n}`
@@ -119,6 +120,7 @@ export function children(node: PatternIR): readonly PatternIR[] {
     case 'Ramp':
     case 'Fast':
     case 'Slow':
+    case 'Range':
     case 'Elongate':
     case 'Late':
     case 'Degrade':

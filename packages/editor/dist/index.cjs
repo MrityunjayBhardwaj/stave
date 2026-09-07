@@ -144,6 +144,7 @@ var IR = {
   ramp: /* @__PURE__ */ __name((param, from, to, cycles, body, meta) => attachMeta({ tag: "Ramp", param, from, to, cycles, body }, meta), "ramp"),
   fast: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Fast", factor, body }, meta), "fast"),
   slow: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Slow", factor, body }, meta), "slow"),
+  range: /* @__PURE__ */ __name((lo, hi, rawArgs, body, meta) => attachMeta({ tag: "Range", lo, hi, rawArgs, body }, meta), "range"),
   elongate: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Elongate", factor, body }, meta), "elongate"),
   late: /* @__PURE__ */ __name((offset, body, meta) => attachMeta({ tag: "Late", offset, body }, meta), "late"),
   degrade: /* @__PURE__ */ __name((p, body, meta) => attachMeta({ tag: "Degrade", p, body }, meta), "degrade"),
@@ -303,6 +304,8 @@ function gen(ir) {
       const body = gen(ir.body);
       return `${body}.slow(${ir.factor})`;
     }
+    case "Range":
+      return `${gen(ir.body)}.${ir.userMethod ?? "range"}(${ir.rawArgs})`;
     case "Loop":
       return gen(ir.body);
     case "Elongate":
@@ -573,6 +576,9 @@ function countLeavesInIR(node) {
     case "Shuffle":
     case "Scramble":
     case "Chop":
+    // #1481 — `range` rescales a signal's VALUES; it neither adds nor removes
+    // events, so the leaf count is exactly the body's.
+    case "Range":
     // #1352 — `slice` carves the BODY into ranges; the leaves are the body's,
     // exactly as for `chop`. The index pattern chooses the ORDER those leaves
     // play in, which is a projection question rather than a leaf-count one.
@@ -745,6 +751,7 @@ function walkCycle(ir, ctx) {
     case "Scramble":
     case "Chop":
     case "Slice":
+    case "Range":
     case "Struct":
       return withWrapperLoc(recurse(ir.body, ctx), ir.loc);
     case "Chunk": {
@@ -1208,6 +1215,9 @@ function songExtent(ir) {
       case "Fast":
         walk4(node.body, node.factor > 0 && Number.isFinite(node.factor) ? factor / node.factor : factor, opaque);
         return;
+      case "Range":
+        walk4(node.body, factor, opaque);
+        return;
       case "Code": {
         const via = node.via;
         if (via && "inner" in via) walk4(via.inner, factor, true);
@@ -1267,6 +1277,7 @@ var VALID_TAGS = /* @__PURE__ */ new Set([
   "Ramp",
   "Fast",
   "Slow",
+  "Range",
   "Loop",
   "Code",
   "Param",
@@ -1397,6 +1408,19 @@ function validateNode(raw, path) {
       return {
         tag: "Slow",
         factor: node.factor,
+        body: validateNode(node.body, `${path}.body`)
+      };
+    }
+    case "Range": {
+      requireField(node, "lo", ["number"], path);
+      requireField(node, "hi", ["number"], path);
+      requireField(node, "rawArgs", ["string"], path);
+      requireField(node, "body", ["object"], path);
+      return {
+        tag: "Range",
+        lo: node.lo,
+        hi: node.hi,
+        rawArgs: node.rawArgs,
         body: validateNode(node.body, `${path}.body`)
       };
     }
@@ -2775,6 +2799,17 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
     case "slow": {
       const n = parseFloat(subbedArgs.trim());
       if (!isNaN(n)) return IR.slow(n, ir, tagMeta(method, callSiteRange));
+      return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
+    }
+    case "range": {
+      const parts = splitArgsWithOffsets(subbedArgs);
+      if (parts.length === 2) {
+        const lo = parts[0].value.trim();
+        const hi = parts[1].value.trim();
+        if (isNumericLiteral(lo) && isNumericLiteral(hi)) {
+          return IR.range(Number(lo), Number(hi), args, ir, tagMeta(method, callSiteRange));
+        }
+      }
       return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
     }
     case "cat":

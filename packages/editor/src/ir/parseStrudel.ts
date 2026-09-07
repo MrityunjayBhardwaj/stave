@@ -2505,6 +2505,41 @@ function applyMethod(
       return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
     }
 
+    case 'range': {
+      // #1481 — `.range(lo, hi)` maps a continuous signal's output onto a
+      // musical span, and it is the last leg of #1464's prerequisite: after the
+      // signal-argument widening the SHAPE (`Signal`) and RATE (`Slow`) were
+      // readable and the range was not, which is why that change moved the parity
+      // corpus's `Code` count UP — the opacity relocated inward to here.
+      //
+      // Measured over 329 documents before building: 428 call sites in 102 of
+      // them, and the arity is 2 at every single one, so there is no other form
+      // to model. 833 of the 856 arguments are plain numeric literals.
+      //
+      // ⚠ `isNumericLiteral`, NOT `parseFloat`. The arms above use `parseFloat`,
+      // which is a PREFIX parser — it reads `1/8` as `1` and builds a confidently
+      // wrong node. That is #1480, and five of the seven non-literal arguments in
+      // this corpus are exactly that `1/N` shape, so a `parseFloat` range arm
+      // would ship the defect on arrival. Asking `isNumericLiteral` matches the
+      // WHOLE token (#957's single answer) and declines everything else.
+      //
+      // Declining means the existing opaque wrap, never a guess: this file is a
+      // matcher and not an interpreter, and `1/8` is deferred to Strudel's own
+      // eval with its bytes intact rather than computed to 0.125 here.
+      const parts = splitArgsWithOffsets(subbedArgs)
+      if (parts.length === 2) {
+        const lo = parts[0].value.trim()
+        const hi = parts[1].value.trim()
+        if (isNumericLiteral(lo) && isNumericLiteral(hi)) {
+          // `args`, not `subbedArgs`, is the round-trip authority — it is the
+          // user's own untrimmed bytes, and a bound identifier substituted into
+          // `subbedArgs` must not be written back in place of the name they typed.
+          return IR.range(Number(lo), Number(hi), args, ir, tagMeta(method, callSiteRange))
+        }
+      }
+      return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
+    }
+
     case 'cat':
     case 'slowcat':
     case 'fastcat': {

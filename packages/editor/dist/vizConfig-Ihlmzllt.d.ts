@@ -238,6 +238,14 @@ type PatternIR = {
     loc?: SourceLocation[];
     userMethod?: string;
 } | {
+    tag: 'Range';
+    lo: number;
+    hi: number;
+    rawArgs: string;
+    body: PatternIR;
+    loc?: SourceLocation[];
+    userMethod?: string;
+} | {
     tag: 'Elongate';
     factor: number;
     body: PatternIR;
@@ -414,6 +422,7 @@ declare const IR: {
     readonly ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly fast: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly slow: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
+    readonly range: (lo: number, hi: number, rawArgs: string, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly elongate: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly late: (offset: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly degrade: (p: number, body: PatternIR, meta?: TagMeta) => PatternIR;

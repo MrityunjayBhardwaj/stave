@@ -223,6 +223,14 @@ function gen(ir: PatternIR): string {
       return `${body}.slow(${ir.factor})`
     }
 
+    case 'Range':
+      // #1481 — `rawArgs` verbatim, NOT `${lo}, ${hi}`. The node this replaces
+      // was an opaque `Code` that re-emitted the user's own bytes for free, and
+      // the corpus writes `.range(0.3,0.8)` unspaced far more often than not, so
+      // regenerating a canonical `, ` would REGRESS byte-fidelity in the act of
+      // adding structure. Same contract as `Param` above, for the same reason.
+      return `${gen(ir.body)}.${ir.userMethod ?? 'range'}(${ir.rawArgs})`
+
     case 'Loop':
       // All Strudel patterns loop implicitly
       return gen(ir.body)
