@@ -524,6 +524,16 @@ function withWrapperLoc(items, wrapper) {
   return items.map((it) => ({ ...it, loc: it.loc ? [...it.loc, range2] : [range2] }));
 }
 __name(withWrapperLoc, "withWrapperLoc");
+function selectedEntryRange(ir, selectedArm) {
+  if (selectedArm === void 0) return void 0;
+  const slot = ir.selector.tag === "Cycle" ? ir.selector.items[selectedArm] : void 0;
+  if (!slot) return void 0;
+  const body = slot.tag === "Elongate" ? slot.body : slot;
+  if (!body || body.tag !== "Play" || typeof body.note !== "string") return void 0;
+  const keyLoc = ir.entries.find((e) => e.key === body.note)?.keyLoc;
+  return keyLoc ? [keyLoc.start, keyLoc.end] : void 0;
+}
+__name(selectedEntryRange, "selectedEntryRange");
 function safeCountLeaves(node) {
   try {
     return countLeavesInIR(node);
@@ -760,11 +770,17 @@ function walkCycle(ir, ctx) {
           }
         }
       }
+      const inherited = ctx.armIndex !== void 0;
       const armIndex = ctx.armIndex ?? selectedArm;
+      const armRange = inherited ? ctx.armRange : selectedEntryRange(ir, selectedArm);
       const out = [];
       const selectorLoc = ir.selector.loc?.[0];
       for (const entry of ir.entries) {
-        const childCtx = { ...ctx, ...armIndex !== void 0 ? { armIndex } : {} };
+        const childCtx = {
+          ...ctx,
+          ...armIndex !== void 0 ? { armIndex } : {},
+          ...armRange !== void 0 ? { armRange } : {}
+        };
         for (const it of recurse(entry.pattern, childCtx)) {
           const childLoc = it.loc ?? [];
           const newLoc = [...childLoc, ...selectorLoc ? [selectorLoc] : []];
@@ -45335,6 +45351,27 @@ function scanControlArms(raw, litStart) {
   return { arms, innerRange: [innerBase, innerBase + inner.length] };
 }
 __name(scanControlArms, "scanControlArms");
+function collectSectionEntries(node) {
+  const arg = node.arguments?.[0];
+  if (!arg || arg.type !== "ObjectExpression") return [];
+  const entries3 = [];
+  for (const prop of arg.properties ?? []) {
+    if (prop.type !== "Property" || prop.kind !== "init" || prop.computed) continue;
+    const key2 = prop.key;
+    let name = null;
+    if (key2?.type === "Identifier") name = key2.name;
+    else if (key2?.type === "Literal" && typeof key2.value === "string") name = key2.value;
+    else if (key2?.type === "Literal" && typeof key2.value === "number") name = String(key2.value);
+    if (name == null) continue;
+    entries3.push({
+      key: name,
+      keyRange: [key2.start, key2.end],
+      shorthand: prop.shorthand === true
+    });
+  }
+  return entries3;
+}
+__name(collectSectionEntries, "collectSectionEntries");
 function buildControl(doc, node) {
   const lit = node.callee.object;
   const raw = doc.slice(lit.start, lit.end);
@@ -45345,7 +45382,8 @@ function buildControl(doc, node) {
     callRange: [node.start, node.end],
     stringRange: [lit.start, lit.end],
     innerRange: scanned.innerRange,
-    arms: scanned.arms
+    arms: scanned.arms,
+    entries: collectSectionEntries(node)
   };
 }
 __name(buildControl, "buildControl");
@@ -45449,6 +45487,63 @@ function duplicateArm(doc, control, i) {
   return insertArm2(doc, control, i + 1, armText2(doc, control, i));
 }
 __name(duplicateArm, "duplicateArm");
+var SECTION_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+var NOT_A_KEY = "__proto__";
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+__name(escapeRe, "escapeRe");
+function everyOccurrenceIsAnArmHead(doc, control, name) {
+  const [from, to] = control.innerRange;
+  const inner = doc.slice(from, to);
+  const re = new RegExp(`(^|[^A-Za-z0-9_$])(${escapeRe(name)})(?![A-Za-z0-9_$])`, "g");
+  let m;
+  while ((m = re.exec(inner)) !== null) {
+    const at = from + m.index + m[1].length;
+    const covered = control.arms.some(
+      (a) => a.headRange[0] === at && a.headRange[1] === at + name.length
+    );
+    if (!covered) return false;
+    re.lastIndex = m.index + m[1].length + name.length;
+  }
+  return true;
+}
+__name(everyOccurrenceIsAnArmHead, "everyOccurrenceIsAnArmHead");
+function countSectionArms(doc, control, i) {
+  const arm = control.arms[i];
+  if (!arm) return 0;
+  const name = headText(doc, control, i);
+  if (control.entries.filter((e) => e.key === name).length !== 1) return 0;
+  if (!everyOccurrenceIsAnArmHead(doc, control, name)) return 0;
+  return control.arms.filter((_, k) => headText(doc, control, k) === name).length;
+}
+__name(countSectionArms, "countSectionArms");
+function renameSection(doc, control, i, newName) {
+  const arm = control.arms[i];
+  if (!arm) return [];
+  if (!SECTION_NAME.test(newName) || newName === NOT_A_KEY) return [];
+  const oldName = headText(doc, control, i);
+  if (newName === oldName) return [];
+  const entry = control.entries.find((e) => e.key === oldName);
+  if (!entry) return [];
+  if (control.entries.filter((e) => e.key === oldName).length !== 1) return [];
+  if (control.entries.some((e) => e.key === newName)) return [];
+  if (!everyOccurrenceIsAnArmHead(doc, control, oldName)) return [];
+  const keyText = entry.shorthand ? `${newName}: ${oldName}` : quoteLike(doc.slice(entry.keyRange[0], entry.keyRange[1]), newName);
+  const edits = [{ range: entry.keyRange, text: keyText }];
+  for (const a of control.arms) {
+    if (doc.slice(a.headRange[0], a.headRange[1]) === oldName) {
+      edits.push({ range: a.headRange, text: newName });
+    }
+  }
+  return edits;
+}
+__name(renameSection, "renameSection");
+function quoteLike(oldToken, name) {
+  const q = oldToken[0];
+  return q === '"' || q === "'" ? `${q}${name}${q}` : name;
+}
+__name(quoteLike, "quoteLike");
 
 // src/visualEdit/notation/resize.ts
 var restructured = /* @__PURE__ */ __name(({ source: _drop, ...rest }) => rest, "restructured");
@@ -46106,9 +46201,11 @@ exports.patternFromJSON = patternFromJSON;
 exports.patternKind = patternKind;
 exports.patternToJSON = patternToJSON;
 exports.perf = perf;
+exports.pickCountSectionArms = countSectionArms;
 exports.pickDuplicateArm = duplicateArm;
 exports.pickInsertArm = insertArm2;
 exports.pickRemoveArm = removeArm2;
+exports.pickRenameSection = renameSection;
 exports.pickReorderArm = reorderArm2;
 exports.pickSetWeight = setWeight2;
 exports.pickSilenceArm = silenceArm2;
