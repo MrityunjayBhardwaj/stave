@@ -249,7 +249,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".slow(8)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(300,3000)",
   },
   {
@@ -313,7 +313,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".segment(8)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0,7)",
   },
   {
@@ -401,7 +401,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".speed(rand.range(.5,1.5))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(.5,1.5)",
   },
   {
@@ -464,7 +464,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".pan(sine.range(.3,.6))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(.3,.6)",
   },
   {
@@ -516,7 +516,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".cutoff(perlin.range(500,4000))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(500,4000)",
   },
   {
@@ -806,7 +806,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".fast(perlin.range(2.8,3.2))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0.4,0.6)",
   },
   {
@@ -822,7 +822,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".fast(perlin.range(2.8,3.2))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(1.5,8)",
   },
   {
@@ -2833,7 +2833,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".cutoff(sine.slow(7).range(200,4000))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(200,4000)",
   },
   {
@@ -3124,7 +3124,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".end(perlin.range(0.02,1))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0.02,1)",
   },
   {
@@ -3280,7 +3280,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".decay(perlin.range(0.05,.2))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0.05,.2)",
   },
   {
@@ -3296,7 +3296,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".slow(8)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(400,3000)",
   },
   {
@@ -3516,7 +3516,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".struct("x(5,8,-1)")",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0,12)",
   },
   {
@@ -3824,7 +3824,7 @@ note("<b4 eb4>").s('dino').delay(.8).slow(8).room(.5)
     "text": ".slow(32)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0,.5)",
   },
   {
@@ -3840,7 +3840,7 @@ note("<b4 eb4>").s('dino').delay(.8).slow(8).room(.5)
     "text": ".decay(perlin.range(.05,.2))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(.05,.2)",
   },
   {
@@ -3860,7 +3860,7 @@ note("<b4 eb4>").s('dino').delay(.8).slow(8).room(.5)
     "text": ".slow(16)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(400,2000)",
   },
   {
@@ -4342,7 +4342,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".slow(8)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(0.02,.05)",
   },
   {
@@ -4470,7 +4470,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".decay(sine.slow(15).range(.05,.2))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(.05,.2)",
   },
   {
@@ -4494,7 +4494,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".slow(16)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(500,4000)",
   },
   {
@@ -4847,7 +4847,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".slow(8)",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(200,2000)",
   },
   {
@@ -5073,7 +5073,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".speed(perlin.range(.7,.9))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(.7,.9)",
   },
   {
@@ -5157,7 +5157,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".cutoff(sine.slow(7).range(300,5000))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(300,5000)",
   },
   {
@@ -5585,7 +5585,7 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".velocity(rand.range(.5,1))",
   },
   {
-    "tag": "Code",
+    "tag": "Range",
     "text": ".range(.5,1)",
   },
   {

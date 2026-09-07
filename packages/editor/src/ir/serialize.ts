@@ -53,7 +53,7 @@ export function patternFromJSON(json: string): PatternIR {
 
 const VALID_TAGS = new Set([
   'Pure', 'Seq', 'Stack', 'Play', 'Sleep', 'Choice', 'Every',
-  'Cycle', 'When', 'Ramp', 'Fast', 'Slow', 'Loop', 'Code',
+  'Cycle', 'When', 'Ramp', 'Fast', 'Slow', 'Range', 'Loop', 'Code',
   'Param', 'Track',
   // Phase 20-18 Wave A — Signal/Builder chain-ROOT family (additive).
   // Every existing entry above stays byte-UNCHANGED; these are appended
@@ -201,6 +201,23 @@ function validateNode(raw: unknown, path: string): PatternIR {
       return {
         tag: 'Slow',
         factor: node.factor as number,
+        body: validateNode(node.body, `${path}.body`),
+      }
+    }
+
+    case 'Range': {
+      // #1481 — `rawArgs` is carried through like `Param`'s, because it is the
+      // round-trip authority; dropping it here would make a serialize/deserialize
+      // cycle rewrite the user's spacing.
+      requireField(node, 'lo', ['number'], path)
+      requireField(node, 'hi', ['number'], path)
+      requireField(node, 'rawArgs', ['string'], path)
+      requireField(node, 'body', ['object'], path)
+      return {
+        tag: 'Range',
+        lo: node.lo as number,
+        hi: node.hi as number,
+        rawArgs: node.rawArgs as string,
         body: validateNode(node.body, `${path}.body`),
       }
     }

@@ -436,26 +436,24 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
                                               "via": {
                                                 "args": "8",
                                                 "inner": {
-                                                  "code": "",
-                                                  "lang": "strudel",
-                                                  "tag": "Code",
-                                                  "via": {
-                                                    "args": "0,7",
-                                                    "inner": {
-                                                      "code": "",
-                                                      "lang": "strudel",
-                                                      "tag": "Code",
-                                                      "via": {
-                                                        "args": "saw.slow(4)",
-                                                        "inner": {
-                                                          "kind": "sine",
-                                                          "tag": "Signal",
-                                                        },
-                                                        "method": "add",
+                                                  "body": {
+                                                    "code": "",
+                                                    "lang": "strudel",
+                                                    "tag": "Code",
+                                                    "via": {
+                                                      "args": "saw.slow(4)",
+                                                      "inner": {
+                                                        "kind": "sine",
+                                                        "tag": "Signal",
                                                       },
+                                                      "method": "add",
                                                     },
-                                                    "method": "range",
                                                   },
+                                                  "hi": 7,
+                                                  "lo": 0,
+                                                  "rawArgs": "0,7",
+                                                  "tag": "Range",
+                                                  "userMethod": "range",
                                                 },
                                                 "method": "segment",
                                               },
@@ -544,17 +542,15 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
                     "userMethod": "cutoff",
                     "value": {
                       "body": {
-                        "code": "",
-                        "lang": "strudel",
-                        "tag": "Code",
-                        "via": {
-                          "args": "300,3000",
-                          "inner": {
-                            "kind": "perlin",
-                            "tag": "Signal",
-                          },
-                          "method": "range",
+                        "body": {
+                          "kind": "perlin",
+                          "tag": "Signal",
                         },
+                        "hi": 3000,
+                        "lo": 300,
+                        "rawArgs": "300,3000",
+                        "tag": "Range",
+                        "userMethod": "range",
                       },
                       "factor": 8,
                       "tag": "Slow",
@@ -744,17 +740,15 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
             "tag": "Param",
             "userMethod": "speed",
             "value": {
-              "code": "",
-              "lang": "strudel",
-              "tag": "Code",
-              "via": {
-                "args": ".5,1.5",
-                "inner": {
-                  "kind": "rand",
-                  "tag": "Signal",
-                },
-                "method": "range",
+              "body": {
+                "kind": "rand",
+                "tag": "Signal",
               },
+              "hi": 1.5,
+              "lo": 0.5,
+              "rawArgs": ".5,1.5",
+              "tag": "Range",
+              "userMethod": "range",
             },
           },
         ],
@@ -1054,17 +1048,15 @@ exports[`strudel.cc parity corpus — structural IR shape > arpoon parses to a s
                               "tag": "Param",
                               "userMethod": "cutoff",
                               "value": {
-                                "code": "",
-                                "lang": "strudel",
-                                "tag": "Code",
-                                "via": {
-                                  "args": "500,4000",
-                                  "inner": {
-                                    "kind": "perlin",
-                                    "tag": "Signal",
-                                  },
-                                  "method": "range",
+                                "body": {
+                                  "kind": "perlin",
+                                  "tag": "Signal",
                                 },
+                                "hi": 4000,
+                                "lo": 500,
+                                "rawArgs": "500,4000",
+                                "tag": "Range",
+                                "userMethod": "range",
                               },
                             },
                             "key": "resonance",
@@ -1134,17 +1126,15 @@ exports[`strudel.cc parity corpus — structural IR shape > arpoon parses to a s
                 "tag": "Param",
                 "userMethod": "pan",
                 "value": {
-                  "code": "",
-                  "lang": "strudel",
-                  "tag": "Code",
-                  "via": {
-                    "args": ".3,.6",
-                    "inner": {
-                      "kind": "sine",
-                      "tag": "Signal",
-                    },
-                    "method": "range",
+                  "body": {
+                    "kind": "sine",
+                    "tag": "Signal",
                   },
+                  "hi": 0.6,
+                  "lo": 0.3,
+                  "rawArgs": ".3,.6",
+                  "tag": "Range",
+                  "userMethod": "range",
                 },
               },
               "key": "s",
@@ -1590,17 +1580,15 @@ exports[`strudel.cc parity corpus — structural IR shape > bakery-141-irand-cha
         "via": {
           "args": "perlin.range(2.8,3.2)",
           "inner": {
-            "code": "",
-            "lang": "strudel",
-            "tag": "Code",
-            "via": {
-              "args": "1.5,8",
-              "inner": {
-                "kind": "sine",
-                "tag": "Signal",
-              },
-              "method": "range",
+            "body": {
+              "kind": "sine",
+              "tag": "Signal",
             },
+            "hi": 8,
+            "lo": 1.5,
+            "rawArgs": "1.5,8",
+            "tag": "Range",
+            "userMethod": "range",
           },
           "method": "fast",
         },
@@ -1617,17 +1605,15 @@ exports[`strudel.cc parity corpus — structural IR shape > bakery-141-irand-cha
       "via": {
         "args": "perlin.range(2.8,3.2)",
         "inner": {
-          "code": "",
-          "lang": "strudel",
-          "tag": "Code",
-          "via": {
-            "args": "0.4,0.6",
-            "inner": {
-              "kind": "sine",
-              "tag": "Signal",
-            },
-            "method": "range",
+          "body": {
+            "kind": "sine",
+            "tag": "Signal",
           },
+          "hi": 0.6,
+          "lo": 0.4,
+          "rawArgs": "0.4,0.6",
+          "tag": "Range",
+          "userMethod": "range",
         },
         "method": "fast",
       },
@@ -5153,22 +5139,20 @@ x=>x.add(7)
                 "tag": "Param",
                 "userMethod": "cutoff",
                 "value": {
-                  "code": "",
-                  "lang": "strudel",
-                  "tag": "Code",
-                  "via": {
-                    "args": "200,4000",
-                    "inner": {
-                      "body": {
-                        "kind": "sine",
-                        "tag": "Signal",
-                      },
-                      "factor": 7,
-                      "tag": "Slow",
-                      "userMethod": "slow",
+                  "body": {
+                    "body": {
+                      "kind": "sine",
+                      "tag": "Signal",
                     },
-                    "method": "range",
+                    "factor": 7,
+                    "tag": "Slow",
+                    "userMethod": "slow",
                   },
+                  "hi": 4000,
+                  "lo": 200,
+                  "rawArgs": "200,4000",
+                  "tag": "Range",
+                  "userMethod": "range",
                 },
               },
               "key": "resonance",
@@ -5486,17 +5470,15 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
           "tag": "Param",
           "userMethod": "end",
           "value": {
-            "code": "",
-            "lang": "strudel",
-            "tag": "Code",
-            "via": {
-              "args": "0.02,1",
-              "inner": {
-                "kind": "perlin",
-                "tag": "Signal",
-              },
-              "method": "range",
+            "body": {
+              "kind": "perlin",
+              "tag": "Signal",
             },
+            "hi": 1,
+            "lo": 0.02,
+            "rawArgs": "0.02,1",
+            "tag": "Range",
+            "userMethod": "range",
           },
         },
         {
@@ -5733,17 +5715,15 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
                   "userMethod": "cutoff",
                   "value": {
                     "body": {
-                      "code": "",
-                      "lang": "strudel",
-                      "tag": "Code",
-                      "via": {
-                        "args": "400,3000",
-                        "inner": {
-                          "kind": "perlin",
-                          "tag": "Signal",
-                        },
-                        "method": "range",
+                      "body": {
+                        "kind": "perlin",
+                        "tag": "Signal",
                       },
+                      "hi": 3000,
+                      "lo": 400,
+                      "rawArgs": "400,3000",
+                      "tag": "Range",
+                      "userMethod": "range",
                     },
                     "factor": 8,
                     "tag": "Slow",
@@ -5755,17 +5735,15 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
                 "tag": "Param",
                 "userMethod": "decay",
                 "value": {
-                  "code": "",
-                  "lang": "strudel",
-                  "tag": "Code",
-                  "via": {
-                    "args": "0.05,.2",
-                    "inner": {
-                      "kind": "perlin",
-                      "tag": "Signal",
-                    },
-                    "method": "range",
+                  "body": {
+                    "kind": "perlin",
+                    "tag": "Signal",
                   },
+                  "hi": 0.2,
+                  "lo": 0.05,
+                  "rawArgs": "0.05,.2",
+                  "tag": "Range",
+                  "userMethod": "range",
                 },
               },
               "key": "sustain",
@@ -6058,17 +6036,15 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
                     "body": {
                       "body": {
                         "body": {
-                          "code": "",
-                          "lang": "strudel",
-                          "tag": "Code",
-                          "via": {
-                            "args": "0,12",
-                            "inner": {
-                              "kind": "rand",
-                              "tag": "Signal",
-                            },
-                            "method": "range",
+                          "body": {
+                            "kind": "rand",
+                            "tag": "Signal",
                           },
+                          "hi": 12,
+                          "lo": 0,
+                          "rawArgs": "0,12",
+                          "tag": "Range",
+                          "userMethod": "range",
                         },
                         "mask": "x(5,8,-1)",
                         "tag": "Struct",
@@ -6879,17 +6855,15 @@ exports[`strudel.cc parity corpus — structural IR shape > dinofunk parses to a
                     "userMethod": "cutoff",
                     "value": {
                       "body": {
-                        "code": "",
-                        "lang": "strudel",
-                        "tag": "Code",
-                        "via": {
-                          "args": "400,2000",
-                          "inner": {
-                            "kind": "sine",
-                            "tag": "Signal",
-                          },
-                          "method": "range",
+                        "body": {
+                          "kind": "sine",
+                          "tag": "Signal",
                         },
+                        "hi": 2000,
+                        "lo": 400,
+                        "rawArgs": "400,2000",
+                        "tag": "Range",
+                        "userMethod": "range",
                       },
                       "factor": 16,
                       "tag": "Slow",
@@ -6907,17 +6881,15 @@ exports[`strudel.cc parity corpus — structural IR shape > dinofunk parses to a
                 "tag": "Param",
                 "userMethod": "decay",
                 "value": {
-                  "code": "",
-                  "lang": "strudel",
-                  "tag": "Code",
-                  "via": {
-                    "args": ".05,.2",
-                    "inner": {
-                      "kind": "perlin",
-                      "tag": "Signal",
-                    },
-                    "method": "range",
+                  "body": {
+                    "kind": "perlin",
+                    "tag": "Signal",
                   },
+                  "hi": 0.2,
+                  "lo": 0.05,
+                  "rawArgs": ".05,.2",
+                  "tag": "Range",
+                  "userMethod": "range",
                 },
               },
               "key": "sustain",
@@ -6932,17 +6904,15 @@ exports[`strudel.cc parity corpus — structural IR shape > dinofunk parses to a
             "userMethod": "delay",
             "value": {
               "body": {
-                "code": "",
-                "lang": "strudel",
-                "tag": "Code",
-                "via": {
-                  "args": "0,.5",
-                  "inner": {
-                    "kind": "sine",
-                    "tag": "Signal",
-                  },
-                  "method": "range",
+                "body": {
+                  "kind": "sine",
+                  "tag": "Signal",
                 },
+                "hi": 0.5,
+                "lo": 0,
+                "rawArgs": "0,.5",
+                "tag": "Range",
+                "userMethod": "range",
               },
               "factor": 32,
               "tag": "Slow",
@@ -7558,17 +7528,15 @@ exports[`strudel.cc parity corpus — structural IR shape > flatrave parses to a
               "userMethod": "end",
               "value": {
                 "body": {
-                  "code": "",
-                  "lang": "strudel",
-                  "tag": "Code",
-                  "via": {
-                    "args": "0.02,.05",
-                    "inner": {
-                      "kind": "perlin",
-                      "tag": "Signal",
-                    },
-                    "method": "range",
+                  "body": {
+                    "kind": "perlin",
+                    "tag": "Signal",
                   },
+                  "hi": 0.05,
+                  "lo": 0.02,
+                  "rawArgs": "0.02,.05",
+                  "tag": "Range",
+                  "userMethod": "range",
                 },
                 "factor": 8,
                 "tag": "Slow",
@@ -7891,17 +7859,15 @@ exports[`strudel.cc parity corpus — structural IR shape > flatrave parses to a
                       "userMethod": "cutoff",
                       "value": {
                         "body": {
-                          "code": "",
-                          "lang": "strudel",
-                          "tag": "Code",
-                          "via": {
-                            "args": "500,4000",
-                            "inner": {
-                              "kind": "sine",
-                              "tag": "Signal",
-                            },
-                            "method": "range",
+                          "body": {
+                            "kind": "sine",
+                            "tag": "Signal",
                           },
+                          "hi": 4000,
+                          "lo": 500,
+                          "rawArgs": "500,4000",
+                          "tag": "Range",
+                          "userMethod": "range",
                         },
                         "factor": 16,
                         "tag": "Slow",
@@ -7919,22 +7885,20 @@ exports[`strudel.cc parity corpus — structural IR shape > flatrave parses to a
                   "tag": "Param",
                   "userMethod": "decay",
                   "value": {
-                    "code": "",
-                    "lang": "strudel",
-                    "tag": "Code",
-                    "via": {
-                      "args": ".05,.2",
-                      "inner": {
-                        "body": {
-                          "kind": "sine",
-                          "tag": "Signal",
-                        },
-                        "factor": 15,
-                        "tag": "Slow",
-                        "userMethod": "slow",
+                    "body": {
+                      "body": {
+                        "kind": "sine",
+                        "tag": "Signal",
                       },
-                      "method": "range",
+                      "factor": 15,
+                      "tag": "Slow",
+                      "userMethod": "slow",
                     },
+                    "hi": 0.2,
+                    "lo": 0.05,
+                    "rawArgs": ".05,.2",
+                    "tag": "Range",
+                    "userMethod": "range",
                   },
                 },
                 "key": "sustain",
@@ -8827,17 +8791,15 @@ exports[`strudel.cc parity corpus — structural IR shape > juxUndTollerei parse
                         "userMethod": "lpf",
                         "value": {
                           "body": {
-                            "code": "",
-                            "lang": "strudel",
-                            "tag": "Code",
-                            "via": {
-                              "args": "200,2000",
-                              "inner": {
-                                "kind": "sine",
-                                "tag": "Signal",
-                              },
-                              "method": "range",
+                            "body": {
+                              "kind": "sine",
+                              "tag": "Signal",
                             },
+                            "hi": 2000,
+                            "lo": 200,
+                            "rawArgs": "200,2000",
+                            "tag": "Range",
+                            "userMethod": "range",
                           },
                           "factor": 8,
                           "tag": "Slow",
@@ -9056,17 +9018,15 @@ exports[`strudel.cc parity corpus — structural IR shape > meltingsubmarine par
           "tag": "Param",
           "userMethod": "speed",
           "value": {
-            "code": "",
-            "lang": "strudel",
-            "tag": "Code",
-            "via": {
-              "args": ".7,.9",
-              "inner": {
-                "kind": "perlin",
-                "tag": "Signal",
-              },
-              "method": "range",
+            "body": {
+              "kind": "perlin",
+              "tag": "Signal",
             },
+            "hi": 0.9,
+            "lo": 0.7,
+            "rawArgs": ".7,.9",
+            "tag": "Range",
+            "userMethod": "range",
           },
         },
         {
@@ -9332,22 +9292,20 @@ exports[`strudel.cc parity corpus — structural IR shape > meltingsubmarine par
               "tag": "Param",
               "userMethod": "cutoff",
               "value": {
-                "code": "",
-                "lang": "strudel",
-                "tag": "Code",
-                "via": {
-                  "args": "300,5000",
-                  "inner": {
-                    "body": {
-                      "kind": "sine",
-                      "tag": "Signal",
-                    },
-                    "factor": 7,
-                    "tag": "Slow",
-                    "userMethod": "slow",
+                "body": {
+                  "body": {
+                    "kind": "sine",
+                    "tag": "Signal",
                   },
-                  "method": "range",
+                  "factor": 7,
+                  "tag": "Slow",
+                  "userMethod": "slow",
                 },
+                "hi": 5000,
+                "lo": 300,
+                "rawArgs": "300,5000",
+                "tag": "Range",
+                "userMethod": "range",
               },
             },
             "key": "lpattack",
@@ -9866,17 +9824,15 @@ exports[`strudel.cc parity corpus — structural IR shape > randomBells parses t
                           "tag": "Param",
                           "userMethod": "velocity",
                           "value": {
-                            "code": "",
-                            "lang": "strudel",
-                            "tag": "Code",
-                            "via": {
-                              "args": ".5,1",
-                              "inner": {
-                                "kind": "rand",
-                                "tag": "Signal",
-                              },
-                              "method": "range",
+                            "body": {
+                              "kind": "rand",
+                              "tag": "Signal",
                             },
+                            "hi": 1,
+                            "lo": 0.5,
+                            "rawArgs": ".5,1",
+                            "tag": "Range",
+                            "userMethod": "range",
                           },
                         },
                         "key": "s",

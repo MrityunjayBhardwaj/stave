@@ -16,9 +16,18 @@
  * MEASURED over 329 distinct documents (`ref/bakery-runs-inputs`, by content
  * hash): a signal is passed as a chain-method argument at **481 call sites
  * across 123 documents** — about a third of all real code — and before this arm
- * exactly **2** reached a `Param`. After it, **554**. Corpus `Code` nodes fall
- * 2691 -> 2517 and `Play` leaves rise 26946 -> 27154: opacity down, structure
- * up, nothing lost.
+ * exactly **2** reached a `Param`.
+ *
+ * ⚠ CORRECTED — the figures first written here compared against the WRONG
+ * commit. They took their "before" from #1475's readings, which predate the
+ * `.slice()` commit this branch actually sits on. Re-measured with both parsers
+ * loaded in ONE pass over the same documents, so neither half is remembered:
+ * `Param` carrying a `Signal` **0 -> 541**, corpus `Code` **2662 -> 2616**,
+ * `Play` leaves **26982 -> 27154**. Opacity down, structure up, nothing lost.
+ *
+ * ⚠ And `Code` falls only slightly, because this arm relocates opacity inward
+ * rather than removing it — `.range(...)` stays unmodelled underneath. #1481
+ * finishes that, and takes `Code` 2616 -> 2147.
  *
  * ⚠ AND THE NUMBER THAT NEARLY WENT THE OTHER WAY. Counting `Param` nodes by
  * class through the parser alone said "2 continuous against ~600 stepped", which
