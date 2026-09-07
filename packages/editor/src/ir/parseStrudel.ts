@@ -177,6 +177,44 @@ export function isNumericLiteral(token: string): boolean {
 }
 
 /**
+ * The value of a token that is a WHOLE numeric literal, or NaN (#1480).
+ *
+ * `parseFloat` is a PREFIX parser: it consumes as much as looks like a number
+ * and IGNORES THE REST, so `parseFloat('1/16')` is 1, not NaN. The arms below
+ * read their argument and decline on NaN, so the guard passed and `.fast(1/16)`
+ * built `fast(1)` — a sixteenth of the speed modelled as no change at all, with
+ * a plausible number in the node and nothing red.
+ *
+ * The hazard was already known and already written down: the bare
+ * partial-application arm routes AROUND `applyChain` precisely because its
+ * "`fast`/`slow` arms `parseFloat` the arg, which would truncate `2*2` to `2` (a
+ * plausible-wrong value)". That reasoning was spent on a workaround at one
+ * caller while the arms themselves stayed live.
+ *
+ * ⚠ SCOPED DELIBERATELY TO `fast`/`slow`/`late`, AND THE CORPUS IS WHY. Applying
+ * the same gate to every numeric arm was measured first and REGRESSED the corpus
+ * badly: `Play` leaves 27154 -> 27047, because `.off(1/8, x => …)` is idiomatic
+ * and declining it opaques the whole call INCLUDING its transform subtree. A
+ * conservative fallback is not free — it discards whatever the degraded node was
+ * still providing, and for a transform-carrying arm that is most of the music.
+ * The multi-argument param calls (`.delay(0.3,0.4,0.95)`) are a different
+ * question again: `parseFloat` reads their FIRST argument, which is not a
+ * prefix-of-arithmetic bug and is arguably the right reading.
+ *
+ * These three arms are the ones where declining costs nothing structural: the
+ * argument is a lone scalar, and the opaque wrap keeps the receiver as
+ * `via.inner`, so only the transform's own tag is traded for the user's exact
+ * bytes. What remains is tracked on #1480.
+ *
+ * ⚠ NOT by evaluating the arithmetic. This file is a matcher and never an
+ * interpreter — `172/4` is not computed to `43` — so a declined argument keeps
+ * its source rather than gaining a guessed value.
+ */
+function numericValue(token: string): number {
+  return isNumericLiteral(token) ? Number(token) : NaN
+}
+
+/**
  * Phase 20-22 D-02 — the enumerated-arithmetic grammar, operand-delegated.
  *
  * Splits on the four operators and asks `isNumericLiteral` about each operand,
@@ -2494,13 +2532,13 @@ function applyMethod(
   const subbedArgs = substituteBoundIdentInArg(args, bindings)
   switch (method) {
     case 'fast': {
-      const n = parseFloat(subbedArgs.trim())
+      const n = numericValue(subbedArgs.trim())
       if (!isNaN(n)) return IR.fast(n, ir, tagMeta(method, callSiteRange))
       return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'slow': {
-      const n = parseFloat(subbedArgs.trim())
+      const n = numericValue(subbedArgs.trim())
       if (!isNaN(n)) return IR.slow(n, ir, tagMeta(method, callSiteRange))
       return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
     }
@@ -2716,7 +2754,7 @@ function applyMethod(
       // Modeled as the Late IR tag (Task 02). Decimal literals only —
       // fraction literals like `.late(1/8)` fall back to identity (same
       // limitation `.fast()` has today).
-      const t = parseFloat(subbedArgs.trim())
+      const t = numericValue(subbedArgs.trim())
       if (isNaN(t)) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
       return IR.late(t, ir, tagMeta(method, callSiteRange))
     }

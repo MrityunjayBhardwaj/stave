@@ -1817,6 +1817,10 @@ function isNumericLiteral(token) {
   return t !== "" && Number.isFinite(Number(t));
 }
 __name(isNumericLiteral, "isNumericLiteral");
+function numericValue(token) {
+  return isNumericLiteral(token) ? Number(token) : NaN;
+}
+__name(numericValue, "numericValue");
 var ARITH_SPLIT = /(?<=[\d.])[ \t]*[/*+\-][ \t]*/;
 function isEnumeratedArithmetic(token) {
   const parts = token.split(ARITH_SPLIT);
@@ -2766,12 +2770,12 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
   const subbedArgs = substituteBoundIdentInArg(args, bindings);
   switch (method) {
     case "fast": {
-      const n = parseFloat(subbedArgs.trim());
+      const n = numericValue(subbedArgs.trim());
       if (!isNaN(n)) return IR.fast(n, ir, tagMeta(method, callSiteRange));
       return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
     }
     case "slow": {
-      const n = parseFloat(subbedArgs.trim());
+      const n = numericValue(subbedArgs.trim());
       if (!isNaN(n)) return IR.slow(n, ir, tagMeta(method, callSiteRange));
       return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
     }
@@ -2875,7 +2879,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       return IR.degrade(1 - amount, ir, tagMeta(method, callSiteRange));
     }
     case "late": {
-      const t = parseFloat(subbedArgs.trim());
+      const t = numericValue(subbedArgs.trim());
       if (isNaN(t)) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       return IR.late(t, ir, tagMeta(method, callSiteRange));
     }
