@@ -3361,6 +3361,51 @@ function parseParamArg(
     const innerOffsetAbs = quoteIdx >= 0 ? argsOffsetAbs + quoteIdx + 1 : argsOffsetAbs
     return { value: parseMini(innerStr, isSampleKey, innerOffsetAbs) }
   }
+  // 4. an EXPRESSION argument — in practice, a continuous signal (#1464).
+  //
+  // `.gain(sine)`, `.lpf(sine.range(400,1200).slow(8))`, `.pan(perlin.range(0,1))`.
+  // Measured over 329 corpus documents, a signal is passed as a chain-method
+  // argument at 481 call sites across 123 documents — roughly a THIRD of all real
+  // code — and before this arm not one of them reached a `Param`. The whole
+  // `.method(args)` call opaqued, so the automation was invisible to every surface
+  // that reads the IR.
+  //
+  // ⚠ IT WAS NEVER ABOUT SIGNAL EXPRESSIONS BEING COMPLICATED. A BARE `sine`
+  // opaqued too, and `sine` on its own already parses to a `Signal` node. The three
+  // shapes above are a literal, a name and a mini-string; an argument that is an
+  // expression at all simply had no arm. This adds the arm rather than special-casing
+  // signals, which would be a second, narrower answer to the same question.
+  //
+  // ⚠ ROUND-TRIP IS SAFE BY CONSTRUCTION, which is what makes this cheap. `Param`
+  // regenerates from `rawArgs` verbatim (`toStrudel`: `.${key}(${rawArgs})`), so the
+  // emitted text is the user's own source whatever `value` holds. The node gains a
+  // readable value without gaining a way to damage a document.
+  //
+  // P67 guard, the same one `buildBindingMap`'s caller applies: if the argument
+  // still resolves to a BARE `Code`, the parse did not help, and wrapping an opaque
+  // value in a `Param` would claim a reading we do not have. Keep the existing
+  // whole-call fallback there. A structured `Code.via` is not bare and IS kept —
+  // `sine.range(0.3, 0.8)` is exactly that shape, an unmodelled `.range()` wrapping
+  // a real `Signal`, and keeping it is how the signal becomes visible at all.
+  // ⚠ NOT the empty argument list. `.note()`, `.n()` and `.s()` with no argument
+  // are a different construct: they REIFY THE RECEIVER — `"0 5 3 2".scale('G4
+  // minor').note()` means "read the root's own values as notes", which is what
+  // `miniSource.test.ts` pins as "a bare `.note()` with NO argument reifies the
+  // root". So the argument is not empty; there ISN'T one, and the pattern lives
+  // in the body. `parseExpression('')` returns `Pure` — the silent pattern — and
+  // a `Param` carrying it would state that this call's argument is silence.
+  //
+  // That is the same claim the bare-`Code` guard below refuses to make, for the
+  // same reason; the empty string simply reaches it in a shape that looks
+  // structured. Measured: without this, 10 zero-argument calls across 9 corpus
+  // documents moved `Code` -> `Param` — a third of this arm's movers, none of
+  // them the continuous automation the arm is for. Keep the whole-call fallback
+  // and leave the zero-argument question to whoever asks it deliberately.
+  if (trimmed === '') return null
+  const exprOffsetAbs = argsOffsetAbs + (args.length - args.trimStart().length)
+  const expr = parseExpression(trimmed, exprOffsetAbs, isSampleKey)
+  const isBareCode = expr.tag === 'Code' && (expr as { via?: unknown }).via === undefined
+  if (!isBareCode) return { value: expr }
   return null   // unknown shape — caller wraps as opaque
 }
 

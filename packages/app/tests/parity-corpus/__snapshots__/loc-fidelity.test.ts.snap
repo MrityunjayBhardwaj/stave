@@ -241,8 +241,20 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".degradeBy("0 0.1 .5 .1")",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".cutoff(perlin.range(300,3000).slow(8))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(300,3000)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
   },
   {
     "tag": "Param",
@@ -385,8 +397,16 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": "breath",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".speed(rand.range(.5,1.5))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(.5,1.5)",
+  },
+  {
+    "tag": "Signal",
+    "text": "rand",
   },
   {
     "tag": "Degrade",
@@ -440,8 +460,16 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".s('piano')",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".pan(sine.range(.3,.6))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(.3,.6)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Param",
@@ -484,8 +512,16 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".resonance(12)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".cutoff(perlin.range(500,4000))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(500,4000)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
   },
   {
     "tag": "Code",
@@ -762,12 +798,36 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-141-irand-chain-root — loc→source-slice map is stable & in-bounds 1`] = `
 [
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".pan(sine.range(0.4,0.6).fast(perlin.range(2.8,3.2)))",
   },
   {
     "tag": "Code",
+    "text": ".fast(perlin.range(2.8,3.2))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(0.4,0.6)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
+  },
+  {
+    "tag": "Param",
     "text": ".fm(sine.range(1.5,8).fast(perlin.range(2.8,3.2)))",
+  },
+  {
+    "tag": "Code",
+    "text": ".fast(perlin.range(2.8,3.2))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(1.5,8)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Code",
@@ -2769,8 +2829,20 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".resonance(10)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".cutoff(sine.slow(7).range(200,4000))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(200,4000)",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(7)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Code",
@@ -3048,12 +3120,36 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": "0",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".end(perlin.range(0.02,1))",
   },
   {
     "tag": "Code",
+    "text": ".range(0.02,1)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
+  },
+  {
+    "tag": "Param",
     "text": ".room("0 0.5".fast(2))",
+  },
+  {
+    "tag": "Fast",
+    "text": ".fast(2)",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 0.5",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "0.5",
   },
   {
     "tag": "Fast",
@@ -3180,12 +3276,32 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".sustain(0)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".decay(perlin.range(0.05,.2))",
   },
   {
     "tag": "Code",
+    "text": ".range(0.05,.2)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
+  },
+  {
+    "tag": "Param",
     "text": ".cutoff(perlin.range(400,3000).slow(8))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(400,3000)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
   },
   {
     "tag": "Param",
@@ -3700,24 +3816,56 @@ note("<b4 eb4>").s('dino').delay(.8).slow(8).room(.5)
     "text": ".degradeBy(.4)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".delay(sine.range(0,.5).slow(32))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(32)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(0,.5)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Param",
     "text": ".sustain(0)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".decay(perlin.range(.05,.2))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(.05,.2)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
   },
   {
     "tag": "Param",
     "text": ".gain(.8)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".cutoff(sine.range(400,2000).slow(16))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(16)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(400,2000)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Param",
@@ -4186,8 +4334,20 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".bank('RolandTR909')",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".end(perlin.range(0.02,.05).slow(8))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(0.02,.05)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
   },
   {
     "tag": "Code",
@@ -4306,16 +4466,40 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".sustain(0)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".decay(sine.slow(15).range(.05,.2))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(.05,.2)",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(15)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Param",
     "text": ".resonance(10)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".cutoff(sine.range(500,4000).slow(16))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(16)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(500,4000)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Param",
@@ -4655,8 +4839,20 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".lpa(.2)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".lpf(sine.range(200,2000).slow(8))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(200,2000)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Stack",
@@ -4873,8 +5069,16 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 )",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".speed(perlin.range(.7,.9))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(.7,.9)",
+  },
+  {
+    "tag": "Signal",
+    "text": "perlin",
   },
   {
     "tag": "Stack",
@@ -4949,8 +5153,20 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".lpa(.1)",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".cutoff(sine.slow(7).range(300,5000))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(300,5000)",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(7)",
+  },
+  {
+    "tag": "Signal",
+    "text": "sine",
   },
   {
     "tag": "Param",
@@ -5365,8 +5581,16 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": ".s('bell')",
   },
   {
-    "tag": "Code",
+    "tag": "Param",
     "text": ".velocity(rand.range(.5,1))",
+  },
+  {
+    "tag": "Code",
+    "text": ".range(.5,1)",
+  },
+  {
+    "tag": "Signal",
+    "text": "rand",
   },
   {
     "tag": "Param",
