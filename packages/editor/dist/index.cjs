@@ -3095,6 +3095,11 @@ function parseParamArg(args, isSampleKey, argsOffsetAbs) {
     const innerOffsetAbs = quoteIdx >= 0 ? argsOffsetAbs + quoteIdx + 1 : argsOffsetAbs;
     return { value: parseMini(innerStr, isSampleKey, innerOffsetAbs) };
   }
+  if (trimmed === "") return null;
+  const exprOffsetAbs = argsOffsetAbs + (args.length - args.trimStart().length);
+  const expr = parseExpression(trimmed, exprOffsetAbs, isSampleKey);
+  const isBareCode = expr.tag === "Code" && expr.via === void 0;
+  if (!isBareCode) return { value: expr };
   return null;
 }
 __name(parseParamArg, "parseParamArg");
