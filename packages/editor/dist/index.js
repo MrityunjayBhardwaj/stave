@@ -2046,7 +2046,7 @@ function collectTopLevelBindings(body, baseOffset) {
     }
     if (!progress) break;
   }
-  if (pending.size > 0) return null;
+  if (bindings.size === 0) return null;
   return { bindings, tail: stmts.slice(tailIdx) };
 }
 __name(collectTopLevelBindings, "collectTopLevelBindings");
