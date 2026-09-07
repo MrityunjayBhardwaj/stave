@@ -1271,6 +1271,102 @@ export const CHAIN_ROOT_RECOGNISER: ReadonlyMap<string, ChainRootDescriptor> = n
   ['arrange',  { tag: 'Builder', kind: 'arrange'  }],
 ])
 
+/**
+ * Does `line` open a `//`-commented label (`// name:`)?
+ *
+ * Delegates the "is this a name?" half to `isBareIdent`, the authority this file
+ * already keeps for that question, and finds the colon by index rather than by a
+ * second copy of `dollarRe`'s shape. `PREDICATE-AUDIT.md` inventories every regex
+ * literal in this file and `predicateAudit.test.ts` asserts the counts, so a new
+ * literal here would falsify that document — and, more to the point, would give
+ * one question two authorities that can drift apart.
+ */
+function opensCommentedLabel(line: string): boolean {
+  const t = line.trimStart()
+  if (!t.startsWith('//')) return false
+  const colon = t.indexOf(':')
+  return colon >= 0 && isBareIdent(t.slice(2, colon).trim())
+}
+
+/**
+ * Does `src` read as ONE complete JavaScript expression?
+ *
+ * Wrapped in parens rather than using `parseExpressionAt`, which stops at the
+ * first valid PREFIX — it parses `reverb volume` as the identifier `reverb` and
+ * reports success, which is exactly the misread this guards against (#1475).
+ * The `\n` before the closing paren keeps a trailing `//` comment from eating it.
+ */
+function readsAsOneExpression(src: string): boolean {
+  const t = src.trim()
+  if (!t) return false
+  try {
+    acornParse('(' + t + '\n)', { ecmaVersion: 'latest' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Is a `//`-commented label a commented-out TRACK, or just English prose?
+ *
+ * #1475 — `dollarRe`'s optional `//` group is deliberate: a commented `$:` line
+ * must still be matched so `d{N}` numbering stays stable while a live coder
+ * toggles a comment prefix. But the group accepts ANY `// word:` line, and
+ * ordinary prose is full of them — `// TODO: mix the drums`, `// room: reverb
+ * volume`, or a bare URL, whose label is `https`. One such line anywhere in a
+ * file flipped the whole document onto the labelled-track branch, discarding
+ * every binding and the arrangement with them: measured over 329 distinct
+ * documents (`ref/bakery-runs-inputs`, deduped by content hash), 5 documents
+ * were parsed as SILENT that hold 484 sound-producing leaves and 11
+ * arrangements between them.
+ *
+ * The discriminator is what follows the colon: a real commented-out track's
+ * body reads as code, prose does not. Two details, both found by measuring
+ * rather than reasoning:
+ *
+ *   - the whole remainder must be consumed (see `readsAsOneExpression`);
+ *   - a real track's body may CONTINUE on following `//` lines
+ *     (`// A:note(`<` … ), so a single-line judgement rejects real tracks.
+ *     The continuation scan stops at the first non-comment line, and at the
+ *     next commented label — which is its own candidate.
+ *
+ * TWO SHAPES ARE ADMITTED WITHOUT BEING DISTINGUISHED, both deliberately:
+ *
+ *   - an EMPTY remainder (`// $:`) — the bare marker this feature was built for;
+ *   - a remainder that is ONE BARE IDENTIFIER. `// Author: hazzajenko` and
+ *     `// $: drums` are the same shape, and nothing in the text separates them.
+ *     Admitting both is the conservative direction (it is what the parser did
+ *     before) and it costs nothing measurable: the single corpus document with
+ *     such a line is not among the 5 that lose content.
+ *
+ * Neither is a guess about which one it is — it is a refusal to guess, in the
+ * direction that changes no behaviour the measurement asks to change.
+ *
+ * Measured over every `// word:` line in the corpus: 61 of 61 real commented
+ * tracks kept, every prose line rejected.
+ */
+function commentedLabelIsTrack(code: string, afterColon: number): boolean {
+  const lineEnd = code.indexOf('\n', afterColon)
+  const firstEnd = lineEnd < 0 ? code.length : lineEnd
+  const first = code.slice(afterColon, firstEnd)
+  if (!first.trim()) return true
+  if (readsAsOneExpression(first)) return true
+
+  const block = [first]
+  let i = firstEnd + 1
+  while (i < code.length) {
+    const e = code.indexOf('\n', i)
+    const stop = e < 0 ? code.length : e
+    const line = code.slice(i, stop)
+    const trimmed = line.trimStart()
+    if (!trimmed.startsWith('//') || opensCommentedLabel(line)) break
+    block.push(trimmed.slice(2))
+    i = stop + 1
+  }
+  return block.length > 1 && readsAsOneExpression(block.join('\n'))
+}
+
 export function extractTracks(
   code: string,
 ): {
@@ -1332,6 +1428,14 @@ export function extractTracks(
     // we scan UP TO m.index, which is the line start BEFORE the `//`).
     const st = lexStateAt(code, m.index)
     if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+      continue
+    }
+    // #1475 — a `//` comment that merely READS like `word:` is prose, not a
+    // commented-out track. Rejected HERE rather than at the emit site below,
+    // because a `start` also truncates the PREVIOUS entry's `end`: admitting a
+    // prose line would cut the track above it short even if its own empty body
+    // were discarded later.
+    if (m[1] && !commentedLabelIsTrack(code, m.index + m[0].length)) {
       continue
     }
     // bodyStart points after the matched prefix (`[ws][//]label:`) and any
@@ -2862,6 +2966,76 @@ function applyMethod(
       const n = parseInt(subbedArgs.trim(), 10)
       if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
       return IR.chop(n, ir, tagMeta(method, callSiteRange))
+    }
+
+    case 'slice': {
+      // Tier 4 (#1352 / E2E-5). `.slice(n, ipat)` per pattern.mjs:3356-3373:
+      //   slice(npat, ipat, opat) -> pure({ begin, end, _slices: n, ...o })
+      //   begin = Array.isArray(n) ? n[i]     : i / n
+      //   end   = Array.isArray(n) ? n[i + 1] : (i + 1) / n
+      //
+      // Chop's SIBLING, and the difference is the whole reason this node earns
+      // its place: `chop` fixes the order, `slice` lets the user pattern it. That
+      // makes it the comping primitive — reordering slices IS reordering a take —
+      // which is why E2E-5 (audio and vocals) needs it structural rather than
+      // opaque. `chop` has had a node since 19-04; this one did not, so all 19
+      // corpus documents that call it arrived as an opaque `Code`.
+      //
+      // ⚠ THE INDEX PATTERN IS NOT REFUSED WITH THE COUNT. `n` decides where every
+      // slice BOUNDARY falls, so a count we cannot read makes every slice's extent
+      // unknown and the whole call has to stay opaque — the positional argument
+      // that made `arrange`'s weight all-or-nothing (#1468 A). The index pattern
+      // is not positional: it says which slice plays when, and `parseExpression`
+      // already returns a structured tree with an opaque leaf when it cannot read
+      // one. So the count is refused strictly and the index is simply parsed.
+      //
+      // Measured over 329 corpus documents, 26 call sites: 22 write a bare integer
+      // count, 1 writes an explicit split-point array (the `Array.isArray` branch
+      // above), 2 write an expression index pattern, and 1 writes `.slice(2)` with
+      // no index at all — which upstream cannot run, since `ipat` would be
+      // undefined, so it stays opaque rather than being invented a default.
+      const sliceArgs = splitArgsWithOffsets(args)
+      if (sliceArgs.length < 2) {
+        return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
+      }
+      const countText = sliceArgs[0].value.trim()
+      let sliceN: number | readonly number[] | null = null
+      if (countText.startsWith('[') && countText.endsWith(']')) {
+        const points = countText
+          .slice(1, -1)
+          .split(',')
+          .map((x) => Number(x.trim()))
+        // Split points must be readable, ordered and inside the sample.
+        if (
+          points.length >= 2 &&
+          points.every((x) => Number.isFinite(x) && x >= 0 && x <= 1) &&
+          points.every((x, i) => i === 0 || x > points[i - 1])
+        ) {
+          sliceN = points
+        }
+      } else {
+        const c = Number(countText)
+        if (Number.isInteger(c) && c >= 1) sliceN = c
+      }
+      if (sliceN === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
+      // A quoted mini-notation index is carried RAW, the `Struct.mask` precedent
+      // (`case 'struct'` above). Parsing it as a sub-IR is actively wrong here:
+      // `parseExpression` reads a bare mini string as a NOTE pattern, and these
+      // are slice INDICES. Measured before this branch existed,
+      // `.slice(4, "0 1 2 3")` round-tripped to `.slice(4, note("0 1 2 3"))`,
+      // and a nested one to eight levels of `fastcat(note(…))`. An EXPRESSION
+      // index has no such ambiguity and is parsed — measured round-tripping
+      // `.slice(16, irand(16).struct("x*16"))` byte-for-byte.
+      const rawIndex = sliceArgs[1].value.trim().match(/^"([^"]*)"$/)
+      const sliceIndex: string | PatternIR = rawIndex
+        ? rawIndex[1]
+        : parseExpression(
+            sliceArgs[1].value,
+            baseOffset + sliceArgs[1].offset,
+            undefined,
+            bindings,
+          )
+      return IR.slice(sliceN, sliceIndex, ir, tagMeta(method, callSiteRange))
     }
 
     case 'p': {

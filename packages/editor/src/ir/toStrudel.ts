@@ -316,6 +316,17 @@ function gen(ir: PatternIR): string {
       // is pattern-level only; round-trip preserves the user's source.
       return `${gen(ir.body)}.chop(${ir.n})`
     }
+
+    case 'Slice': {
+      // Tier 4 (#1352 / E2E-5) — `slice(n, ipat)` (pattern.mjs:3356-3373).
+      // Two arguments, so unlike its `chop` sibling the round-trip has to
+      // regenerate the INDEX pattern as well as the count. An array count is
+      // emitted in the same `[a, b, c]` form it was read from, which is the
+      // spelling upstream's `Array.isArray(n)` branch requires.
+      const count = Array.isArray(ir.n) ? `[${(ir.n as readonly number[]).join(', ')}]` : String(ir.n)
+      const index = typeof ir.index === 'string' ? `"${ir.index}"` : gen(ir.index)
+      return `${gen(ir.body)}.slice(${count}, ${index})`
+    }
   }
 }
 

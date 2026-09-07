@@ -5,7 +5,7 @@
  * `parseStrudel.ts` decides things about JavaScript syntax and about Strudel's
  * vocabulary by hand, in anchored regular expressions. Every other module in
  * the parse path asks an authority instead and has zero. The audit document
- * lists all 42 regex literals in the file — the 35 anchored predicates grouped by
+ * lists all 43 regex literals in the file — the 36 anchored predicates grouped by
  * the question each decides and who owns the answer, plus the 7 unanchored — so that
  * "find the next parser bug" is a finite list rather than a search.
  *
@@ -147,7 +147,7 @@ describe('predicate audit (#959)', () => {
    * Every figure is re-derived here and compared against the SOURCE, never
    * against another figure in the document. The prose spellings are included
    * because a number written as a word drifts just as silently as a digit, and
-   * `28 of the 35` is the denominator a reader uses to judge whether the
+   * `28 of the 36` is the denominator a reader uses to judge whether the
    * category breakdown still adds up.
    */
   it('every place the audit states the anchored count agrees with the source', () => {
@@ -199,7 +199,7 @@ describe('predicate audit (#959)', () => {
     const scan = (rel: string): number =>
       regexLiteralsIn(join(IR_DIR, rel)).filter(isAnchored).length
 
-    expect(scan('parseStrudel.ts'), 'control arm: the scan must find the known anchored predicates').toBe(35)
+    expect(scan('parseStrudel.ts'), 'control arm: the scan must find the known anchored predicates').toBe(36)
     for (const rel of delegating) expect(`${rel}: ${scan(rel)}`).toBe(`${rel}: 0`)
   })
 })

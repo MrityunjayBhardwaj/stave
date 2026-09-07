@@ -117,6 +117,9 @@ const TAG_COLOR: Record<PatternIR["tag"], string> = {
   Shuffle:  "var(--ir-shuffle, #fbbf24)",
   Scramble: "var(--ir-scramble, #f87171)",
   Chop:     "var(--ir-chop, #c084fc)",
+  // #1352 — `slice` is `chop`'s sibling (both carve a sample into ranges),
+  // so it shares the family colour rather than claiming a new one.
+  Slice:    "var(--ir-slice, #c084fc)",
   Loop:     "var(--ir-loop, #6366f1)",
   Code:     "var(--ir-code, #ef4444)",
   // Phase 20-10 wave β-2 — Param tag (sample-bucket / track-defining

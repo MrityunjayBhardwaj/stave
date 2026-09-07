@@ -95,6 +95,17 @@ export type PatternIR =
   | { tag: 'Shuffle';  n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-05) — signal.mjs:392 shuffle(n) = _rearrangeWith(randrun(n), n, pat); per-cycle permutation of n slices, each played exactly once per cycle.
   | { tag: 'Scramble'; n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-05) — signal.mjs:405 scramble(n) = _rearrangeWith(_irand(n)._segment(n), n, pat); per-slot independent samples (with replacement) of n slices.
   | { tag: 'Chop';   n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-08) — pattern.mjs:3291-3306 chop(n) = pat.squeezeBind(o => sequence(slice_objects.map(s => merge(o, s)))). Per-event sample-range slicing — each source event becomes n sub-events with progressive begin/end controls. D-04: pattern-level only; audio-buffer slicing deferred to phase 22 (axis 5).
+  | { tag: 'Slice';
+      n: number | readonly number[];            // slice COUNT, or explicit split points in [0,1]
+      index: string | PatternIR;                // which slice plays when — the ORDER the user controls.
+                                                // A quoted mini-notation string is carried RAW (the `Struct.mask`
+                                                // precedent), because parsing it as a sub-IR types it as NOTES and
+                                                // `slice`'s second argument is slice INDICES: measured,
+                                                // `.slice(4, "0 1 2 3")` round-tripped to `.slice(4, note("0 1 2 3"))`.
+                                                // An expression index is a sub-IR, which round-trips exactly.
+      body: PatternIR;
+      loc?: SourceLocation[];
+      userMethod?: string }  // Tier 4 (#1352 / E2E-5) — pattern.mjs:3356-3373 slice(npat, ipat, opat) yields `{begin, end, _slices: n}` where begin = Array.isArray(n) ? n[i] : i/n. Chop's sibling: chop fixes the ORDER and slice lets the user pattern it, which is what makes it the vocal comping primitive (reordering slices = reordering a take). Registered with auto-patternification OFF upstream. Measured: 19 of 329 corpus documents call it, and every one reached the IR as an opaque Code before this node existed.
   | { tag: 'Param';
       key: string;                              // 's' | 'n' | 'note' | 'gain' | 'velocity' | 'color' | 'pan' | 'speed' | 'bank' | 'scale'
       value: string | number | PatternIR;       // literal OR pattern-arg sub-IR (D-03)
@@ -313,6 +324,12 @@ export const IR = {
     attachMeta({ tag: 'Scramble', n, body }, meta),
   chop: (n: number, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Chop', n, body }, meta),
+  slice: (
+    n: number | readonly number[],
+    index: string | PatternIR,
+    body: PatternIR,
+    meta?: TagMeta,
+  ): PatternIR => attachMeta({ tag: 'Slice', n, index, body }, meta),
   loop: (body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Loop', body }, meta),
   // Phase 5a (#386) — unified time-sequence constructor. `mode` is the literal

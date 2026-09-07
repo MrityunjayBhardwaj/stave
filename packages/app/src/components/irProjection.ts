@@ -137,6 +137,7 @@ export function projectedLabel(node: PatternIR): string | undefined {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Slice':
       return node.tag
     case 'Param':
       // #967 — a synthetic jux pan is now Param(pan, ±1) with no userMethod
@@ -289,6 +290,7 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Slice':
     case 'Loop':
       return [node.body]
     case 'Param': {
@@ -402,6 +404,7 @@ export function stripInnerLate(node: PatternIR): PatternIR {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Slice':
     case 'When':
     case 'Loop':
     case 'Track':         // Phase 20-11 — single-body wrapper; same shape as Param.
@@ -505,6 +508,7 @@ function peelSingleBodyWrapper(n: PatternIR): PatternIR | null {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Slice':
     case 'When':
     case 'Every':
     case 'Loop':
