@@ -2968,6 +2968,76 @@ function applyMethod(
       return IR.chop(n, ir, tagMeta(method, callSiteRange))
     }
 
+    case 'slice': {
+      // Tier 4 (#1352 / E2E-5). `.slice(n, ipat)` per pattern.mjs:3356-3373:
+      //   slice(npat, ipat, opat) -> pure({ begin, end, _slices: n, ...o })
+      //   begin = Array.isArray(n) ? n[i]     : i / n
+      //   end   = Array.isArray(n) ? n[i + 1] : (i + 1) / n
+      //
+      // Chop's SIBLING, and the difference is the whole reason this node earns
+      // its place: `chop` fixes the order, `slice` lets the user pattern it. That
+      // makes it the comping primitive — reordering slices IS reordering a take —
+      // which is why E2E-5 (audio and vocals) needs it structural rather than
+      // opaque. `chop` has had a node since 19-04; this one did not, so all 19
+      // corpus documents that call it arrived as an opaque `Code`.
+      //
+      // ⚠ THE INDEX PATTERN IS NOT REFUSED WITH THE COUNT. `n` decides where every
+      // slice BOUNDARY falls, so a count we cannot read makes every slice's extent
+      // unknown and the whole call has to stay opaque — the positional argument
+      // that made `arrange`'s weight all-or-nothing (#1468 A). The index pattern
+      // is not positional: it says which slice plays when, and `parseExpression`
+      // already returns a structured tree with an opaque leaf when it cannot read
+      // one. So the count is refused strictly and the index is simply parsed.
+      //
+      // Measured over 329 corpus documents, 26 call sites: 22 write a bare integer
+      // count, 1 writes an explicit split-point array (the `Array.isArray` branch
+      // above), 2 write an expression index pattern, and 1 writes `.slice(2)` with
+      // no index at all — which upstream cannot run, since `ipat` would be
+      // undefined, so it stays opaque rather than being invented a default.
+      const sliceArgs = splitArgsWithOffsets(args)
+      if (sliceArgs.length < 2) {
+        return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
+      }
+      const countText = sliceArgs[0].value.trim()
+      let sliceN: number | readonly number[] | null = null
+      if (countText.startsWith('[') && countText.endsWith(']')) {
+        const points = countText
+          .slice(1, -1)
+          .split(',')
+          .map((x) => Number(x.trim()))
+        // Split points must be readable, ordered and inside the sample.
+        if (
+          points.length >= 2 &&
+          points.every((x) => Number.isFinite(x) && x >= 0 && x <= 1) &&
+          points.every((x, i) => i === 0 || x > points[i - 1])
+        ) {
+          sliceN = points
+        }
+      } else {
+        const c = Number(countText)
+        if (Number.isInteger(c) && c >= 1) sliceN = c
+      }
+      if (sliceN === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
+      // A quoted mini-notation index is carried RAW, the `Struct.mask` precedent
+      // (`case 'struct'` above). Parsing it as a sub-IR is actively wrong here:
+      // `parseExpression` reads a bare mini string as a NOTE pattern, and these
+      // are slice INDICES. Measured before this branch existed,
+      // `.slice(4, "0 1 2 3")` round-tripped to `.slice(4, note("0 1 2 3"))`,
+      // and a nested one to eight levels of `fastcat(note(…))`. An EXPRESSION
+      // index has no such ambiguity and is parsed — measured round-tripping
+      // `.slice(16, irand(16).struct("x*16"))` byte-for-byte.
+      const rawIndex = sliceArgs[1].value.trim().match(/^"([^"]*)"$/)
+      const sliceIndex: string | PatternIR = rawIndex
+        ? rawIndex[1]
+        : parseExpression(
+            sliceArgs[1].value,
+            baseOffset + sliceArgs[1].offset,
+            undefined,
+            bindings,
+          )
+      return IR.slice(sliceN, sliceIndex, ir, tagMeta(method, callSiteRange))
+    }
+
     case 'p': {
       // Phase 20-11 D-01/D-02 — `.p("name")` overrides auto `d{N}` from $:.
       // The 20-04 Chesterton (`return ir`) was correct under the PV37

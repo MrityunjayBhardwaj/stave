@@ -44,6 +44,9 @@ export function summarize(node: PatternIR): string {
     case 'Shuffle':  return `n=${node.n}`
     case 'Scramble': return `n=${node.n}`
     case 'Chop':     return `n=${node.n}`
+    // #1352 — the count is what defines the slice boundaries, so it is the
+    // summary. An array count is shown as its split points.
+    case 'Slice':    return Array.isArray(node.n) ? `at ${node.n.join(', ')}` : `n=${node.n}`
     case 'Loop':   return ''
     case 'Code':
       // Phase 20-04 T-12 / D-05 / PV35 (developer chrome) + 20-17 D-1c.
@@ -125,6 +128,7 @@ export function children(node: PatternIR): readonly PatternIR[] {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Slice':
     case 'Loop':  return [node.body]
     case 'Param': {
       // Phase 20-10 wave β-2 (developer tree expansion).

@@ -156,6 +156,7 @@ var IR = {
   shuffle: /* @__PURE__ */ __name((n, body, meta) => attachMeta({ tag: "Shuffle", n, body }, meta), "shuffle"),
   scramble: /* @__PURE__ */ __name((n, body, meta) => attachMeta({ tag: "Scramble", n, body }, meta), "scramble"),
   chop: /* @__PURE__ */ __name((n, body, meta) => attachMeta({ tag: "Chop", n, body }, meta), "chop"),
+  slice: /* @__PURE__ */ __name((n, index, body, meta) => attachMeta({ tag: "Slice", n, index, body }, meta), "slice"),
   loop: /* @__PURE__ */ __name((body, meta) => attachMeta({ tag: "Loop", body }, meta), "loop"),
   // Phase 5a (#386) — unified time-sequence constructor. `mode` is the literal
   // combinator name; `cat`/`slowcat` callers pass arms with weight 1.
@@ -343,6 +344,11 @@ function gen(ir) {
     }
     case "Chop": {
       return `${gen(ir.body)}.chop(${ir.n})`;
+    }
+    case "Slice": {
+      const count = Array.isArray(ir.n) ? `[${ir.n.join(", ")}]` : String(ir.n);
+      const index = typeof ir.index === "string" ? `"${ir.index}"` : gen(ir.index);
+      return `${gen(ir.body)}.slice(${count}, ${index})`;
     }
   }
 }
@@ -567,6 +573,10 @@ function countLeavesInIR(node) {
     case "Shuffle":
     case "Scramble":
     case "Chop":
+    // #1352 — `slice` carves the BODY into ranges; the leaves are the body's,
+    // exactly as for `chop`. The index pattern chooses the ORDER those leaves
+    // play in, which is a projection question rather than a leaf-count one.
+    case "Slice":
     case "When":
     case "Every":
     case "Loop":
@@ -734,6 +744,7 @@ function walkCycle(ir, ctx) {
     case "Shuffle":
     case "Scramble":
     case "Chop":
+    case "Slice":
     case "Struct":
       return withWrapperLoc(recurse(ir.body, ctx), ir.loc);
     case "Chunk": {
@@ -2966,6 +2977,32 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       const n = parseInt(subbedArgs.trim(), 10);
       if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       return IR.chop(n, ir, tagMeta(method, callSiteRange));
+    }
+    case "slice": {
+      const sliceArgs = splitArgsWithOffsets(args);
+      if (sliceArgs.length < 2) {
+        return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
+      }
+      const countText = sliceArgs[0].value.trim();
+      let sliceN = null;
+      if (countText.startsWith("[") && countText.endsWith("]")) {
+        const points = countText.slice(1, -1).split(",").map((x) => Number(x.trim()));
+        if (points.length >= 2 && points.every((x) => Number.isFinite(x) && x >= 0 && x <= 1) && points.every((x, i) => i === 0 || x > points[i - 1])) {
+          sliceN = points;
+        }
+      } else {
+        const c = Number(countText);
+        if (Number.isInteger(c) && c >= 1) sliceN = c;
+      }
+      if (sliceN === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
+      const rawIndex = sliceArgs[1].value.trim().match(/^"([^"]*)"$/);
+      const sliceIndex = rawIndex ? rawIndex[1] : parseExpression(
+        sliceArgs[1].value,
+        baseOffset + sliceArgs[1].offset,
+        void 0,
+        bindings
+      );
+      return IR.slice(sliceN, sliceIndex, ir, tagMeta(method, callSiteRange));
     }
     case "p": {
       const trimmed = args.trim();

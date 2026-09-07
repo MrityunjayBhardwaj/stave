@@ -305,6 +305,10 @@ function countLeavesInIR(node: PatternIR): number {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    // #1352 — `slice` carves the BODY into ranges; the leaves are the body's,
+    // exactly as for `chop`. The index pattern chooses the ORDER those leaves
+    // play in, which is a projection question rather than a leaf-count one.
+    case 'Slice':
     case 'When':
     case 'Every':
     case 'Loop':
@@ -519,6 +523,7 @@ function walkCycle(ir: PatternIR, ctx: StructCtx): LaneItem[] {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Slice':
     case 'Struct':
       return withWrapperLoc(recurse(ir.body, ctx), ir.loc)
 

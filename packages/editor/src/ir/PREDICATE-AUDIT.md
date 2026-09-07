@@ -1,7 +1,7 @@
 # Predicate audit — `ir/parseStrudel.ts`
 
 Every regular expression in `parseStrudel.ts`, the question it answers, and the system that
-owns the right answer. 35 are anchored predicates (categories A and B); 7 are unanchored
+owns the right answer. 36 are anchored predicates (categories A and B); 7 are unanchored
 (category D), two of which are predicates as well.
 
 This file is a **census, not a plan**. It exists so that "find the next parser bug" becomes
@@ -26,9 +26,9 @@ the parse path asks somebody who already knows:
 | `ir/parseStrudelStages.ts` | — | **0** | 377 |
 | `visualEdit/chunkDetect.ts` | acorn | **0** | 496 |
 | `visualEdit/arrange/parse.ts` | acorn | **0** | 223 |
-| **`ir/parseStrudel.ts`** | **nobody** | **35** | **3398** |
+| **`ir/parseStrudel.ts`** | **nobody** | **36** | **3398** |
 
-Every module that delegates has zero. The one that does not has thirty-five (was 42 before #965 delegated the pattern-source grid, and 36 before #1178 moved the side-effect head list to `statementHeads.ts`). `parseMini.ts` is
+Every module that delegates has zero. The one that does not has thirty-six (was 42 before #965 delegated the pattern-source grid, and 36 before #1178 moved the side-effect head list to `statementHeads.ts`). `parseMini.ts` is
 the controlled before/after: 512 lines with a hand-rolled tokenizer, 397 lines and no anchored
 regexes after it was rebuilt on krill.
 
@@ -68,7 +68,7 @@ the regex alone without saying so.
 
 ## Category A — JavaScript syntax · owner: **acorn**
 
-28 of the 35. `acorn` is already a dependency and is already used to parse this same source
+28 of the 36. `acorn` is already a dependency and is already used to parse this same source
 text, three times, in `visualEdit/`. The package parses one document two different ways.
 
 ### A1 · "is this token a bare identifier?" — 4 sites
@@ -188,8 +188,14 @@ Known-incomplete: **observed** —
 Also **reasoned**: no escape sequence is ever decoded, so `"\n"` reaches the IR as two
 characters; and `${…}` inside a backtick arm is treated as literal text.
 
+The fifth `/^"([^"]*)"$/` is `slice`'s index argument (#1352), and it is the same
+question as `struct`'s mask: *is this argument a quoted mini-notation string I should
+carry RAW?* Carrying it raw is load-bearing rather than lazy — `parseExpression` reads a
+bare mini string as a NOTE pattern, and `slice`'s second argument is slice INDICES, so
+parsing it round-tripped `.slice(4, "0 1 2 3")` to `.slice(4, note("0 1 2 3"))`.
+
 ```regex
-4x  /^"([^"]*)"$/
+5x  /^"([^"]*)"$/
 2x  /^"[^"]*"$/
 2x  /^'([^']*)'$/
 1x  /^'[^']*'$/
@@ -421,11 +427,11 @@ observation — `const n = .5` and `const n = 4` now produce the same IR shape.
 |---|---|---|
 | A — JavaScript syntax | acorn | 28 |
 | B — Strudel vocabulary | `controls.mjs` / `signal.mjs` / krill | 7 |
-| **total anchored regexes** | | **35** |
+| **total anchored regexes** | | **36** |
 | D — unanchored (2 predicates + 5 scans) | acorn / — | 7 |
-| **total regex literals** | | **42** |
+| **total regex literals** | | **43** |
 | distinct sources | | 32 |
 
-Of the 35 anchored predicates, **zero** currently delegate (the pattern-source extraction that #965 removed DID delegate — to acorn — which is why it is no longer a regex). Eleven of the incompleteness claims
+Of the 36 anchored predicates, **zero** currently delegate (the pattern-source extraction that #965 removed DID delegate — to acorn — which is why it is no longer a regex). Eleven of the incompleteness claims
 above are observed against a control arm; the rest are reasoned from the expression and marked
 as such.

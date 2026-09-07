@@ -313,6 +313,13 @@ type PatternIR = {
     loc?: SourceLocation[];
     userMethod?: string;
 } | {
+    tag: 'Slice';
+    n: number | readonly number[];
+    index: string | PatternIR;
+    body: PatternIR;
+    loc?: SourceLocation[];
+    userMethod?: string;
+} | {
     tag: 'Param';
     key: string;
     value: string | number | PatternIR;
@@ -419,6 +426,7 @@ declare const IR: {
     readonly shuffle: (n: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly scramble: (n: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly chop: (n: number, body: PatternIR, meta?: TagMeta) => PatternIR;
+    readonly slice: (n: number | readonly number[], index: string | PatternIR, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly loop: (body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly arrange: (mode: "arrange" | "cat" | "slowcat", arms: ArrangeArm[], meta?: TagMeta) => PatternIR;
     readonly code: (code: string, meta?: TagMeta) => PatternIR;
