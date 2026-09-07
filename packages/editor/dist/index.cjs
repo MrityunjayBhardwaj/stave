@@ -2092,6 +2092,7 @@ function parseStrudel(code, _opts) {
   try {
     const tracks = extractTracks(code);
     const trackBindings = tracks.length > 0 ? collectTopLevelBindings(code, 0)?.bindings ?? void 0 : void 0;
+    const numbers = collectNumericBindings(code);
     if (tracks.length === 0) {
       const stripped = stripParserPrelude(code);
       if (!stripped.body.trim()) {
@@ -2101,7 +2102,7 @@ function parseStrudel(code, _opts) {
       const innerOffset = stripped.offset + (bodyTrimStart >= 0 ? bodyTrimStart : 0);
       const bound = buildBindingMap(stripped.body, stripped.offset);
       if (bound) {
-        const inner2 = parseExpression(bound.finalExpr, bound.finalOffset, void 0, bound.bindings, opts);
+        const inner2 = parseExpression(bound.finalExpr, bound.finalOffset, void 0, bound.bindings, opts, numbers);
         const innerIsBareCode = inner2.tag === "Code" && inner2.via === void 0;
         if (!innerIsBareCode) {
           return IR.track("d1", inner2);
@@ -2118,19 +2119,19 @@ function parseStrudel(code, _opts) {
               // anchor a hap to the statement that produced it by containment —
               // the same mechanism a `$:` document uses, not a parallel path.
               // Synthetic wrapper: no userMethod (there is no `.p()` here).
-              IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, void 0, void 0, opts), {
+              IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, void 0, void 0, opts, numbers), {
                 loc: [{ start: s.offset, end: s.offset + s.text.length }]
               })
             )
           )
         );
       }
-      const inner = parseExpression(stripped.body.trim(), innerOffset, void 0, void 0, opts);
+      const inner = parseExpression(stripped.body.trim(), innerOffset, void 0, void 0, opts, numbers);
       return IR.track("d1", inner);
     }
     if (tracks.length === 1) {
       const t = tracks[0];
-      const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, void 0, trackBindings, opts);
+      const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, void 0, trackBindings, opts, numbers);
       const trackId0 = trackIdFromLabel(t.label, 0);
       return IR.track(trackId0, body, {
         loc: [{ start: t.dollarStart, end: t.end }]
@@ -2138,7 +2139,7 @@ function parseStrudel(code, _opts) {
     }
     return IR.stack(
       ...tracks.map((t, i) => {
-        const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, void 0, trackBindings, opts);
+        const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, void 0, trackBindings, opts, numbers);
         const trackId = trackIdFromLabel(t.label, i);
         return IR.track(trackId, body, {
           loc: [{ start: t.dollarStart, end: t.end }]
@@ -2331,7 +2332,7 @@ function skipWhitespaceAndLineComments(src, pos) {
   return i;
 }
 __name(skipWhitespaceAndLineComments, "skipWhitespaceAndLineComments");
-function parseExpression(expr, baseOffset = 0, isSampleKey, bindings, opts) {
+function parseExpression(expr, baseOffset = 0, isSampleKey, bindings, opts, numbers) {
   if (!expr.trim()) return IR.pure();
   if (bindings) {
     const bareId = expr.trim();
@@ -2343,7 +2344,7 @@ function parseExpression(expr, baseOffset = 0, isSampleKey, bindings, opts) {
     const leadingWs = expr.length - expr.trimStart().length;
     const trimmedOffset = baseOffset + leadingWs;
     const { root, chain } = splitRootAndChain(expr.trim());
-    const rootIR = parseRoot(root, trimmedOffset, isSampleKey, bindings, opts);
+    const rootIR = parseRoot(root, trimmedOffset, isSampleKey, bindings, opts, numbers);
     const rootIsBareCode = rootIR.tag === "Code" && rootIR.via === void 0;
     if (rootIsBareCode && !chain.trim()) {
       return IR.code(expr);
@@ -2359,21 +2360,104 @@ function parseExpression(expr, baseOffset = 0, isSampleKey, bindings, opts) {
   }
 }
 __name(parseExpression, "parseExpression");
-function parseArrangeArm(raw, absOffset, bindings, opts) {
+function evalNumericNode(node, numbers) {
+  const n = node;
+  if (!n || typeof n !== "object") return null;
+  switch (n.type) {
+    case "Literal":
+      return typeof n.value === "number" && Number.isFinite(n.value) ? n.value : null;
+    case "Identifier": {
+      const v = numbers?.get(n.name);
+      return typeof v === "number" && Number.isFinite(v) ? v : null;
+    }
+    case "UnaryExpression": {
+      if (n.operator !== "-" && n.operator !== "+") return null;
+      const v = evalNumericNode(n.argument, numbers);
+      return v == null ? null : n.operator === "-" ? -v : v;
+    }
+    case "BinaryExpression": {
+      const a = evalNumericNode(n.left, numbers);
+      const b = evalNumericNode(n.right, numbers);
+      if (a == null || b == null) return null;
+      let r;
+      switch (n.operator) {
+        case "*":
+          r = a * b;
+          break;
+        case "+":
+          r = a + b;
+          break;
+        case "-":
+          r = a - b;
+          break;
+        case "/":
+          r = a / b;
+          break;
+        case "%":
+          r = a % b;
+          break;
+        case "**":
+          r = a ** b;
+          break;
+        default:
+          return null;
+      }
+      return Number.isFinite(r) ? r : null;
+    }
+    default:
+      return null;
+  }
+}
+__name(evalNumericNode, "evalNumericNode");
+function evalWeightExpression(text, numbers) {
+  const fast = Number(text);
+  if (Number.isFinite(fast) && text.trim() !== "") return fast;
+  try {
+    const program = acorn.parse(text, { ecmaVersion: "latest" });
+    const body = program.body;
+    if (body.length !== 1) return null;
+    const stmt = body[0];
+    if (stmt.type !== "ExpressionStatement") return null;
+    return evalNumericNode(stmt.expression, numbers);
+  } catch {
+    return null;
+  }
+}
+__name(evalWeightExpression, "evalWeightExpression");
+function collectNumericBindings(code) {
+  let program;
+  try {
+    program = acorn.parse(code, { ecmaVersion: "latest", allowAwaitOutsideFunction: true });
+  } catch {
+    return void 0;
+  }
+  const numbers = /* @__PURE__ */ new Map();
+  for (const stmt of program.body ?? []) {
+    if (stmt?.type !== "VariableDeclaration") continue;
+    for (const d of stmt.declarations ?? []) {
+      if (d?.id?.type !== "Identifier" || !d.init) continue;
+      const v = evalNumericNode(d.init, numbers);
+      if (v != null) numbers.set(d.id.name, v);
+    }
+  }
+  return numbers.size > 0 ? numbers : void 0;
+}
+__name(collectNumericBindings, "collectNumericBindings");
+function parseArrangeArm(raw, absOffset, bindings, opts, numbers) {
   const lb = raw.indexOf("[");
   const rb = raw.lastIndexOf("]");
   if (lb < 0 || rb <= lb) return null;
   const innerAbs = absOffset + lb + 1;
   const parts = splitArgsWithOffsets(raw.slice(lb + 1, rb));
   if (parts.length < 2) return null;
-  const weight = Number(parts[0].value.trim());
-  if (!Number.isFinite(weight)) return null;
+  const weight = evalWeightExpression(parts[0].value.trim(), numbers);
+  if (weight == null) return null;
   const patPart = parts[1];
   const pattern = parseExpression(patPart.value, innerAbs + patPart.offset, void 0, bindings, opts);
   return { weight, pattern, loc: [{ start: absOffset + lb, end: absOffset + rb + 1 }] };
 }
 __name(parseArrangeArm, "parseArrangeArm");
-function parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts) {
+function parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts, numbers) {
   const m = trimmed.match(/^(arrange|cat|slowcat|fastcat)\s*\(/);
   if (!m) return null;
   const fn = m[1];
@@ -2395,7 +2479,7 @@ function parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts) {
   const arms = [];
   for (const a of args) {
     if (fn === "arrange") {
-      const arm = parseArrangeArm(a.value, innerAbs + a.offset, bindings, opts);
+      const arm = parseArrangeArm(a.value, innerAbs + a.offset, bindings, opts, numbers);
       if (!arm) return null;
       arms.push(arm);
     } else {
@@ -2438,7 +2522,7 @@ function extractPatternSourceCall(trimmed) {
   return null;
 }
 __name(extractPatternSourceCall, "extractPatternSourceCall");
-function parseRoot(root, baseOffset = 0, isSampleKey, bindings, opts) {
+function parseRoot(root, baseOffset = 0, isSampleKey, bindings, opts, numbers) {
   const trimmed = root.trim();
   const leadingWs = root.length - root.trimStart().length;
   const backtickInnerToIR = /* @__PURE__ */ __name((inner, isSample, innerOffset) => {
@@ -2448,7 +2532,7 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings, opts) {
   if (bindings && /^[A-Za-z_$][\w$]*$/.test(trimmed) && bindings.has(trimmed)) {
     return bindings.get(trimmed);
   }
-  const timeSeq = parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts);
+  const timeSeq = parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts, numbers);
   if (timeSeq) return timeSeq;
   const recognised = CHAIN_ROOT_RECOGNISER.get(trimmed);
   if (recognised) {

@@ -896,6 +896,13 @@ export function parseStrudel(
     const trackBindings = tracks.length > 0
       ? (collectTopLevelBindings(code, 0)?.bindings ?? undefined)
       : undefined
+    // #1468 A — the OTHER thing an identifier can mean at document scope: a
+    // number. Resolved once, here, for the same reason `trackBindings` is —
+    // `var M = 1` is a property of the document, not of one arrange arm. A
+    // separate map because `collectTopLevelBindings` resolves to PATTERNS, and
+    // because it must survive that collector declining: a document whose
+    // pattern bindings don't resolve can still have a readable `var M = 1`.
+    const numbers = collectNumericBindings(code)
     if (tracks.length === 0) {
       // No $: prefix — parse as a single expression and wrap in a
       // synthetic Track('d1', ...). 20-11 D-04 option (a): every parseStrudel
@@ -935,7 +942,7 @@ export function parseStrudel(
       // handled at the substitution site, never a throw).
       const bound = buildBindingMap(stripped.body, stripped.offset)
       if (bound) {
-        const inner = parseExpression(bound.finalExpr, bound.finalOffset, undefined, bound.bindings, opts)
+        const inner = parseExpression(bound.finalExpr, bound.finalOffset, undefined, bound.bindings, opts, numbers)
         // P67: if the final expression resolved to bare Code (the binding
         // map did not help — e.g. a non-stack final expr), keep the
         // existing whole-program fallback shape rather than wrapping a
@@ -990,13 +997,13 @@ export function parseStrudel(
             // anchor a hap to the statement that produced it by containment —
             // the same mechanism a `$:` document uses, not a parallel path.
             // Synthetic wrapper: no userMethod (there is no `.p()` here).
-            IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, undefined, undefined, opts), {
+            IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, undefined, undefined, opts, numbers), {
               loc: [{ start: s.offset, end: s.offset + s.text.length }],
             }),
           ),
         )
       }
-      const inner = parseExpression(stripped.body.trim(), innerOffset, undefined, undefined, opts)
+      const inner = parseExpression(stripped.body.trim(), innerOffset, undefined, undefined, opts, numbers)
       return IR.track('d1', inner)
     }
     if (tracks.length === 1) {
@@ -1009,7 +1016,7 @@ export function parseStrudel(
       // empty-body Track wrapper so d{N} numbering stays stable when
       // the user toggles a line's comment prefix.
       const t = tracks[0]
-      const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, undefined, trackBindings, opts)
+      const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, undefined, trackBindings, opts, numbers)
       // 20-15 G5 (#138 / D-01) — a named label becomes the trackId so the
       // label IS the timeline row name (no `.p()` needed). `$` (the legacy
       // `$:` marker) keeps the synthetic `d1` numbering — byte-identical to
@@ -1029,7 +1036,7 @@ export function parseStrudel(
     // they keep their slot in the numbering.
     return IR.stack(
       ...tracks.map((t, i) => {
-        const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, undefined, trackBindings, opts)
+        const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset, undefined, trackBindings, opts, numbers)
         // 20-15 G5 (#138 / D-01) — labelled tracks carry trackId = label;
         // legacy `$:` (label === '$') keeps `d{i+1}` so existing multi-$:
         // tunes are byte-identical. dollarStart (label-line start) is the
@@ -1416,6 +1423,10 @@ export function parseExpression(
   // full contract. Threaded EXACTLY as `bindings` (optional trailing
   // STACK param; PV50). `undefined` → general arm dormant → byte-identical.
   opts?: { recogniseGeneralChainRoots?: boolean },
+  // #1468 A — numeric top-level bindings, so an `arrange` arm whose weight is
+  // written `M*8` reads as 8. Optional trailing STACK param (PV50), threaded
+  // exactly as `bindings`; `undefined` = literal weights only.
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR {
   if (!expr.trim()) return IR.pure()
 
@@ -1448,7 +1459,7 @@ export function parseExpression(
     // those wrappers as opaque and discarded the entire structure — surfaces
     // for `stack(single-arg-with-unmapped-pattern-chain)` shapes such as
     // `stack(s("bd").delay("<0 .5>")...).sometimes(...)` in delay.strudel.
-    const rootIR = parseRoot(root, trimmedOffset, isSampleKey, bindings, opts)
+    const rootIR = parseRoot(root, trimmedOffset, isSampleKey, bindings, opts, numbers)
     const rootIsBareCode =
       rootIR.tag === 'Code' && (rootIR as { via?: unknown }).via === undefined
     if (rootIsBareCode && !chain.trim()) {
@@ -1482,6 +1493,119 @@ export function parseExpression(
 // ---------------------------------------------------------------------------
 
 /**
+ * Statically evaluate a NUMERIC expression node, or null when it isn't one
+ * (#1468 cause A).
+ *
+ * Deliberately total and side-effect-free: literals, unary `+`/`-`, and binary
+ * arithmetic over operands that are themselves numeric, plus identifiers that
+ * a numeric top-level binding resolves. Anything else — a call, a member
+ * expression, a string — is not a number we can know, and the caller declines
+ * rather than inventing one.
+ */
+function evalNumericNode(node: unknown, numbers?: ReadonlyMap<string, number>): number | null {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const n = node as any
+  if (!n || typeof n !== 'object') return null
+  switch (n.type) {
+    case 'Literal':
+      return typeof n.value === 'number' && Number.isFinite(n.value) ? n.value : null
+    case 'Identifier': {
+      const v = numbers?.get(n.name)
+      return typeof v === 'number' && Number.isFinite(v) ? v : null
+    }
+    case 'UnaryExpression': {
+      if (n.operator !== '-' && n.operator !== '+') return null
+      const v = evalNumericNode(n.argument, numbers)
+      return v == null ? null : n.operator === '-' ? -v : v
+    }
+    case 'BinaryExpression': {
+      const a = evalNumericNode(n.left, numbers)
+      const b = evalNumericNode(n.right, numbers)
+      if (a == null || b == null) return null
+      let r: number
+      switch (n.operator) {
+        case '*': r = a * b; break
+        case '+': r = a + b; break
+        case '-': r = a - b; break
+        case '/': r = a / b; break
+        case '%': r = a % b; break
+        case '**': r = a ** b; break
+        default: return null
+      }
+      return Number.isFinite(r) ? r : null
+    }
+    default:
+      return null
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * The value of an `arrange` arm's WEIGHT, written as source text (#1468 A).
+ *
+ * `Number(text)` first, so the 115-of-125 arms that are bare literals cost
+ * exactly what they cost today. Only a non-numeric text reaches acorn — the
+ * parser this file already imports, not a new oracle.
+ *
+ * Returns null when the text is not a number we can know. That refusal is
+ * load-bearing: a weight is a POSITION (arm k starts at the sum of every
+ * earlier weight), so a guessed weight moves every section after it. A blank
+ * timeline is honest; a shifted one is a confident lie.
+ */
+export function evalWeightExpression(
+  text: string,
+  numbers?: ReadonlyMap<string, number>,
+): number | null {
+  const fast = Number(text)
+  if (Number.isFinite(fast) && text.trim() !== '') return fast
+  try {
+    const program = acornParse(text, { ecmaVersion: 'latest' })
+    const body = (program as unknown as { body: unknown[] }).body
+    if (body.length !== 1) return null
+    const stmt = body[0] as { type: string; expression?: unknown }
+    if (stmt.type !== 'ExpressionStatement') return null
+    return evalNumericNode(stmt.expression, numbers)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Top-level `let`/`const`/`var` declarations whose initialiser is a number
+ * (#1468 A) — `var M = 1`, and `const BARS = M * 4` beside it.
+ *
+ * A SEPARATE map from `collectTopLevelBindings`, on purpose: that one resolves
+ * identifiers to PATTERNS, and a weight needs a NUMBER. It also has no
+ * interaction with that collector's occurs-check — a document whose pattern
+ * bindings don't resolve can still have a perfectly readable `var M = 1`.
+ *
+ * Declarations are read in source order, so a later one may use an earlier one.
+ * Returns undefined when the document has no numeric bindings at all, which is
+ * the same `undefined` every call site passed before this existed.
+ */
+export function collectNumericBindings(code: string): ReadonlyMap<string, number> | undefined {
+  let program: ReturnType<typeof acornParse>
+  try {
+    program = acornParse(code, { ecmaVersion: 'latest', allowAwaitOutsideFunction: true })
+  } catch {
+    return undefined
+  }
+  const numbers = new Map<string, number>()
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  for (const stmt of (program as any).body ?? []) {
+    if (stmt?.type !== 'VariableDeclaration') continue
+    for (const d of stmt.declarations ?? []) {
+      if (d?.id?.type !== 'Identifier' || !d.init) continue
+      const v = evalNumericNode(d.init, numbers)
+      // A re-declaration wins, matching JS's own last-write-wins for `var`.
+      if (v != null) numbers.set(d.id.name, v)
+    }
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  return numbers.size > 0 ? numbers : undefined
+}
+
+/**
  * Parse one `arrange` arm — a `[weight, pattern]` tuple. `raw` is the tuple
  * source (e.g. `[2, note("c3")]`); `absOffset` is the absolute file offset of
  * `raw[0]`. Returns the arm with weight, parsed pattern sub-IR, and the WHOLE
@@ -1493,6 +1617,11 @@ function parseArrangeArm(
   absOffset: number,
   bindings?: ReadonlyMap<string, PatternIR>,
   opts?: { recogniseGeneralChainRoots?: boolean },
+  // #1468 A — numeric top-level bindings, so `[M*8, a]` reads as 8 rather than
+  // discarding the whole arrangement. Optional trailing STACK param (PV50),
+  // threaded exactly as `bindings`: parseStrudel -> parseExpression ->
+  // parseRoot -> parseTimeSequenceRoot -> here. `undefined` = literals only.
+  numbers?: ReadonlyMap<string, number>,
 ): ArrangeArm | null {
   const lb = raw.indexOf('[')
   const rb = raw.lastIndexOf(']')
@@ -1500,8 +1629,8 @@ function parseArrangeArm(
   const innerAbs = absOffset + lb + 1
   const parts = splitArgsWithOffsets(raw.slice(lb + 1, rb))
   if (parts.length < 2) return null
-  const weight = Number(parts[0].value.trim())
-  if (!Number.isFinite(weight)) return null
+  const weight = evalWeightExpression(parts[0].value.trim(), numbers)
+  if (weight == null) return null
   const patPart = parts[1]
   const pattern = parseExpression(patPart.value, innerAbs + patPart.offset, undefined, bindings, opts)
   return { weight, pattern, loc: [{ start: absOffset + lb, end: absOffset + rb + 1 }] }
@@ -1522,6 +1651,10 @@ function parseTimeSequenceRoot(
   leadingWs: number,
   bindings?: ReadonlyMap<string, PatternIR>,
   opts?: { recogniseGeneralChainRoots?: boolean },
+  // #1468 A — numeric top-level bindings, so an `arrange` arm whose weight is
+  // written `M*8` reads as 8. Optional trailing STACK param (PV50), threaded
+  // exactly as `bindings`; `undefined` = literal weights only.
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR | null {
   const m = trimmed.match(/^(arrange|cat|slowcat|fastcat)\s*\(/)
   if (!m) return null
@@ -1550,7 +1683,7 @@ function parseTimeSequenceRoot(
   const arms: ArrangeArm[] = []
   for (const a of args) {
     if (fn === 'arrange') {
-      const arm = parseArrangeArm(a.value, innerAbs + a.offset, bindings, opts)
+      const arm = parseArrangeArm(a.value, innerAbs + a.offset, bindings, opts, numbers)
       if (!arm) return null // malformed tuple → opaque fallback upstream
       arms.push(arm)
     } else {
@@ -1667,6 +1800,10 @@ export function parseRoot(
   // `Code.via{method, args, inner}` wrapper. `undefined`/`false` →
   // dormant → byte-identical.
   opts?: { recogniseGeneralChainRoots?: boolean },
+  // #1468 A — numeric top-level bindings, so an `arrange` arm whose weight is
+  // written `M*8` reads as 8. Optional trailing STACK param (PV50), threaded
+  // exactly as `bindings`; `undefined` = literal weights only.
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR {
   const trimmed = root.trim()
   const leadingWs = root.length - root.trimStart().length
@@ -1713,7 +1850,7 @@ export function parseRoot(
   // through to that Builder path (behaviour-preserving). Real source now
   // parses into the structured `Arrange`/`Seq` node — fixes the arrange=blank
   // gap (collect previously returned [] for the opaque Builder).
-  const timeSeq = parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts)
+  const timeSeq = parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts, numbers)
   if (timeSeq) return timeSeq
 
   // 20-18 Wave B-1 (D-01 curated chain-root recogniser) — emit
