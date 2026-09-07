@@ -42,7 +42,7 @@ export type { ArrangeCall, ArrangeArmRange, ArrangeMode } from './arrange'
 // #463 Stage 2 — pick* section-clip write-back. Same op names as `arrange`
 // (setWeight/splitArm/…), so they're re-exported aliased as `pick*`.
 export { detectPickControlAt, detectAllPickControls } from './pickControl'
-export type { PickControl, PickControlArm, PickMethod } from './pickControl'
+export type { PickControl, PickControlArm, PickMethod, PickSectionEntry } from './pickControl'
 export {
   setWeight as pickSetWeight,
   splitArm as pickSplitArm,
@@ -51,6 +51,8 @@ export {
   reorderArm as pickReorderArm,
   insertArm as pickInsertArm,
   duplicateArm as pickDuplicateArm,
+  renameSection as pickRenameSection,
+  countSectionArms as pickCountSectionArms,
 } from './pickControl'
 
 export {

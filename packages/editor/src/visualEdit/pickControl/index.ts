@@ -10,5 +10,15 @@
  * the outer barrel re-exports them aliased as `pick*` to avoid a collision.
  */
 export { detectPickControlAt, detectAllPickControls } from './parse'
-export type { PickControl, PickControlArm, PickMethod } from './parse'
-export { setWeight, splitArm, removeArm, silenceArm, reorderArm, insertArm, duplicateArm } from './serialize'
+export type { PickControl, PickControlArm, PickMethod, PickSectionEntry } from './parse'
+export {
+  setWeight,
+  splitArm,
+  removeArm,
+  silenceArm,
+  reorderArm,
+  insertArm,
+  duplicateArm,
+  renameSection,
+  countSectionArms,
+} from './serialize'
