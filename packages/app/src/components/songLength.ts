@@ -15,7 +15,7 @@
  *
  *   songExtent(ir).kind === 'loop'          145 of 150 real documents
  *       "no arrangement bounds this document" — a fact about STRUCTURE.
- *   analysis.displaySpan.kind === 'loop'      82 of 142 evaluated documents
+ *   analysis.displaySpan.kind === 'loop'     101 of 142 evaluated documents
  *       "a period was measured"              — a LENGTH.
  *
  * Only the second can size a render. Reading the first as coverage for a
@@ -25,9 +25,12 @@
  * consumer of "repeats every N", so it branches on `kind` and never reaches for
  * `periodCycles ?? horizonCycles`.
  *
- * Figures measured by `song-period-sweep` over the saved corpus on `0f0e75bc`:
- * 142 of 150 documents evaluate headlessly; of those, 82 carry a measured
- * period, 56 are aperiodic at the 256-cycle cap, and 4 are silent.
+ * Figures measured by `song-period-sweep` over the saved corpus, restated when
+ * #1465 moved them: 142 of 150 documents evaluate headlessly; of those, 101
+ * carry a measured period, 37 are aperiodic at the 256-cycle cap, and 4 are
+ * silent. The 19 that moved are documents whose only aperiodicity was a
+ * continuously modulated control — which is the defect this file's own dialog
+ * was filed for.
  *
  * ── WHY THE EDITOR FUNCTIONS ARE INJECTED RATHER THAN IMPORTED ───────────────
  * Importing the `@stave/editor` BARREL into an app module breaks that module's
@@ -45,6 +48,7 @@ import type {
   SongAnalysis,
   SongExtent,
   AnalyzeSongOptions,
+  SignalDimensions,
 } from '@stave/editor'
 
 /** What the document says about its own length. Never a bare number. */
@@ -131,6 +135,11 @@ export interface SongLengthDeps {
     opts: AnalyzeSongOptions,
   ) => Promise<SongAnalysis>
   readonly createCollector: (ir: PatternIR) => SongCollectorParts
+  /** #1465 — the source-informed facts the period rule needs. Injected for the
+   *  same barrel reason as the rest, and REQUIRED rather than optional: omitting
+   *  it is silently the old behaviour, and a bounce dialog quietly back to
+   *  "pick a length" is precisely the defect the issue was filed against. */
+  readonly signalDimensionsOf: (ir: PatternIR | null) => SignalDimensions
 }
 
 /**
@@ -176,7 +185,14 @@ export async function measureSongLength(
 
   let analysis: SongAnalysis
   try {
-    analysis = await deps.analyzeSong(irs.analysis, { signal, collectFn, hasUnheardTrack })
+    analysis = await deps.analyzeSong(irs.analysis, {
+      signal,
+      collectFn,
+      hasUnheardTrack,
+      // #1465 — this is the dialog the issue was filed against: automating a
+      // control with a continuous signal dropped the document to "pick a length".
+      signals: deps.signalDimensionsOf(irs.analysis),
+    })
   } catch {
     return { kind: 'unknown', why: 'no-period' }
   }

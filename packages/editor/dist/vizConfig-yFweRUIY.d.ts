@@ -341,6 +341,27 @@ type PatternIR = {
     body: PatternIR;
     loc?: SourceLocation[];
     userMethod?: string;
+    /**
+     * The `_` mute prefix on the statement's label (`_$:`, `_drums:`), #1488.
+     *
+     * ⚠ NOT identity, and it must never become identity — `trackId.ts` strips
+     * the marker before deriving `trackId` precisely so a muted track keeps
+     * its lane, and that stays true. This records the fact SEPARATELY, for
+     * consumers that legitimately need to know whether a track sounds.
+     *
+     * It exists because the fact was otherwise recoverable only from the
+     * SOURCE, by reading the character at `loc[0].start` — so every consumer
+     * needing it had to be handed the document text as well as its IR. The
+     * period rule (`signalDimensionsOf`) is the one that made that untenable:
+     * it folds a modulating signal's rate into the song's length, which is
+     * arithmetic on the IR alone, so a silent track's LFO was lengthening
+     * audible songs.
+     *
+     * ⚠ ABSENT rather than `false` when a track is not muted, deliberately:
+     * an unmuted `Track` serialises byte-identically to before this field
+     * existed. Read it as `=== true`, never as a required boolean.
+     */
+    muted?: boolean;
 } | {
     tag: 'Loop';
     body: PatternIR;
@@ -418,7 +439,7 @@ declare const IR: {
     readonly cycle: (...items: PatternIR[]) => PatternIR;
     readonly when: (gate: string, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly param: (key: string, value: string | number | PatternIR, rawArgs: string, body: PatternIR, meta?: TagMeta) => PatternIR;
-    readonly track: (trackId: string, body: PatternIR, meta?: TagMeta) => PatternIR;
+    readonly track: (trackId: string, body: PatternIR, meta?: TagMeta, muted?: boolean) => PatternIR;
     readonly ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly fast: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly slow: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;

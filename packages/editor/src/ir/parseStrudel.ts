@@ -18,7 +18,7 @@ import { parse as acornParse } from 'acorn'
 import { IR, type PatternIR, type ArrangeArm } from './PatternIR'
 import type { SourceLocation } from './IREvent'
 import { parseMini } from './parseMini'
-import { trackIdFromLabel } from './trackId'
+import { trackIdFromLabel, isMutedLabel } from './trackId'
 import { NON_TRACK_HEAD_RE } from './statementHeads'
 // #928 (Tier 2) — the deny-list authority. `isControlName(m)` is Strudel's OWN
 // control-registry membership predicate (main names + aliases), queried LIVE so
@@ -1089,7 +1089,7 @@ export function parseStrudel(
       const trackId0 = trackIdFromLabel(t.label, 0)
       return IR.track(trackId0, body, {
         loc: [{ start: t.dollarStart, end: t.end }],
-      })
+      }, isMutedLabel(t.label))
     }
     // Two+ `$:` blocks — Stack(Track('d1', ...), Track('d2', ...), ...).
     // Each Track carries its own `$:` line range as loc. The outer Stack
@@ -1108,7 +1108,7 @@ export function parseStrudel(
         const trackId = trackIdFromLabel(t.label, i)
         return IR.track(trackId, body, {
           loc: [{ start: t.dollarStart, end: t.end }],
-        })
+        }, isMutedLabel(t.label))
       }),
     )
   } catch {

@@ -27,3 +27,24 @@ export function trackIdFromLabel(label: string | undefined, index: number): stri
   const bare = label && label.startsWith('_') ? label.slice(1) : label
   return bare && bare !== '$' ? bare : `d${index + 1}`
 }
+
+/**
+ * Is this label's track MUTED? (#1488)
+ *
+ * The other half of the same fact `trackIdFromLabel` above deliberately throws
+ * away. Identity must not carry the marker — a muted `_drums:` is still the
+ * `drums` lane — but "does this track sound?" is a real question with real
+ * consumers, and until this existed the only way to answer it was to read the
+ * character at the statement's source offset, which meant handing the document
+ * text to anything that needed to know.
+ *
+ * Lives here, beside the strip, so the two readings of the `_` prefix can never
+ * disagree about what a mute marker is.
+ *
+ * ⚠ A statement with NO label cannot be muted — muting is a prefix ON a label,
+ * so a bare `s("bd*4")` has nothing to prefix. `undefined` is therefore false,
+ * not unknown (`trackOrder.ts` measured that across every spelling).
+ */
+export function isMutedLabel(label: string | undefined): boolean {
+  return label !== undefined && label.startsWith('_')
+}

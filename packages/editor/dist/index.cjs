@@ -140,7 +140,7 @@ var IR = {
   cycle: /* @__PURE__ */ __name((...items) => ({ tag: "Cycle", items }), "cycle"),
   when: /* @__PURE__ */ __name((gate, body, meta) => attachMeta({ tag: "When", gate, body }, meta), "when"),
   param: /* @__PURE__ */ __name((key2, value, rawArgs, body, meta) => attachMeta({ tag: "Param", key: key2, value, rawArgs, body }, meta), "param"),
-  track: /* @__PURE__ */ __name((trackId, body, meta) => attachMeta({ tag: "Track", trackId, body }, meta), "track"),
+  track: /* @__PURE__ */ __name((trackId, body, meta, muted3) => attachMeta({ tag: "Track", trackId, body, ...muted3 === true ? { muted: true } : {} }, meta), "track"),
   ramp: /* @__PURE__ */ __name((param, from, to, cycles, body, meta) => attachMeta({ tag: "Ramp", param, from, to, cycles, body }, meta), "ramp"),
   fast: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Fast", factor, body }, meta), "fast"),
   slow: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Slow", factor, body }, meta), "slow"),
@@ -905,6 +905,172 @@ function eventValueKey(ev) {
 }
 __name(eventValueKey, "eventValueKey");
 
+// src/ir/signalAutomation.ts
+var UNBOUNDED = /* @__PURE__ */ new Set(["time", "cyclesPer", "per", "perCycle", "perx"]);
+function polarityOf(kind) {
+  if (UNBOUNDED.has(kind)) return "unbounded";
+  return kind.endsWith("2") ? "bipolar" : "unipolar";
+}
+__name(polarityOf, "polarityOf");
+var CHAIN_TAGS = /* @__PURE__ */ new Set(["Range", "Slow", "Fast"]);
+var SKIP_KEYS = /* @__PURE__ */ new Set(["loc", "keyLoc", "callSiteRange"]);
+function readChain(node) {
+  let cur = node;
+  let periodCycles = 1;
+  let lo = null;
+  let hi = null;
+  for (let depth = 0; depth < 64; depth++) {
+    if (!cur || typeof cur !== "object" || typeof cur.tag !== "string") return null;
+    if (cur.tag === "Signal") {
+      return { signal: cur, periodCycles, lo, hi };
+    }
+    if (!CHAIN_TAGS.has(cur.tag)) return null;
+    if (cur.tag === "Range") {
+      if (lo === null && Number.isFinite(cur.lo) && Number.isFinite(cur.hi)) {
+        lo = cur.lo;
+        hi = cur.hi;
+      }
+    } else if (cur.tag === "Slow") {
+      if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null;
+      periodCycles *= cur.factor;
+    } else if (cur.tag === "Fast") {
+      if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null;
+      periodCycles /= cur.factor;
+    }
+    const body = cur.body;
+    if (!body || typeof body !== "object") return null;
+    cur = body;
+  }
+  return null;
+}
+__name(readChain, "readChain");
+function childNodes(node) {
+  const out = [];
+  const visit = /* @__PURE__ */ __name((value, depth) => {
+    if (!value || typeof value !== "object" || depth > 12) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value.tag === "string") {
+      out.push(value);
+      return;
+    }
+    for (const [key2, child] of Object.entries(value)) {
+      if (SKIP_KEYS.has(key2)) continue;
+      visit(child, depth + 1);
+    }
+  }, "visit");
+  for (const [key2, value] of Object.entries(node)) {
+    if (SKIP_KEYS.has(key2)) continue;
+    visit(value, 0);
+  }
+  return out;
+}
+__name(childNodes, "childNodes");
+function collectFromTrack(trackId, root, out) {
+  const stack = [root];
+  const seen = /* @__PURE__ */ new Set();
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    if (node.tag === "Param") {
+      const value = node.value;
+      if (value && typeof value === "object" && typeof value.tag === "string") {
+        const read5 = readChain(value);
+        if (read5) {
+          const polarity = polarityOf(read5.signal.kind);
+          const ranged = read5.lo !== null && read5.hi !== null;
+          if (ranged || polarity !== "unbounded") {
+            const lo = ranged ? read5.lo : polarity === "bipolar" ? -1 : 0;
+            const hi = ranged ? read5.hi : 1;
+            const start = node.loc?.[0]?.start;
+            out.push({
+              trackId,
+              paramKey: node.key,
+              kind: read5.signal.kind,
+              periodCycles: read5.periodCycles,
+              lo,
+              hi,
+              ranged,
+              offset: typeof start === "number" && Number.isFinite(start) ? start : null
+            });
+          }
+        }
+      }
+    }
+    for (const child of childNodes(node)) {
+      if (child.tag === "Track") continue;
+      stack.push(child);
+    }
+  }
+}
+__name(collectFromTrack, "collectFromTrack");
+function signalAutomations(ir) {
+  if (!ir) return [];
+  const roots = ir.tag === "Stack" ? ir.tracks : [ir];
+  const out = [];
+  for (const node of roots) {
+    if (node?.tag !== "Track") continue;
+    const id = node.trackId;
+    if (typeof id !== "string" || id.length === 0) continue;
+    collectFromTrack(id, node, out);
+  }
+  return out;
+}
+__name(signalAutomations, "signalAutomations");
+function signalCarryingParamKeys(ir) {
+  const keys = /* @__PURE__ */ new Set();
+  if (!ir) return keys;
+  const stack = [ir];
+  const seen = /* @__PURE__ */ new Set();
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    if (node.tag === "Param" && typeof node.key === "string" && node.key.length > 0) {
+      const value = node.value;
+      if (value && typeof value === "object" && carriesSignal(value)) keys.add(node.key);
+    }
+    for (const child of childNodes(node)) stack.push(child);
+  }
+  return keys;
+}
+__name(signalCarryingParamKeys, "signalCarryingParamKeys");
+function carriesSignal(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 24) return false;
+  if (Array.isArray(value)) return value.some((v) => carriesSignal(v, depth + 1));
+  const o = value;
+  if (o.tag === "Signal") return true;
+  for (const [key2, child] of Object.entries(o)) {
+    if (SKIP_KEYS.has(key2)) continue;
+    if (carriesSignal(child, depth + 1)) return true;
+  }
+  return false;
+}
+__name(carriesSignal, "carriesSignal");
+var PERIODIC_KINDS = /* @__PURE__ */ new Set([
+  "sine",
+  "cosine",
+  "saw",
+  "isaw",
+  "tri",
+  "itri",
+  "square",
+  "sine2",
+  "cosine2",
+  "saw2",
+  "isaw2",
+  "tri2",
+  "itri2",
+  "square2"
+]);
+function hasTruePeriod(kind) {
+  return PERIODIC_KINDS.has(kind);
+}
+__name(hasTruePeriod, "hasTruePeriod");
+
 // src/ir/songAnalysis.ts
 function laneKeyOf(ev) {
   return ev.trackId ?? ev.s ?? "$default";
@@ -1024,14 +1190,113 @@ function spanCoversEveryLane(events, period) {
   return true;
 }
 __name(spanCoversEveryLane, "spanCoversEveryLane");
-function displayPeriodRule(events, horizon, cap, hasUnheardTrack) {
+function signalDimensionsOf(ir) {
+  const audible = audibleTracks(ir);
+  const periods = [];
+  const keys = /* @__PURE__ */ new Set();
+  for (const t of audible) {
+    for (const a of signalAutomations(t)) {
+      if (hasTruePeriod(a.kind) && a.periodCycles > 0) periods.push(a.periodCycles);
+    }
+    for (const k of signalCarryingParamKeys(t)) keys.add(k);
+  }
+  return { keys, periods };
+}
+__name(signalDimensionsOf, "signalDimensionsOf");
+function audibleTracks(ir) {
+  if (!ir) return [];
+  const roots = ir.tag === "Stack" ? ir.tracks : [ir];
+  const tracks = roots.filter((n) => n?.tag === "Track");
+  if (tracks.length === 0) return [ir];
+  return tracks.filter((t) => t.tag !== "Track" || t.muted !== true);
+}
+__name(audibleTracks, "audibleTracks");
+function withoutKeys(ev, keys) {
+  if (keys.size === 0) return ev;
+  const rec = ev;
+  let touched = false;
+  let copy = null;
+  for (const k of keys) {
+    if (rec[k] === void 0) continue;
+    copy ?? (copy = { ...rec });
+    copy[k] = void 0;
+    touched = true;
+  }
+  const params = ev.params;
+  if (params) {
+    let dropped = false;
+    const next = {};
+    for (const [k, v] of Object.entries(params)) {
+      if (keys.has(k)) {
+        dropped = true;
+        continue;
+      }
+      next[k] = v;
+    }
+    if (dropped) {
+      copy ?? (copy = { ...rec });
+      copy.params = next;
+      touched = true;
+    }
+  }
+  return touched && copy ? copy : rec;
+}
+__name(withoutKeys, "withoutKeys");
+var gcdInt = /* @__PURE__ */ __name((a, b) => b === 0 ? a : gcdInt(b, a % b), "gcdInt");
+function asFraction(x, maxDen = 1024) {
+  if (!Number.isFinite(x) || x <= 0) return null;
+  for (let d = 1; d <= maxDen; d++) {
+    const n = x * d;
+    if (Math.abs(n - Math.round(n)) < 1e-9) {
+      const num = Math.round(n);
+      const g = gcdInt(num, d);
+      return [num / g, d / g];
+    }
+  }
+  return null;
+}
+__name(asFraction, "asFraction");
+function rationalLcm(x, y) {
+  const fx = asFraction(x);
+  const fy = asFraction(y);
+  if (!fx || !fy) return null;
+  const [a, b] = fx;
+  const [c, d] = fy;
+  const lcmNum = a * c / gcdInt(a, c);
+  return lcmNum / gcdInt(b, d);
+}
+__name(rationalLcm, "rationalLcm");
+function foldWithSignalPeriods(period, periods, cap) {
+  let folded = period;
+  for (const q of periods) {
+    const next = rationalLcm(folded, q);
+    if (next === null || !Number.isFinite(next) || next > cap) return period;
+    folded = next;
+  }
+  return folded;
+}
+__name(foldWithSignalPeriods, "foldWithSignalPeriods");
+function displayPeriodRule(events, horizon, cap, hasUnheardTrack, signals) {
   const period = horizon >= cap ? detectDisplayPeriodAtCap(events, horizon) : detectDisplayPeriod(events, horizon);
-  if (period === null) return null;
-  if (hasUnheardTrack && horizon < cap) return null;
-  if (!spanCoversEveryLane(events, period)) return null;
-  return period;
+  if (period !== null) {
+    if (hasUnheardTrack && horizon < cap) return null;
+    if (!spanCoversEveryLane(events, period)) return null;
+    return period;
+  }
+  return signalInformedPeriod(events, horizon, cap, signals);
 }
 __name(displayPeriodRule, "displayPeriodRule");
+function signalInformedPeriod(events, horizon, cap, signals) {
+  if (horizon < cap) return null;
+  if (!signals || signals.keys.size === 0) return null;
+  const stripped = events.map((ev) => withoutKeys(ev, signals.keys));
+  const structural = detectDisplayPeriodAtCap(stripped, horizon);
+  if (structural === null) return null;
+  const folded = foldWithSignalPeriods(structural, signals.periods, cap);
+  if (!spanCoversEveryLane(events, folded)) return null;
+  return folded;
+}
+__name(signalInformedPeriod, "signalInformedPeriod");
 function computeSections(lanes, horizon) {
   return computeSectionsInWindow(lanes, 0, horizon);
 }
@@ -1089,7 +1354,7 @@ async function analyzeSong(ir, opts = {}) {
   const now2 = opts.now ?? defaultNow;
   const yieldFn = opts.yieldFn ?? defaultYield;
   const signal = opts.signal;
-  const periodRule = /* @__PURE__ */ __name((evs, h) => opts.detectPeriodFn ? opts.detectPeriodFn(evs, h) : displayPeriodRule(evs, h, cap, opts.hasUnheardTrack ? opts.hasUnheardTrack() : false), "periodRule");
+  const periodRule = /* @__PURE__ */ __name((evs, h) => opts.detectPeriodFn ? opts.detectPeriodFn(evs, h) : displayPeriodRule(evs, h, cap, opts.hasUnheardTrack ? opts.hasUnheardTrack() : false, opts.signals), "periodRule");
   const events = [];
   let collectedTo = 0;
   let horizon = hint;
@@ -1474,6 +1739,7 @@ function validateNode(raw, path) {
       };
       if (Array.isArray(node.loc)) out.loc = node.loc;
       if (typeof node.userMethod === "string") out.userMethod = node.userMethod;
+      if (node.muted === true) out.muted = true;
       return out;
     }
     case "Code": {
@@ -1799,6 +2065,10 @@ function trackIdFromLabel(label, index) {
   return bare && bare !== "$" ? bare : `d${index + 1}`;
 }
 __name(trackIdFromLabel, "trackIdFromLabel");
+function isMutedLabel(label) {
+  return label !== void 0 && label.startsWith("_");
+}
+__name(isMutedLabel, "isMutedLabel");
 
 // src/ir/statementHeads.ts
 var NON_TRACK_HEADS = /* @__PURE__ */ new Set([
@@ -2174,7 +2444,7 @@ function parseStrudel(code, _opts) {
       const trackId0 = trackIdFromLabel(t.label, 0);
       return IR.track(trackId0, body, {
         loc: [{ start: t.dollarStart, end: t.end }]
-      });
+      }, isMutedLabel(t.label));
     }
     return IR.stack(
       ...tracks.map((t, i) => {
@@ -2182,7 +2452,7 @@ function parseStrudel(code, _opts) {
         const trackId = trackIdFromLabel(t.label, i);
         return IR.track(trackId, body, {
           loc: [{ start: t.dollarStart, end: t.end }]
-        });
+        }, isMutedLabel(t.label));
       })
     );
   } catch {
@@ -3621,14 +3891,14 @@ function runChainAppliedStage(input) {
         const armLoc = armSourceSpan(applied);
         const meta = tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0 ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] } : armLoc !== void 0 ? { loc: [armLoc] } : void 0;
         const trackId = trackIdFromLabel(tMeta.trackLabel, i);
-        return IR.track(trackId, applied, meta);
+        return IR.track(trackId, applied, meta, isMutedLabel(tMeta.trackLabel));
       })
     );
   }
   const sMeta = input;
   const singleTrackId = trackIdFromLabel(sMeta.trackLabel, 0);
   const singleMeta = sMeta.dollarStart !== void 0 && sMeta.dollarEnd !== void 0 ? { loc: [{ start: sMeta.dollarStart, end: sMeta.dollarEnd }] } : void 0;
-  return IR.track(singleTrackId, applyOnTrack(input), singleMeta);
+  return IR.track(singleTrackId, applyOnTrack(input), singleMeta, isMutedLabel(sMeta.trackLabel));
 }
 __name(runChainAppliedStage, "runChainAppliedStage");
 function applyOnTrack(node) {
@@ -46513,6 +46783,9 @@ exports.setWeight = setWeight;
 exports.setZoneCropOverride = setZoneCropOverride;
 exports.setZoneHeightOverride = setZoneHeightOverride;
 exports.shellStateKeyFor = shellStateKeyFor;
+exports.signalAutomations = signalAutomations;
+exports.signalCarryingParamKeys = signalCarryingParamKeys;
+exports.signalDimensionsOf = signalDimensionsOf;
 exports.silenceArm = silenceArm;
 exports.songExtent = songExtent;
 exports.soundfontGroupLabel = soundfontGroupLabel;

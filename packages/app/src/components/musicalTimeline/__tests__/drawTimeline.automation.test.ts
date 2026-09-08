@@ -15,7 +15,7 @@
 import { describe, it, expect } from 'vitest'
 import { drawTimeline, type DrawTheme, type DrawTransform } from '../drawTimeline'
 import type { TimelineScene, SceneLane } from '../timelineScene'
-import type { SignalAutomation } from '../signalAutomation'
+import type { SignalAutomation } from '@stave/editor'
 import { computeLaneLayout } from '../laneLayout'
 
 const THEME: DrawTheme = {

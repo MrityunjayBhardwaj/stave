@@ -21,7 +21,7 @@
  * producing an IR-derived input for `buildTimelineScene` (which is documented
  * PURE — no IR walk) rather than reaching into the IR from inside the scene.
  */
-import type { PatternIR } from '@stave/editor'
+import type { PatternIR } from './PatternIR'
 
 type SignalNode = PatternIR & { tag: 'Signal' }
 export type SignalKind = SignalNode['kind']
@@ -266,4 +266,99 @@ export function signalAutomations(ir: PatternIR | null | undefined): readonly Si
     collectFromTrack(id, node, out)
   }
   return out
+}
+
+/**
+ * Every parameter KEY whose argument carries a signal anywhere (#1465).
+ *
+ * ⚠ THIS IS A DIFFERENT QUESTION FROM `signalAutomations`, ON THE SAME IR, and
+ * the difference is the point rather than an oversight. That reader asks "can I
+ * PLOT this?" and abstains on anything without a closed form. This one asks "does
+ * this control MOVE?" — and `.gain(sine.add(saw))` has no closed form, cannot be
+ * drawn, and absolutely does make every cycle differ.
+ *
+ * Measured over the sweep's own corpus (`loadCorpus`, 142 documents that
+ * evaluate): the closed-form reader sees 199 signal-carrying `Param` nodes and
+ * this one sees 239. Answering the period question with the drawing reader would
+ * silently under-report by those 40.
+ *
+ * Returns KEYS rather than nodes because that is what the consumer needs: the
+ * cycle fingerprint reads an event's whole value partition (`eventValueKey.ts` —
+ * `{note, freq, s, gain, velocity, color} ∪ params`), and a key is how a
+ * dimension is named there. `cutoff`/`resonance`/`pan`/`room` arrive via
+ * `params`; `gain` has a dedicated slot. Both are addressed by key.
+ *
+ * Structural and horizon-FREE, which is the property that matters. An earlier
+ * attempt at this exclusion derived it by watching a probe window, so a field
+ * whose period exceeded that window read as unstable and got dropped — it
+ * discarded `note` and `s` in ~75 documents. `Param{value: …Signal}` is the same
+ * fact at horizon 4 and at horizon 256, so it cannot drift with the horizon it
+ * feeds.
+ */
+export function signalCarryingParamKeys(ir: PatternIR | null | undefined): ReadonlySet<string> {
+  const keys = new Set<string>()
+  if (!ir) return keys
+  const stack: PatternIR[] = [ir]
+  const seen = new Set<PatternIR>()
+  while (stack.length > 0) {
+    const node = stack.pop() as PatternIR
+    if (!node || typeof node !== 'object' || seen.has(node)) continue
+    seen.add(node)
+    if (node.tag === 'Param' && typeof node.key === 'string' && node.key.length > 0) {
+      const value: unknown = node.value
+      if (value && typeof value === 'object' && carriesSignal(value)) keys.add(node.key)
+    }
+    for (const child of childNodes(node)) stack.push(child)
+  }
+  return keys
+}
+
+/** Does this subtree contain a `Signal` anywhere? Deliberately unconditional —
+ *  no allowlist, no closed-form requirement — because ANY signal underneath a
+ *  control means that control moves. */
+function carriesSignal(value: unknown, depth = 0): boolean {
+  if (!value || typeof value !== 'object' || depth > 24) return false
+  if (Array.isArray(value)) return value.some((v) => carriesSignal(v, depth + 1))
+  const o = value as Record<string, unknown>
+  if (o.tag === 'Signal') return true
+  for (const [key, child] of Object.entries(o)) {
+    if (SKIP_KEYS.has(key)) continue
+    if (carriesSignal(child, depth + 1)) return true
+  }
+  return false
+}
+
+/**
+ * Signals whose output actually REPEATS, listed rather than derived (#1465).
+ *
+ * The song period rule folds a signal's rate into the song's period, and that is
+ * only meaningful for a signal that comes back to where it started. `sine.slow(4)`
+ * repeats every 4 cycles; `rand` and `perlin` sample new values forever, `time`
+ * grows without bound, and `mouseX` is live input. Sampling any of those longer
+ * never yields a repeat, so there is no rate to fold — a document automated only
+ * by those has no true period at all, and the analysis must say so rather than
+ * invent one.
+ *
+ * ⚠ AN ALLOWLIST, DELIBERATELY, and the direction of the default is the reason.
+ * A kind added to `PatternIR` later and forgotten here is treated as NOT
+ * periodic, which costs a fold the analysis could have made — the period stays
+ * the structural one, which is the answer production already gives. The denylist
+ * spelling fails the other way: a new noise source would be folded as though it
+ * repeated, and the song would be handed a definite length its audio does not
+ * have. One direction under-promises, the other lies.
+ *
+ * The membership is `@strudel/core@1.2.6/signal.mjs` read directly, the same
+ * source `polarityOf` above is grounded in: the periodic set is the waveform
+ * family (`sine`/`cosine`/`saw`/`isaw`/`tri`/`itri`/`square`) in both its
+ * unipolar and `2`-suffixed bipolar spellings, and nothing else.
+ */
+const PERIODIC_KINDS: ReadonlySet<string> = new Set([
+  'sine', 'cosine', 'saw', 'isaw', 'tri', 'itri', 'square',
+  'sine2', 'cosine2', 'saw2', 'isaw2', 'tri2', 'itri2', 'square2',
+])
+
+/** Does this signal's output repeat, so that `periodCycles` names a real period
+ *  rather than just a rate? See `PERIODIC_KINDS` for why this is an allowlist. */
+export function hasTruePeriod(kind: SignalKind): boolean {
+  return PERIODIC_KINDS.has(kind)
 }

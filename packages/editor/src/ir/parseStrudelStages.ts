@@ -19,7 +19,7 @@
  */
 
 import { IR, type PatternIR } from './PatternIR'
-import { trackIdFromLabel } from './trackId'
+import { trackIdFromLabel, isMutedLabel } from './trackId'
 import {
   extractTracks,
   parseRoot,
@@ -529,7 +529,10 @@ export function runChainAppliedStage(input: PatternIR): PatternIR {
         // keeps the synthetic `d{i+1}`. The `_` mute marker is stripped so
         // identity is mute-invariant (see `trackIdFromLabel`).
         const trackId = trackIdFromLabel(tMeta.trackLabel, i)
-        return IR.track(trackId, applied, meta)
+        // #1488 — the flag has to be set on BOTH parse paths or the staged
+        // pipeline stops matching `parseStrudel`, which is what
+        // `stagesParityCorpus` exists to catch (and did).
+        return IR.track(trackId, applied, meta, isMutedLabel(tMeta.trackLabel))
       }),
     )
   }
@@ -549,7 +552,7 @@ export function runChainAppliedStage(input: PatternIR): PatternIR {
     sMeta.dollarStart !== undefined && sMeta.dollarEnd !== undefined
       ? { loc: [{ start: sMeta.dollarStart, end: sMeta.dollarEnd }] }
       : undefined
-  return IR.track(singleTrackId, applyOnTrack(input), singleMeta)
+  return IR.track(singleTrackId, applyOnTrack(input), singleMeta, isMutedLabel(sMeta.trackLabel))
 }
 
 /**

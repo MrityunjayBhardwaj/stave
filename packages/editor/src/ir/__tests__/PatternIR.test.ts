@@ -730,3 +730,29 @@ describe('20-11 — Track tag', () => {
     expect(() => patternFromJSON(bad)).toThrow(/trackId/)
   })
 })
+
+describe('Track.muted survives the JSON round-trip (#1488)', () => {
+  it('carries the flag through serialize -> deserialize', () => {
+    // `patternToJSON` is a plain stringify, but `patternFromJSON` rebuilds a
+    // Track field by field — so a new field is dropped on READ unless it is
+    // explicitly carried. A document would then lose its muting on
+    // save-and-reload, and the period rule would silently go back to folding
+    // silent tracks into the song's length.
+    const ir = IR.stack(
+      IR.track('d1', IR.pure(), undefined, false),
+      IR.track('d2', IR.pure(), undefined, true),
+    )
+    const back = patternFromJSON(patternToJSON(ir)) as Extract<PatternIR, { tag: 'Stack' }>
+    const tracks = back.tracks as Extract<PatternIR, { tag: 'Track' }>[]
+    expect(tracks[0].muted).toBeUndefined()
+    expect(tracks[1].muted).toBe(true)
+  })
+
+  it('leaves an unmuted track byte-identical to before the field existed', () => {
+    // The flag is spread in only when true, so nothing that was not muted
+    // gains a key — old snapshots and pinned JSON stay valid.
+    expect(JSON.parse(patternToJSON(IR.track('d1', IR.pure())))).toEqual(
+      JSON.parse(patternToJSON(IR.track('d1', IR.pure(), undefined, false))),
+    )
+  })
+})

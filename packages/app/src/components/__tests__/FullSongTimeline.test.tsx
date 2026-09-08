@@ -60,9 +60,15 @@ vi.mock('@stave/editor', async () => {
   const { skeletonsFromEvents, wholeWalkWindow } = await import(
     '../musicalTimeline/__tests__/structuralWalkTestStub'
   )
+  // #1489 moved this reader into the editor, so the barrel mock has to carry it
+  // or the component gets `undefined` and every case here dies in a useMemo —
+  // the exact trap the `wholeWalkWindow` note below already describes. Real
+  // function, from source: it is a pure IR walk, so there is nothing to stub.
+  const { signalAutomations } = await import('../../../../editor/src/ir/signalAutomation')
   const eventsForIr = (ir: { bare?: boolean; nested?: boolean } | null) =>
     ir?.bare ? BARE_EVENTS : ir?.nested ? NESTED_EVENTS : ir ? TRIM_EVENTS : []
   return {
+    signalAutomations,
     collectCycles: (ir: { bare?: boolean; nested?: boolean } | null) => eventsForIr(ir),
     structuralWalk: (ir: { bare?: boolean; nested?: boolean } | null, window: { originCycle: number; spanCycles: number }) =>
       skeletonsFromEvents(eventsForIr(ir), window),

@@ -23,7 +23,7 @@ import { containingAnchor } from './laneIdentity'
 import { resolveLaneName } from './trackLabel'
 import { resolveSectionName } from './sectionLabel'
 import type { DeclaredTrack } from './trackOrder'
-import type { SignalAutomation } from './signalAutomation'
+import type { SignalAutomation } from '@stave/editor'
 
 /** Grouping key for marks with no sample name (`s == null`) — synth notes that
  *  carry only a `note`. Shared by the scene builder and the renderer so a
