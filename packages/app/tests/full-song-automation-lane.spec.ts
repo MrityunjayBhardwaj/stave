@@ -321,3 +321,117 @@ test('a fabricated curve is drawn dashed, a faithful one solid', async ({ page }
 
   expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
 })
+
+/** Read the Strudel document back out of Monaco — the artefact an edit has to
+ *  reach. A green unit test proves the edit was BUILT; only this proves it
+ *  landed. */
+async function readDoc(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const eds = ((window as unknown as { monaco?: { editor?: { getEditors?: () => Array<{ getModel: () => { getValue: () => string; getLanguageId?: () => string } | null }> } } }).monaco?.editor?.getEditors?.()) ?? []
+    const t = eds.find((e) => e.getModel()?.getLanguageId?.() === 'strudel') ?? eds[0]
+    return t?.getModel()?.getValue() ?? ''
+  })
+}
+
+/** Click at a canvas-relative point. */
+async function clickCanvasAt(page: Page, x: number, y: number): Promise<void> {
+  const box = await page.locator('[data-full-song-canvas]').boundingBox()
+  if (!box) throw new Error('no canvas')
+  await page.mouse.click(box.x + x, box.y + y)
+}
+
+/**
+ * ⚠ MELODIC ON PURPOSE, and the reason is a real limit rather than a test
+ * convenience. A single-voice PERCUSSIVE lane is 22px expanded (25px collapsed),
+ * so its automation band is 16px — under the 22px floor a caption needs, and no
+ * caption is painted there at any zoom. Observed, not assumed: the canvas stayed
+ * 25px tall through the expand gesture and a full sweep of click points opened
+ * nothing. A melodic lane gets four sub-rows (88px), which is where the bounds
+ * are actually reachable today.
+ */
+const MELODIC_AUTOMATED_SONG = 'note("c3 e3 g3 b3").cutoff(saw.slow(4).range(200, 2000))'
+
+test('a bound retyped on the caption reaches the document (#1464 Stage 2)', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+
+  await bootShell(page)
+  await typeSongAndEval(page, MELODIC_AUTOMATED_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+
+  const editor = page.locator('[data-full-song="automation-bound"]')
+
+  // ── (0) COLLAPSED: there is no caption, so there is nothing to click. This is
+  //    the control arm for the whole gesture — without it, "an input appeared"
+  //    could mean the hit-test fires anywhere on the lane.
+  await clickCanvasAt(page, 40, 8)
+  await page.waitForTimeout(200)
+  expect(await editor.count(), 'a collapsed lane has no caption, so no editor may open').toBe(0)
+
+  // ── EXPAND. Double-click is the app's own expand gesture; it must still work
+  //    over a lane that has no caption yet, which is the case that would break
+  //    if the new guard were too broad.
+  const box = await page.locator('[data-full-song-canvas]').boundingBox()
+  if (!box) throw new Error('no canvas')
+  await page.mouse.dblclick(box.x + 200, box.y + 8)
+  await page.waitForTimeout(800)
+  // The expand is what makes the caption exist at all — assert it happened
+  // rather than letting a silent no-op become "the caption was unreachable".
+  const grew = await page.locator('[data-full-song-canvas]').evaluate((el) => (el as HTMLCanvasElement).height)
+  expect(grew, 'the lane did not expand, so no caption could be painted').toBeGreaterThan(60)
+
+  // ── FIND THE HIGH BOUND BY OBSERVATION, not by assuming a glyph width. Walk
+  //    the caption line and let the app say which field each x belongs to; the
+  //    input's own value is the answer. A hardcoded x would pin this test to a
+  //    font that may not be installed on the machine running it.
+  let found: { x: number; value: string } | null = null
+  for (let x = 6; x <= 140 && !found; x += 3) {
+    await clickCanvasAt(page, x, 8)
+    await page.waitForTimeout(90)
+    if (await editor.count()) {
+      const value = await editor.inputValue()
+      if (value === '2000') found = { x, value }
+      else await page.keyboard.press('Escape')
+      await page.waitForTimeout(60)
+    }
+  }
+  expect(found, 'no caption field reading "2000" was reachable along the caption line').not.toBeNull()
+
+  // ── (1) THE EDITOR OPENED ON THE FIELD THAT WAS CLICKED.
+  expect(await editor.inputValue()).toBe('2000')
+
+  // ── (2) THE EDIT REACHES THE DOCUMENT.
+  const before = await readDoc(page)
+  expect(before).toContain('.range(200, 2000)')
+  await page.keyboard.press(`${MOD}+A`)
+  await page.keyboard.type('3000')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(600)
+
+  const after = await readDoc(page)
+  expect(after, `the retyped bound did not reach the document. before=${before} after=${after}`)
+    .toContain('.range(200,3000)')
+  // The rest of the document is untouched — only the range leg moved.
+  expect(after).toContain('note("c3 e3 g3 b3").cutoff(saw.slow(4)')
+
+  // ── (3) THE EDITOR CLOSES on commit rather than lingering over the lane.
+  expect(await editor.count()).toBe(0)
+
+  // ── (4) ESCAPE WRITES NOTHING. Re-open the same field, type, abandon.
+  await clickCanvasAt(page, found!.x, 8)
+  await page.waitForTimeout(200)
+  if (await editor.count()) {
+    await page.keyboard.press(`${MOD}+A`)
+    await page.keyboard.type('9999')
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(400)
+    expect(await readDoc(page), 'Escape wrote to the document').not.toContain('9999')
+  }
+
+  expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
+})
+
