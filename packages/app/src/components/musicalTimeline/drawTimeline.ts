@@ -25,6 +25,7 @@ import type { TimelineScene, SceneLane, SceneNote, SceneClip } from './timelineS
 import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
 import { BEATS_PER_BAR, songCycleToXUnclamped, type SongWindow } from './songAxis'
+import type { SignalAutomation } from './signalAutomation'
 
 /** The HORIZONTAL view transform + viewport, all in CSS pixels. Vertical
  *  geometry (per-lane top/height, total height) lives in the `LaneLayout`. */
@@ -54,6 +55,11 @@ export interface DrawTheme {
    *  name identifies the section, it does not compete with the note marks the
    *  clip exists to show. */
   readonly clipCaption: string
+  /** Stroke for a continuous automation curve (#1464 Stage 1). Drawn OVER the
+   *  lane's marks, so it is a line rather than a fill — the marks say what plays,
+   *  the curve says how a parameter moves while it does, and the two must stay
+   *  separately readable. */
+  readonly automationLine: string
 }
 
 /** Below this per-cycle width, individual note marks would smear sub-pixel, so
@@ -233,6 +239,12 @@ export function drawTimeline(
       }
       ctx.globalAlpha = 1
     }
+    // Continuous automation (#1464 Stage 1) — over the marks, under the silence
+    // wash, so a muted track's curve dims with the rest of its lane.
+    drawAutomation(
+      ctx, lane.automations, top, rowHeight, viewportWidth, theme,
+      firstCycle, lastCycle, toScreenX, expanded,
+    )
     // Silenced (muted / soloed-out) lane fade (#731): wash the whole band toward
     // the background so it reads ~55% dimmer — the Mixer's dimmed-strip look —
     // keyed by the SAME display name the Mixer dims by (PV155). Painted last so it
@@ -435,6 +447,200 @@ function drawClips(
 /** Faint per-beat vertical guides inside an expanded lane (rhythm readability).
  *  Cycle boundaries are already drawn by the global gridlines; this adds the
  *  in-between beats (BEATS_PER_BAR subdivisions), suppressed when they'd crowd. */
+/** Vertical inset of the automation curve inside its lane band, so the curve
+ *  never collides with the band's own top/bottom edge. */
+const AUTOMATION_PAD_Y = 3
+/** Horizontal sampling step for the curve, in px. One sample per ~2px is below
+ *  the resolution of the stroke itself, so a finer step costs time and changes
+ *  no pixel. */
+const AUTOMATION_STEP_PX = 2
+/** A lane band shorter than this has no room for a curve that reads as a shape
+ *  rather than as a thick line, so it draws none. Silence over a smear — the
+ *  same rule `CLIP_CAPTION_MIN_W` applies to captions. */
+const AUTOMATION_MIN_BAND_H = 10
+/** Label font for the automation bounds. Same literal-mono discipline as
+ *  `CLIP_CAPTION_FONT` — canvas cannot read CSS custom properties. */
+const AUTOMATION_LABEL_FONT = '9px ui-monospace, SFMono-Regular, Menlo, monospace'
+/** Vertical room one bounds label needs before it is worth drawing. */
+const AUTOMATION_LABEL_MIN_H = 22
+/**
+ * Minimum pixels per full OSCILLATION before the curve is drawn cycle-by-cycle.
+ *
+ * Reuses `COARSEN_PX` — the lane's own already-calibrated answer to the identical
+ * question. Below that many pixels per cycle the mark renderer stops drawing
+ * individual notes and switches to density blocks, because the marks would smear
+ * sub-pixel; an oscillation that gets less room than a cycle needs is in exactly
+ * the same position, so it gets the same treatment rather than a second constant
+ * tuned by eye against the first.
+ *
+ * ⚠ FOUND BY LOOKING, and the first guess at it was wrong. Every unit test here
+ * draws a 4-cycle window, where this never triggers at all. But a continuously
+ * modulated document is precisely the one whose loop period cannot be detected
+ * (#1465 — the cycle fingerprint reads the event's value partition, and a moving
+ * control makes every cycle differ), so the view falls back to "no repeat ·
+ * showing first 256 cycles". At 256 cycles across ~900px, `sine.slow(2)` is 128
+ * oscillations at ~7px each. The FIRST real document this feature meets is the
+ * one it renders worst, and no fixture would have shown it — the screenshot did.
+ */
+const AUTOMATION_MIN_PERIOD_PX = COARSEN_PX
+
+/** Round a bound for display: enough precision to distinguish `0.4` from `0.6`,
+ *  without printing `2000.0000000002` for a value the user wrote as `2000`. */
+function formatBound(v: number): string {
+  if (!Number.isFinite(v)) return '?'
+  if (Number.isInteger(v)) return String(v)
+  return String(Math.round(v * 1000) / 1000)
+}
+
+/**
+ * The signal's value at a given cycle, normalised to 0..1 of its own range.
+ *
+ * Shape only — this deliberately does NOT reproduce Strudel's sampling, because
+ * it is not trying to: the lane shows the CONTOUR of the automation (what moves,
+ * how fast, between which bounds), and a lane that claimed sample accuracy would
+ * be making a promise the engine, not the editor, owns. The engine remains the
+ * authority on what is heard; bouncing already proved it renders these correctly
+ * even while they were opaque here.
+ *
+ * `rand`/`perlin` are drawn as a stable pseudo-random contour rather than as the
+ * engine's actual seeded stream, for the same reason — the seed is a runtime
+ * value the static IR does not carry, so a "real" curve here would be fiction
+ * with a plausible shape. A deterministic stand-in at the right RATE tells the
+ * truth that is available: this parameter jumps around, this often.
+ */
+function signalUnit(kind: string, phase: number): number {
+  const t = phase - Math.floor(phase) // wrap to [0,1)
+  switch (kind) {
+    case 'sine': case 'sine2': return (Math.sin(2 * Math.PI * t) + 1) / 2
+    case 'cosine': case 'cosine2': return (Math.cos(2 * Math.PI * t) + 1) / 2
+    case 'saw': case 'saw2': return t
+    case 'isaw': case 'isaw2': return 1 - t
+    case 'tri': case 'tri2': return t < 0.5 ? t * 2 : 2 - t * 2
+    case 'itri': case 'itri2': return t < 0.5 ? 1 - t * 2 : t * 2 - 1
+    case 'square': case 'square2': return t < 0.5 ? 0 : 1
+    case 'time': return t
+    default: {
+      // rand / perlin / berlin / brand / mouse* — a stable hash-based contour.
+      // perlin-family reads as smooth, rand-family as stepped, which is the one
+      // distinction a viewer needs to tell them apart at a glance.
+      const step = kind.startsWith('perlin') || kind.startsWith('berlin')
+      const h = (n: number): number => {
+        const x = Math.sin(n * 127.1) * 43758.5453
+        return x - Math.floor(x)
+      }
+      const i = Math.floor(t * 8)
+      if (!step) return h(i)
+      const f = t * 8 - i
+      const sm = f * f * (3 - 2 * f) // smoothstep between adjacent samples
+      return h(i) * (1 - sm) + h(i + 1) * sm
+    }
+  }
+}
+
+/**
+ * Draw one lane's continuous automation curves (#1464 Stage 1 — READ ONLY).
+ *
+ * Several automated parameters on one track stack as separate curves in the same
+ * band, each spanning the band's full height in its OWN range. They are not
+ * plotted on a shared axis on purpose: `cutoff` runs to thousands and `pan` to
+ * one, so a shared axis would flatten every parameter but the largest into a line
+ * along the floor. Each curve answers "how does THIS control move", which is the
+ * question the lane exists to answer at this stage.
+ */
+function drawAutomation(
+  ctx: CanvasRenderingContext2D,
+  automations: readonly SignalAutomation[],
+  top: number,
+  rowHeight: number,
+  viewportWidth: number,
+  theme: DrawTheme,
+  firstCycle: number,
+  lastCycle: number,
+  toScreenX: (cycle: number) => number,
+  expanded: boolean,
+): void {
+  if (automations.length === 0) return
+  const bandH = rowHeight - AUTOMATION_PAD_Y * 2
+  if (bandH < AUTOMATION_MIN_BAND_H) return
+
+  const x0 = Math.max(0, toScreenX(firstCycle))
+  const x1 = Math.min(viewportWidth, toScreenX(lastCycle))
+  if (x1 - x0 < 1) return
+  // Screen x → cycle, inverted from the SAME map the rest of the lane uses, so
+  // the curve cannot drift from the marks underneath it.
+  const spanPx = toScreenX(lastCycle) - toScreenX(firstCycle)
+  if (!(spanPx > 0)) return
+  const cyclesPerPx = (lastCycle - firstCycle) / spanPx
+
+  const pxPerCycle = toScreenX(1) - toScreenX(0)
+
+  ctx.save()
+  ctx.strokeStyle = theme.automationLine
+  ctx.lineWidth = 1.5
+  ctx.lineJoin = 'round'
+  for (const a of automations) {
+    if (!(a.periodCycles > 0) || !Number.isFinite(a.periodCycles)) continue
+
+    // Too fast to draw cycle-by-cycle at this zoom: state the modulation as a
+    // translucent BAND across the band's height instead of smearing 128 strokes
+    // into a solid block. The band is the honest reading — "this control sweeps
+    // its whole range, faster than this view can resolve" — and it degrades back
+    // into the real curve the moment the user zooms in far enough to see one.
+    if (a.periodCycles * pxPerCycle < AUTOMATION_MIN_PERIOD_PX) {
+      ctx.save()
+      ctx.globalAlpha = 0.18
+      ctx.fillStyle = theme.automationLine
+      ctx.fillRect(x0, top + AUTOMATION_PAD_Y, x1 - x0, bandH)
+      ctx.restore()
+      continue
+    }
+
+    ctx.beginPath()
+    let first = true
+    for (let x = x0; x <= x1; x += AUTOMATION_STEP_PX) {
+      const cycle = firstCycle + (x - toScreenX(firstCycle)) * cyclesPerPx
+      const unit = signalUnit(a.kind, cycle / a.periodCycles)
+      // Top of the band is the HIGH value — screen y grows downward.
+      const y = top + AUTOMATION_PAD_Y + (1 - Math.min(1, Math.max(0, unit))) * bandH
+      if (first) { ctx.moveTo(x, y); first = false } else { ctx.lineTo(x, y) }
+    }
+    ctx.stroke()
+  }
+
+  // ── The BOUNDS, stated rather than drawn ──────────────────────────────────
+  // Every curve is plotted over the full band height in its OWN range, because
+  // the parameters share no axis: `cutoff` runs to thousands and `pan` to one, so
+  // a shared axis would flatten everything but the largest into a line along the
+  // floor. That normalisation is what makes several curves comparable in SHAPE —
+  // and it also means the range leg #1464 asks to be visible would otherwise have
+  // no effect on a single pixel, since `.range(0.4,0.6)` and `.range(0,1)` draw
+  // an identical wave. A DAW resolves exactly this by labelling the lane's axis
+  // instead of rescaling the curve, and that is what these captions are.
+  //
+  // Only on an EXPANDED lane: collapsed rows are a contour view, and a label per
+  // parameter would cost more legibility than it returns at that height.
+  if (expanded && bandH >= AUTOMATION_LABEL_MIN_H) {
+    ctx.font = AUTOMATION_LABEL_FONT
+    ctx.textBaseline = 'top'
+    ctx.fillStyle = theme.automationLine
+    let labelY = top + AUTOMATION_PAD_Y
+    for (const a of automations) {
+      if (labelY + 10 > top + rowHeight) break
+      // `ranged` is why this reads honestly: an explicit `.range(lo,hi)` shows the
+      // user's own numbers, while a signal's natural polarity is marked `~` so a
+      // bound this module SUPPLIED is never presented as one the user wrote.
+      const mark = a.ranged ? '' : '~'
+      ctx.fillText(
+        `${a.paramKey} ${mark}${formatBound(a.lo)}\u2192${formatBound(a.hi)}`,
+        CLIP_CAPTION_PAD_X,
+        labelY,
+      )
+      labelY += 11
+    }
+  }
+  ctx.restore()
+}
+
 function drawBeatGrid(
   ctx: CanvasRenderingContext2D,
   top: number,

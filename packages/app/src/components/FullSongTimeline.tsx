@@ -49,6 +49,7 @@ import {
 } from './musicalTimeline/stableVoiceOrder'
 import { collectNoteMarks, readEventsInBand } from './musicalTimeline/timelineMarks'
 import { declaredTracks } from './musicalTimeline/trackOrder'
+import { signalAutomations, type SignalAutomation } from './musicalTimeline/signalAutomation'
 import { computeLaneLayout, laneAtY, type LaneLayout } from './musicalTimeline/laneLayout'
 import {
   loadTimelineCamera,
@@ -821,6 +822,19 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // the scene can only append those lanes after the IR ones, so a signal written
   // first renders last.
   const trackOrder = useMemo(() => declaredTracks(props.ir ?? null), [props.ir])
+  // Continuous automation per lane (#1464 Stage 1) — the same IR, read once and
+  // grouped by the track id the lanes already key on. Memoised on `props.ir`
+  // exactly like `trackOrder`: both are structural readings of the document, so
+  // they refresh together and can never describe different documents.
+  const automationsByTrack = useMemo(() => {
+    const by = new Map<string, SignalAutomation[]>()
+    for (const a of signalAutomations(props.ir ?? null)) {
+      const list = by.get(a.trackId)
+      if (list) list.push(a)
+      else by.set(a.trackId, [a])
+    }
+    return by as ReadonlyMap<string, readonly SignalAutomation[]>
+  }, [props.ir])
   // Per-lane voice sub-row order is pinned first-seen across re-evals (#480) so
   // reordering clips in time doesn't reshuffle the instrument rows — the SAME
   // first-seen stability `stableTrackOrder` gives the top-level lanes, one level
@@ -859,11 +873,12 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       source,
       customColorByName,
       trackOrder,
+      automationsByTrack,
     )
     const { scene: ordered, order } = applyStableVoiceOrder(raw, voiceOrderRef.current)
     voiceOrderRef.current = order
     return ordered
-  }, [analysis, windowActivity, songWindow, marks, source, customColorByName, trackOrder])
+  }, [analysis, windowActivity, songWindow, marks, source, customColorByName, trackOrder, automationsByTrack])
 
   // ── Expand + bind (#422) ─────────────────────────────────────────────────
   // Click/expand a lane → accordion it taller (read-only note detail) AND bind

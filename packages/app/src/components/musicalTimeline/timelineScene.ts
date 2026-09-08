@@ -23,12 +23,17 @@ import { containingAnchor } from './laneIdentity'
 import { resolveLaneName } from './trackLabel'
 import { resolveSectionName } from './sectionLabel'
 import type { DeclaredTrack } from './trackOrder'
+import type { SignalAutomation } from './signalAutomation'
 
 /** Grouping key for marks with no sample name (`s == null`) — synth notes that
  *  carry only a `note`. Shared by the scene builder and the renderer so a
  *  null-`s` voice maps to the same sub-group on both sides (#424). The NUL char
  *  can't collide with a real sample name. */
 export const NO_VOICE = '\0'
+
+/** One shared empty list, so the common case (a lane with no automation)
+ *  allocates nothing per lane per rebuild. */
+const EMPTY_AUTOMATIONS: readonly SignalAutomation[] = []
 
 /** A single read-only mini-note mark within a lane. */
 export interface SceneNote {
@@ -180,6 +185,12 @@ export interface SceneLane {
    *  `sourceOffset` for a non-nested track (single `loc` entry). The
    *  structure-vs-content counterpart of `sourceOffset`. */
   readonly arrangeOffset: number | null
+  /** Continuous automation this track declares (#1464 Stage 1) — one entry per
+   *  automated parameter, or empty, which is the ordinary case (97 of 329 real
+   *  documents carry any). READ-ONLY: the lane draws these and nothing writes
+   *  them back, which is what keeps #1482's byte-verbatim round-trip safe by
+   *  construction rather than by test. */
+  readonly automations: readonly SignalAutomation[]
 }
 
 /** The full scene the canvas renderer draws. */
@@ -335,6 +346,16 @@ export function buildTimelineScene(
    *  existence question answerable without comparing names — see the
    *  reconciliation below. Ordering reads only the ids. */
   declaredTracks?: readonly DeclaredTrack[],
+  /** Continuous automation per track id (#1464 Stage 1), from `signalAutomations`
+   *  (signalAutomation.ts) — the IR-derived input, computed by the CALLER.
+   *
+   *  ⚠ Passed in rather than read here, for the same reason `declaredTracks` is:
+   *  this function is PURE and walks no IR, and that is the property that lets a
+   *  window drive the scene without an IR at hand. Absent → every lane gets an
+   *  empty list and draws no curve, which is also what a document with no
+   *  automation gets, so the two are indistinguishable to the renderer and there
+   *  is no third state to handle. */
+  automationsByTrack?: ReadonlyMap<string, readonly SignalAutomation[]>,
 ): TimelineScene {
   // The span comes from the window, always — there is no longer a fallback that
   // infers it from the analysis. The caller owns the authoritative span because
@@ -535,6 +556,7 @@ export function buildTimelineScene(
       clips,
       sourceOffset: marks.sourceByLane.get(laneKey) ?? null,
       arrangeOffset: marks.arrangeByLane.get(laneKey) ?? null,
+      automations: automationsByTrack?.get(laneKey) ?? EMPTY_AUTOMATIONS,
       labelOffset: marks.labelOffsetByLane.get(laneKey) ?? null,
     }
   }

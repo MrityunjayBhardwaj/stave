@@ -11,6 +11,7 @@ const theme: DrawTheme = {
   gridline: '#444',
   clipFill: '#555',
   clipCaption: '#fff', clipBorder: '#666',
+  automationLine: '#automationLine',
 }
 
 interface Rect { x: number; y: number; w: number; h: number; style: string; alpha: number }
@@ -80,6 +81,7 @@ const scene: TimelineScene = {
       sourceOffset: null,
       arrangeOffset: null,
       labelOffset: null,
+      automations: [],
     },
   ],
 }
@@ -219,6 +221,7 @@ describe('drawTimeline', () => {
           sourceOffset: null,
           arrangeOffset: null,
       labelOffset: null,
+      automations: [],
         },
       ],
     }
