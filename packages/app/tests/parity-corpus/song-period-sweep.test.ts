@@ -167,7 +167,7 @@ describe('Song display period — corpus baseline (#1102)', () => {
         // three of the seven are periods #1104 recovered, given back because a span
         // excluding a track is a loop claim the document does not support, and
         // #1105 already made the aperiodic display an honest one.
-        `  aperiodic-at-cap ${evaluated.filter((v) => v.reachedCap).length}   (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107)`,
+        `  aperiodic-at-cap ${evaluated.filter((v) => v.reachedCap).length}   (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107 → 37 post-#1465)`,
         `  period 1          ${evaluated.filter((v) => v.period === 1).length}   (21 pre-#1102 → 19 post-#1102, unmoved by #1104)`,
         // A document that produced NO events is not an aperiodic document — it is
         // a document the sweep saw nothing of, and `analyzeSong` short-circuits it

@@ -327,3 +327,38 @@ function carriesSignal(value: unknown, depth = 0): boolean {
   }
   return false
 }
+
+/**
+ * Signals whose output actually REPEATS, listed rather than derived (#1465).
+ *
+ * The song period rule folds a signal's rate into the song's period, and that is
+ * only meaningful for a signal that comes back to where it started. `sine.slow(4)`
+ * repeats every 4 cycles; `rand` and `perlin` sample new values forever, `time`
+ * grows without bound, and `mouseX` is live input. Sampling any of those longer
+ * never yields a repeat, so there is no rate to fold — a document automated only
+ * by those has no true period at all, and the analysis must say so rather than
+ * invent one.
+ *
+ * ⚠ AN ALLOWLIST, DELIBERATELY, and the direction of the default is the reason.
+ * A kind added to `PatternIR` later and forgotten here is treated as NOT
+ * periodic, which costs a fold the analysis could have made — the period stays
+ * the structural one, which is the answer production already gives. The denylist
+ * spelling fails the other way: a new noise source would be folded as though it
+ * repeated, and the song would be handed a definite length its audio does not
+ * have. One direction under-promises, the other lies.
+ *
+ * The membership is `@strudel/core@1.2.6/signal.mjs` read directly, the same
+ * source `polarityOf` above is grounded in: the periodic set is the waveform
+ * family (`sine`/`cosine`/`saw`/`isaw`/`tri`/`itri`/`square`) in both its
+ * unipolar and `2`-suffixed bipolar spellings, and nothing else.
+ */
+const PERIODIC_KINDS: ReadonlySet<string> = new Set([
+  'sine', 'cosine', 'saw', 'isaw', 'tri', 'itri', 'square',
+  'sine2', 'cosine2', 'saw2', 'isaw2', 'tri2', 'itri2', 'square2',
+])
+
+/** Does this signal's output repeat, so that `periodCycles` names a real period
+ *  rather than just a rate? See `PERIODIC_KINDS` for why this is an allowlist. */
+export function hasTruePeriod(kind: SignalKind): boolean {
+  return PERIODIC_KINDS.has(kind)
+}

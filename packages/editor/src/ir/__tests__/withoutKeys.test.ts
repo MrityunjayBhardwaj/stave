@@ -1,15 +1,18 @@
 /**
- * `withoutKeys` — the heart of #1465's candidate, tested directly.
+ * `withoutKeys` — the heart of #1465's rule, tested directly.
  *
- * The pricing sweep exercises this over 142 documents, but only through its
- * effect on a period, so a subtle mis-strip would show up there as "the rule
- * recovered fewer documents" and be read as the RULE being weak rather than the
- * stripping being wrong. These pin the mechanism itself.
+ * The sweep exercises this over 142 documents, but only through its effect on a
+ * period, so a subtle mis-strip would show up there as "the rule recovered fewer
+ * documents" and be read as the RULE being weak rather than the stripping being
+ * wrong. These pin the mechanism itself.
+ *
+ * Moved here with the function when the rule shipped: it was a candidate living
+ * in the sweep harness, and it is now production (`songAnalysis`).
  */
 import { describe, it, expect } from 'vitest'
-import type { IREvent } from '../../../editor/src/ir/IREvent'
-import { eventValueKey } from '../../../editor/src/ir/eventValueKey'
-import { withoutKeys } from './songPeriodSweep'
+import type { IREvent } from '../IREvent'
+import { eventValueKey } from '../eventValueKey'
+import { withoutKeys } from '../songAnalysis'
 
 const ev = (over: Partial<IREvent> = {}): IREvent =>
   ({ begin: 0, end: 1, note: 60, s: 'bd', gain: 1, params: { cutoff: 400, room: 0.2 }, ...over }) as unknown as IREvent

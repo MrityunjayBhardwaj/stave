@@ -36,15 +36,15 @@
     "lanes": 1
   },
   "0/-2rI48Rcu-UZ": {
-    "period": 32,
-    "span": 32,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 6
   },
   "0/-3cMJ6ZRfPGI": {
-    "period": 8,
-    "span": 8,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 3
   },
   "0/-5WeGy0LynXi": {
@@ -102,9 +102,9 @@
     "lanes": 7
   },
   "0/-9BuEqUq3uzT": {
-    "period": 32,
-    "span": 32,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 2
   },
   "0/-A4RqH2KfssX": {
@@ -132,9 +132,9 @@
     "lanes": 2
   },
   "0/-EpG6XZkZ6aT": {
-    "period": 6,
-    "span": 6,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 2
   },
   "0/-F1MqbcpcByv": {
@@ -198,9 +198,9 @@
     "lanes": 11
   },
   "0/-K6DBTKj_3dR": {
-    "period": 16,
-    "span": 16,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 1
   },
   "0/-KLGNJUtyyj1": {
@@ -210,9 +210,9 @@
     "lanes": 1
   },
   "0/-KsW6fVLkxAn": {
-    "period": 8,
-    "span": 8,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 3
   },
   "0/-L13nBhrqGR_": {
@@ -306,9 +306,9 @@
     "lanes": 0
   },
   "250/0tjfqXVyaLfJ": {
-    "period": 32,
-    "span": 32,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 6
   },
   "250/0uDwcfLlqTaa": {
@@ -360,9 +360,9 @@
     "lanes": 3
   },
   "250/0zGIYzShEPbP": {
-    "period": 72,
-    "span": 72,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 4
   },
   "250/0zQH4ThmEaeZ": {
@@ -378,9 +378,9 @@
     "lanes": 5
   },
   "250/1-xnSWSfzKqq": {
-    "period": 16,
-    "span": 16,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 1
   },
   "250/10Ee7yjRfGUB": {
@@ -432,9 +432,9 @@
     "lanes": 1
   },
   "250/15ZGIgs3OLQr": {
-    "period": 75,
-    "span": 75,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 9
   },
   "250/17PG-0bBTmFq": {
@@ -516,9 +516,9 @@
     "lanes": 7
   },
   "250/1G_8F3QX5lYL": {
-    "period": 40,
-    "span": 40,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 4
   },
   "250/1GoQpLylZwNq": {
@@ -558,9 +558,9 @@
     "lanes": 1
   },
   "250/1J0KTN4g3M3h": {
-    "period": 8,
-    "span": 8,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 3
   },
   "250/1J2znfXp8Ax4": {
@@ -618,9 +618,9 @@
     "lanes": 3
   },
   "500/37KhOWISAcNM": {
-    "period": 64,
-    "span": 64,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 1
   },
   "500/37nYUycrx0_w": {
@@ -660,9 +660,9 @@
     "lanes": 2
   },
   "500/3DK_gSN85Z_4": {
-    "period": 16,
-    "span": 16,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 1
   },
   "500/3DoPAqtKJlkO": {
@@ -672,9 +672,9 @@
     "lanes": 1
   },
   "500/3GDNekbJ5rJr": {
-    "period": 32,
-    "span": 32,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 6
   },
   "500/3GcY2IiOEL99": {
@@ -702,9 +702,9 @@
     "lanes": 4
   },
   "500/3JxiZ8teItUk": {
-    "period": 60,
-    "span": 60,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 1
   },
   "500/3K-5zWzb3iJC": {
@@ -762,9 +762,9 @@
     "lanes": 1
   },
   "500/3OH2P5x4J4fc": {
-    "period": 96,
-    "span": 96,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 3
   },
   "500/3Ovw-13Yt0-4": {
@@ -774,9 +774,9 @@
     "lanes": 1
   },
   "500/3Pr9t15-rxs-": {
-    "period": 32,
-    "span": 32,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 5
   },
   "500/3Q8isRsPmFqM": {
@@ -846,9 +846,9 @@
     "lanes": 1
   },
   "500/3Y7PNnQdXy4F": {
-    "period": 75,
-    "span": 75,
-    "reachedCap": false,
+    "period": null,
+    "span": 256,
+    "reachedCap": true,
     "lanes": 2
   }
 }

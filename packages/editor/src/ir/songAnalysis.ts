@@ -34,17 +34,19 @@
  * veto used to cover — see `detectDisplayPeriodAtCap`. That returned 20 of the
  * 69 to a real period, so the swept figure was then 49. ⚠ #1107 later moved it
  * to 56 — see the sweep test's own tally line, which carries the whole chain
- * (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107).
+ * (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107 → 37 post-#1465).
  *
  * Of those, 32 have a single lane, so there is nothing to borrow a period from
  * at all, and what the display should do with them is #1105.
  *
  * ⚠ "APERIODIC UNDER EVERY RULE MEASURED" WAS TRUE WHEN WRITTEN AND IS NOT NOW.
- * #1465 prices a rule that recovers 19 of the 56 by asking the identity question
+ * #1465 SHIPPED a rule that recovers 19 of the 56 by asking the identity question
  * without the dimensions the document's own SOURCE says are continuously
- * modulated — an exclusion read structurally from the IR, which is what the
- * earlier probe-window attempt could not do. Priced, not shipped; the numbers and
- * the safety properties are in `song-period-signal-exclusion.test.ts`.
+ * modulated, then folding those signals' own rates back in so the answer is a
+ * period the audio honours — an exclusion read structurally from the IR, which is
+ * what the earlier probe-window attempt could not do. `signalInformedPeriod`
+ * carries the argument; `song-period-signal-fold.test.ts` carries the numbers.
+ * That leaves 37 aperiodic at the cap, and they belong to #1105.
  *
  * A DETECTED PERIOD CAN ALSO BE TOO SHORT TO BE THIS SONG'S (#1107). It can be
  * true of everything the analysis has heard and still describe only part of the
@@ -58,6 +60,7 @@
 import type { PatternIR } from './PatternIR'
 import type { IREvent } from './IREvent'
 import { eventValueKey } from './eventValueKey'
+import { signalAutomations, signalCarryingParamKeys, hasTruePeriod } from './signalAutomation'
 
 /**
  * Lane (row) key for an event. Mirrors `groupEventsByTrack`'s key so analysis
@@ -482,17 +485,234 @@ function spanCoversEveryLane(events: readonly IREvent[], period: number): boolea
  * that hides a whole track is a loop claim the document does not support, and
  * #1105 already made the aperiodic display an honest one.
  */
+/**
+ * What the document's SOURCE says is continuously modulated (#1465).
+ *
+ * Two facts, read structurally off the IR and therefore HORIZON-FREE, which is
+ * the property that makes them safe to feed a horizon-driven detection. An
+ * earlier attempt at this exclusion derived it by watching a probe window, so a
+ * field whose period exceeded that window read as unstable and got dropped — it
+ * discarded `note` and `s` in ~75 documents. `Param{value: …Signal}` is the same
+ * fact at horizon 4 and at horizon 256.
+ */
+export interface SignalDimensions {
+  /** Every parameter KEY whose argument carries a signal — the dimensions to ask
+   *  the identity question WITHOUT. Named by key because that is how the cycle
+   *  fingerprint names a dimension (`eventValueKey`). */
+  readonly keys: ReadonlySet<string>
+  /** Cycle periods of the modulating signals that actually REPEAT. `rand`,
+   *  `perlin`, `time` and the mouse signals contribute nothing here — see
+   *  `hasTruePeriod`. Empty means "this document is modulated, but by nothing
+   *  that comes back", which is a different answer from "not modulated". */
+  readonly periods: readonly number[]
+}
+
+/** Read `SignalDimensions` off a document's IR. The caller holds the IR;
+ *  `analyzeSong` only ever sees events, so this is how the fact reaches it. */
+export function signalDimensionsOf(ir: PatternIR | null | undefined): SignalDimensions {
+  const periods: number[] = []
+  for (const a of signalAutomations(ir)) {
+    if (hasTruePeriod(a.kind) && a.periodCycles > 0) periods.push(a.periodCycles)
+  }
+  return { keys: signalCarryingParamKeys(ir), periods }
+}
+
+/**
+ * Strip named dimensions from an event, in whichever half of the value partition
+ * holds them.
+ *
+ * The partition has exactly two halves and they do not overlap: `extractParams`
+ * builds `params` as the COMPLEMENT of `KNOWN_VALUE_FIELDS`, so a key is a
+ * dedicated slot or a `params` entry, never both. Both halves are cleared anyway
+ * — unconditionally, rather than with a guard that assumes the partition —
+ * because the cost is one lookup and the alternative is a silent half-strip if
+ * that invariant ever moves.
+ *
+ * A dedicated slot becomes `undefined` rather than being deleted, because
+ * `eventValueKey` reads `VALUE_SLOTS` positionally and an absent slot still
+ * contributes `slot=undefined` — a constant in every cycle, which is precisely
+ * the neutral value wanted. A `params` entry is removed outright, because that
+ * half is keyed by presence.
+ *
+ * Returns the ORIGINAL event when nothing matched, so the common case allocates
+ * nothing across a 256-cycle sweep.
+ */
+export function withoutKeys(ev: IREvent, keys: ReadonlySet<string>): IREvent {
+  if (keys.size === 0) return ev
+  const rec = ev as unknown as Record<string, unknown>
+  let touched = false
+  let copy: Record<string, unknown> | null = null
+
+  for (const k of keys) {
+    if (rec[k] === undefined) continue
+    copy ??= { ...rec }
+    copy[k] = undefined
+    touched = true
+  }
+
+  const params = ev.params
+  if (params) {
+    let dropped = false
+    const next: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (keys.has(k)) { dropped = true; continue }
+      next[k] = v
+    }
+    if (dropped) {
+      copy ??= { ...rec }
+      copy.params = next
+      touched = true
+    }
+  }
+  return (touched && copy ? copy : rec) as unknown as IREvent
+}
+
+const gcdInt = (a: number, b: number): number => (b === 0 ? a : gcdInt(b, a % b))
+
+/**
+ * `x` as an exact fraction, or null when it is not one within `maxDen`.
+ *
+ * Signal periods are rationals by construction — `.slow(4)` gives 4, `.fast(3)`
+ * gives 1/3 — but they reach here as floats, and folding needs exact arithmetic
+ * or it reports a period that is off by a rounding error. Returning null for
+ * anything that does not land cleanly is the conservative branch: the caller
+ * then skips the fold and keeps the structural period, which is the answer
+ * production already gives.
+ */
+function asFraction(x: number, maxDen = 1024): readonly [number, number] | null {
+  if (!Number.isFinite(x) || x <= 0) return null
+  for (let d = 1; d <= maxDen; d++) {
+    const n = x * d
+    if (Math.abs(n - Math.round(n)) < 1e-9) {
+      const num = Math.round(n)
+      const g = gcdInt(num, d)
+      return [num / g, d / g]
+    }
+  }
+  return null
+}
+
+/**
+ * The smallest span that is a whole number of BOTH periods, or null when either
+ * is not an exact rational. `lcm(a/b, c/d) = lcm(a, c) / gcd(b, d)` with both
+ * fractions in lowest terms.
+ */
+function rationalLcm(x: number, y: number): number | null {
+  const fx = asFraction(x)
+  const fy = asFraction(y)
+  if (!fx || !fy) return null
+  const [a, b] = fx
+  const [c, d] = fy
+  const lcmNum = (a * c) / gcdInt(a, c)
+  return lcmNum / gcdInt(b, d)
+}
+
+/**
+ * Raise a structural period to one the AUDIO actually repeats at (#1465).
+ *
+ * Excluding a modulated dimension answers "does the rest of this repeat?", and
+ * that span is only the song's period if the modulation also comes back within
+ * it. `.gain(sine.slow(4))` over a 2-cycle structure repeats at 4, not at 2 —
+ * #1465's own verification says it directly: a bounce of N cycles should contain
+ * a whole number of periods of the LFO. So fold the structural period up to the
+ * least common multiple of itself and every signal that repeats.
+ *
+ * ⚠ WHEN THE FOLD EXCEEDS THE CAP, THE STRUCTURAL PERIOD IS RETURNED UNFOLDED,
+ * and it is worth being plain that this returns a span the audio does not repeat
+ * at. Measured over the corpus, two documents fold to 792 and 1,801,800 cycles —
+ * periods that are true and useless, and the honest alternative for them is not
+ * a bigger number but the aperiodic notice, which is what production gave them
+ * before this rule existed. Handing back the structural span keeps them at a
+ * usable, if incomplete, view. It is a DISPLAY span, and the whole reason
+ * #1105's notice exists is that the two are not the same claim.
+ *
+ * A partial fold — folding in the signals that fit and dropping the ones that do
+ * not — is deliberately NOT done: the result would be a period honest about some
+ * of the modulation and silent about the rest, which is harder to reason about
+ * than either endpoint and no more true.
+ */
+function foldWithSignalPeriods(
+  period: number,
+  periods: readonly number[],
+  cap: number,
+): number {
+  let folded = period
+  for (const q of periods) {
+    const next = rationalLcm(folded, q)
+    if (next === null || !Number.isFinite(next) || next > cap) return period
+    folded = next
+  }
+  return Number.isInteger(folded) ? folded : period
+}
+
 export function displayPeriodRule(
   events: readonly IREvent[],
   horizon: number,
   cap: number,
   hasUnheardTrack: boolean,
+  signals?: SignalDimensions,
 ): number | null {
   const period = horizon >= cap ? detectDisplayPeriodAtCap(events, horizon) : detectDisplayPeriod(events, horizon)
-  if (period === null) return null
-  if (hasUnheardTrack && horizon < cap) return null
-  if (!spanCoversEveryLane(events, period)) return null
-  return period
+  if (period !== null) {
+    if (hasUnheardTrack && horizon < cap) return null
+    if (!spanCoversEveryLane(events, period)) return null
+    return period
+  }
+  return signalInformedPeriod(events, horizon, cap, signals)
+}
+
+/**
+ * The source-informed retry (#1465), reached only when every rule above found
+ * nothing and the horizon is spent.
+ *
+ * ── WHY IT CAN ONLY ADD ──────────────────────────────────────────────────────
+ * This runs exclusively on the `period === null` branch, so it never replaces an
+ * answer production already gave — it offers one where production had none. That
+ * is where the safety comes from, and it is worth stating because the plan for
+ * this claimed the `horizon >= cap` gate was what provided it. Measured, that
+ * was wrong: the ungated arm scores identically on the corpus (19 recovered, 0
+ * below-cap documents changed, 0 periods destroyed, 0 collapsed to 1). The gate
+ * costs exactly zero recoveries and is kept as free insurance — it turns "no
+ * below-cap document changed" from something true of these 142 documents into
+ * something a reader can see is true of any document.
+ *
+ * ── WHAT IT ASKS ─────────────────────────────────────────────────────────────
+ * `cycleFingerprints` summarises a cycle from the event's whole value partition,
+ * which is right — that is what fixed #1102. But a control driven by an LFO makes
+ * every cycle genuinely differ on that one axis, so the LANE goes aperiodic and
+ * the document falls to the cap. The structure did not change; one dimension is
+ * sweeping over it. Excluding exactly that dimension asks "does the rest of this
+ * repeat?", and folding the signal's own rate back in (`foldWithSignalPeriods`)
+ * turns that structural answer into one the audio honours.
+ *
+ * Swept over the corpus this returns 19 of the 56 aperiodic-at-cap documents to
+ * a real period — 5 of them single-lane, which #1104's abstention cannot reach
+ * by construction — while changing nothing below the cap, destroying no period
+ * and lengthening none. Of the 19: 9 are modulated only by noise (`rand`,
+ * `perlin`), where no fold exists and the structural span is the only available
+ * answer; 4 fold to a longer, honest period; 4 already were one; 2 fold past the
+ * cap and keep the structural span, which `foldWithSignalPeriods` argues.
+ *
+ * ⚠ THE LANE-COVERAGE CLAUSE IS RE-ASKED ON THE ORIGINAL EVENTS, not the
+ * stripped ones. Stripping is about the identity question only — whether a span
+ * hides a whole track is a fact about what sounds, and `gain` being modulated
+ * has no bearing on it. Asking it on the stripped copy would silently widen
+ * #1107's guarantee's blind spot.
+ */
+function signalInformedPeriod(
+  events: readonly IREvent[],
+  horizon: number,
+  cap: number,
+  signals: SignalDimensions | undefined,
+): number | null {
+  if (horizon < cap) return null
+  if (!signals || signals.keys.size === 0) return null
+  const stripped = events.map((ev) => withoutKeys(ev, signals.keys))
+  const structural = detectDisplayPeriodAtCap(stripped, horizon)
+  if (structural === null) return null
+  const folded = foldWithSignalPeriods(structural, signals.periods, cap)
+  if (!spanCoversEveryLane(events, folded)) return null
+  return folded
 }
 
 /**
@@ -636,6 +856,21 @@ export interface AnalyzeSongOptions {
   detectPeriodFn?: (events: readonly IREvent[], horizon: number) => number | null
 
   /**
+   * What the document's SOURCE says is continuously modulated (#1465), from
+   * `signalDimensionsOf(ir)`.
+   *
+   * Asked of the CALLER for the same reason `hasUnheardTrack` is: the question
+   * is about the DOCUMENT, and `analyzeSong` only ever sees events. Unlike that
+   * clause the answer is derivable here — the reader lives in this package now
+   * (#1489) — but only from an IR the caller holds.
+   *
+   * Omitting it is safe and means exactly one thing: a document whose every lane
+   * is aperiodic keeps the cap and the #1105 notice, which is what production
+   * did before this existed. It can only ever ADD a period, never change one.
+   */
+  signals?: SignalDimensions
+
+  /**
    * "Does the document declare a track that has produced no onset yet?" — clause
    * (a) of `displayPeriodRule`, asked of the CALLER because only the caller can
    * answer it soundly.
@@ -736,7 +971,7 @@ export async function analyzeSong(
   const periodRule = (evs: readonly IREvent[], h: number): number | null =>
     opts.detectPeriodFn
       ? opts.detectPeriodFn(evs, h)
-      : displayPeriodRule(evs, h, cap, opts.hasUnheardTrack ? opts.hasUnheardTrack() : false)
+      : displayPeriodRule(evs, h, cap, opts.hasUnheardTrack ? opts.hasUnheardTrack() : false, opts.signals)
 
   const events: IREvent[] = []
   let collectedTo = 0 // events exist for [0, collectedTo)

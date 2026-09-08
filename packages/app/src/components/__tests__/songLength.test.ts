@@ -17,7 +17,7 @@
 import { describe, it, expect } from 'vitest'
 import { IR, type PatternIR } from '../../../../editor/src/ir/PatternIR'
 import { songExtent } from '../../../../editor/src/ir/songExtent'
-import { analyzeSong } from '../../../../editor/src/ir/songAnalysis'
+import { analyzeSong, signalDimensionsOf } from '../../../../editor/src/ir/songAnalysis'
 import type { IREvent } from '../../../../editor/src/ir/IREvent'
 import {
   measureSongLength,
@@ -55,6 +55,7 @@ function depsWith(onsets: IREvent[]): SongLengthDeps {
   return {
     songExtent,
     analyzeSong,
+    signalDimensionsOf,
     createCollector: () => ({
       collectFn: (startCycle, endCycle) =>
         onsets.filter((e) => e.begin >= startCycle && e.begin < endCycle),
@@ -97,6 +98,7 @@ describe('measureSongLength — the three answers a bounce can act on', () => {
     // must not depend on anything having been evaluated or heard.
     const deps: SongLengthDeps = {
       songExtent,
+      signalDimensionsOf,
       analyzeSong: () => {
         throw new Error('analyzeSong must not be reached for an arrangement')
       },

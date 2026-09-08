@@ -31,6 +31,7 @@
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import {
+  signalDimensionsOf,
   type IRSnapshot,
   type HapStream,
   type IREvent,
@@ -313,7 +314,9 @@ export function MusicalTimeline(
       getSongTrackIds: getSongTrackIdsRef.current,
     })
     const signal = { aborted: false }
-    analyzeSong(ir, { signal, collectFn, hasUnheardTrack })
+    // #1465 — what the SOURCE says is continuously modulated. Read here because
+    // only the caller holds the IR; the rule that uses it is `displayPeriodRule`.
+    analyzeSong(ir, { signal, collectFn, hasUnheardTrack, signals: signalDimensionsOf(ir) })
       .then((result) => {
         if (!signal.aborted) setAnalysis(result)
       })

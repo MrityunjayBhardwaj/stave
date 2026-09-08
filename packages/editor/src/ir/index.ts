@@ -38,6 +38,9 @@ export {
   detectPeriod,
   computeSections,
   laneKeyOf,
+  // #1465 — the source-informed facts the period rule needs, read off the IR
+  // by the caller because `analyzeSong` only ever sees events.
+  signalDimensionsOf,
   // Windowed collection (#1108) — paging past the first span on the branch
   // where no period was found.
   analyzeWindow,
@@ -50,6 +53,7 @@ export type {
   LaneActivity,
   SongSection,
   AnalyzeSongOptions,
+  SignalDimensions,
   WindowAnalysis,
   AnalyzeWindowOptions,
 } from './songAnalysis'
