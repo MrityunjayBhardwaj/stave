@@ -21,7 +21,6 @@ import {
   captionHit,
   captionText,
   captionEdit,
-  shapeEdit,
   CAPTION_PAD_X,
   AUTOMATION_PAD_Y,
   AUTOMATION_LABEL_LINE_H,
@@ -177,21 +176,5 @@ describe('captionEdit — the three things it exists to enforce', () => {
   it('the parameter name is a menu anchor, not a typed field', () => {
     const a = auto({ spans: RANGED })
     expect(captionEdit(hitOn(a, 'param'), 'gain')).toBeNull()
-  })
-})
-
-describe('shapeEdit — replacing the signal identifier is the whole of it', () => {
-  it('rewrites just the identifier', () => {
-    const a = auto({ kind: 'sine', spans: { shape: { start: 20, end: 24 }, rate: null, range: null, chainEnd: 40 } })
-    expect(shapeEdit(a, 'saw')).toEqual({ range: [20, 24], text: 'saw' })
-  })
-
-  it('writes nothing for the kind it already is', () => {
-    const a = auto({ kind: 'sine', spans: { shape: { start: 20, end: 24 }, rate: null, range: null, chainEnd: 40 } })
-    expect(shapeEdit(a, 'sine')).toBeNull()
-  })
-
-  it('refuses when the signal carries no source range', () => {
-    expect(shapeEdit(auto({ kind: 'sine' }), 'saw')).toBeNull()
   })
 })

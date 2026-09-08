@@ -34,10 +34,14 @@ export const AUTOMATION_LABEL_LINE_H = 11
 /** Cap height of the 9px face — the clickable height of one caption line. */
 export const AUTOMATION_LABEL_TEXT_H = 10
 
-/** Which leg of the automation a caption field names, and therefore which edit
- *  a click on it begins. `param` is the SHAPE control's anchor: the parameter
- *  name is where a signal-kind menu hangs, because the kind has no glyph of its
- *  own in the caption. */
+/** Which leg of the automation a caption field names.
+ *
+ *  ⚠ `param` IS GEOMETRY ONLY — it is where a future signal-kind menu would
+ *  hang, since the kind has no glyph of its own in the caption, and it is
+ *  reported so a caller can tell "on the name" from "on a number". Nothing can
+ *  be typed into it, so nothing may open an editor over it: a field that accepts
+ *  text and then discards it is worse than an inert label. `captionEdit` returns
+ *  null for it, and the timeline declines to open on it at all. */
 export type CaptionFieldKind = 'param' | 'lo' | 'hi'
 
 export interface CaptionField {
@@ -252,16 +256,3 @@ export function captionEdit(hit: CaptionHit, nextText: string): OffsetEdit | nul
   return { range: [at, at], text: call }
 }
 
-/**
- * Turn "make this automation a `nextKind`" into a source edit, or into nothing.
- *
- * The whole of a shape change is replacing the signal identifier — `sine` for
- * `saw` — which is why this needs only the shape span and touches no argument.
- * Null when the kind is unchanged or the signal carries no source range.
- */
-export function shapeEdit(a: SignalAutomation, nextKind: string): OffsetEdit | null {
-  if (nextKind === a.kind || nextKind.length === 0) return null
-  const span = a.spans.shape
-  if (!span) return null
-  return { range: [span.start, span.end], text: nextKind }
-}

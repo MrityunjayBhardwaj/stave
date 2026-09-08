@@ -24,6 +24,19 @@
 
 import * as React from 'react'
 
+
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { SongAnalysis, PatternIR, HapStream, IREvent, OffsetEdit } from '@stave/editor'
+import {
+  captionRows,
+  captionHit,
+  captionEdit,
+  AUTOMATION_LABEL_FONT,
+  type CaptionHit,
+} from './musicalTimeline/automationCaption'
+import { automationColorOnLane } from './musicalTimeline/colors'
+import { DEFAULT_THEME } from './SongTimelineCanvas'
+
 /**
  * Measure caption text in the caption's own face (#1464 Stage 2).
  *
@@ -48,17 +61,6 @@ function measureCaption(text: string): number {
   return captionMeasureCtx.measureText(text).width
 }
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { SongAnalysis, PatternIR, HapStream, IREvent, OffsetEdit } from '@stave/editor'
-import {
-  captionRows,
-  captionHit,
-  captionEdit,
-  AUTOMATION_LABEL_FONT,
-  type CaptionHit,
-} from './musicalTimeline/automationCaption'
-import { automationColorOnLane } from './musicalTimeline/colors'
-import { DEFAULT_THEME } from './SongTimelineCanvas'
 import {
   structuralWalk,
   wholeWalkWindow,
@@ -231,18 +233,18 @@ export interface FullSongTimelineProps {
    *  the same display name the Mixer dims by, so a solo/mute shows identically in
    *  both views (PV155). Absent → nothing faded. */
   readonly silencedNames?: ReadonlySet<string>
-  /** Trim a clip by dragging its right edge (Phase 5b, #437). Receives the
-   *  clip's lane source anchor (an offset inside the combinator call), its arm
-   *  index, and the new whole-cycle weight. The parent parses the arrangement at
-   *  the anchor and writes a surgical set-weight edit. Optional — without it the
-   *  clips stay read-only (no trim grips). Only real `arrange`/`cat` arms
-   *  (`armIndex ≥ 0`) are trimmable; a bare track's implicit clip is not. */
   /** Edit an automation's bounds from its lane caption (#1464 Stage 2 — the
    *  range control). Receives a source edit the caption module built and a
    *  gesture name for the write seam's refusal reporting. Optional — without it
    *  the captions stay read-only, exactly as Stage 1 left them, and no caption
    *  claims a pointer. */
   readonly onEditAutomation?: (edit: OffsetEdit, gesture: string) => void
+  /** Trim a clip by dragging its right edge (Phase 5b, #437). Receives the
+   *  clip's lane source anchor (an offset inside the combinator call), its arm
+   *  index, and the new whole-cycle weight. The parent parses the arrangement at
+   *  the anchor and writes a surgical set-weight edit. Optional — without it the
+   *  clips stay read-only (no trim grips). Only real `arrange`/`cat` arms
+   *  (`armIndex ≥ 0`) are trimmable; a bare track's implicit clip is not. */
   readonly onTrimClip?: (req: {
     sourceOffset: number | null
     armIndex: number
@@ -1251,14 +1253,40 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     [onEditAutomation],
   )
 
+  /** The caption fields a press may actually EDIT — the two bounds.
+   *
+   *  ⚠ The parameter NAME is part of the caption and is reported by the
+   *  hit-test, but nothing can be typed into it: `captionEdit` returns null for
+   *  it, so an editor opened there would take text and silently drop it, which
+   *  is worse than an inert label. Excluding it here also means a press on the
+   *  name keeps reaching the gestures it always reached. Both the press and the
+   *  double-press ask this, so they cannot disagree about which pixels are
+   *  claimed. */
+  const editableCaptionAt = React.useCallback(
+    (clientX: number, clientY: number): CaptionHit | null => {
+      const hit = captionAt(clientX, clientY)
+      return hit && hit.field.kind !== 'param' ? hit : null
+    },
+    [captionAt],
+  )
+
   /** Commit whatever is in the editor, then close it.
    *
    *  ⚠ The edit is BUILT by `captionEdit`, never here — that function is where
    *  the "unchanged writes nothing", "the rounding cannot escape" and "an
    *  unspelled leg inserts" rules live, and routing every commit through it is
    *  what makes them unavoidable rather than remembered. */
+  //  ⚠ ONCE PER OPENED FIELD, enforced by a ref rather than by reasoning about
+  //  React's blur semantics. Enter commits and unmounts the input; if a blur
+  //  were also delivered on the way out, the same edit would be built AGAIN from
+  //  the pre-edit `lo`/`hi` this hit still holds, and applied at offsets the
+  //  first write already moved. That is a corrupted document, not a duplicate
+  //  no-op, so it is guarded rather than argued about.
+  const captionCommittedRef = useRef(false)
   const commitCaption = React.useCallback(
     (value: string): void => {
+      if (captionCommittedRef.current) return
+      captionCommittedRef.current = true
       const hit = editingCaption
       setEditingCaption(null)
       if (!hit || !onEditAutomation) return
@@ -1399,9 +1427,10 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       // resolves that (the trim test precedes the body test for the same
       // reason). Returning here is what keeps a caption click from also
       // selecting a clip, arming the clip shortcuts, or jumping the editor.
-      const caption = captionAt(e.clientX, e.clientY)
+      const caption = editableCaptionAt(e.clientX, e.clientY)
       if (caption) {
         e.preventDefault()
+        captionCommittedRef.current = false
         setEditingCaption(caption)
         return
       }
@@ -1468,7 +1497,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       const cw = dragAwareContentWidth(areaRef.current!.getBoundingClientRect().width)
       setTrimEdgeX(songCycleToX(hit.clip.endCycle, songWindow, cw))
     },
-    [captionAt, clipEdgeAt, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
+    [editableCaptionAt, clipEdgeAt, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
   )
 
   const handleGridPointerMove = React.useCallback(
@@ -2112,7 +2141,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
             // A double-click is the natural gesture for "select this number to
             // retype it", and expanding/collapsing here would remove the very
             // caption being aimed at — captions are drawn on EXPANDED lanes only.
-            if (captionAt(e.clientX, e.clientY)) return
+            if (editableCaptionAt(e.clientX, e.clientY)) return
             handleExpandAtClientY(e.clientY)
           }}
         >
@@ -2225,6 +2254,9 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                     // any ANCESTOR handler as well, which is a different path.
                     e.stopPropagation()
                     if (e.key === 'Escape') {
+                      // Disarm as well as close: abandoning is a decision, and a
+                      // blur arriving behind it must not commit what was typed.
+                      captionCommittedRef.current = true
                       setEditingCaption(null)
                       return
                     }

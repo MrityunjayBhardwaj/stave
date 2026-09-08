@@ -30,7 +30,6 @@ import { automationColorOnLane } from './colors'
 import {
   AUTOMATION_PAD_Y,
   AUTOMATION_LABEL_FONT,
-  AUTOMATION_LABEL_MIN_H,
   CAPTION_PAD_X,
   captionRows,
 } from './automationCaption'
@@ -463,9 +462,6 @@ const AUTOMATION_STEP_PX = 2
  *  rather than as a thick line, so it draws none. Silence over a smear — the
  *  same rule `CLIP_CAPTION_MIN_W` applies to captions. */
 const AUTOMATION_MIN_BAND_H = 10
-/** Label font for the automation bounds. Same literal-mono discipline as
- *  `CLIP_CAPTION_FONT` — canvas cannot read CSS custom properties. */
-/** Vertical room one bounds label needs before it is worth drawing. */
 /**
  * Minimum pixels per full OSCILLATION before the curve is drawn cycle-by-cycle.
  *
@@ -491,9 +487,6 @@ const AUTOMATION_MIN_PERIOD_PX = COARSEN_PX
  *  deliberate at a 1.5px stroke rather than as a rendering artefact, short
  *  enough that the curve's SHAPE — the real part — still reads. */
 const AUTOMATION_INDICATIVE_DASH: readonly number[] = [4, 3]
-
-/** Round a bound for display: enough precision to distinguish `0.4` from `0.6`,
- *  without printing `2000.0000000002` for a value the user wrote as `2000`. */
 
 /**
  * The signal's value at a given cycle, normalised to 0..1 of its own range.

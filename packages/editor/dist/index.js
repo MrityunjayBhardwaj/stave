@@ -894,6 +894,7 @@ function readChain(node) {
   let lo = null;
   let hi = null;
   let rangeSpan = null;
+  let rateArms = 0;
   const rateSpans = [];
   const chainEnd = spanOf(node)?.end ?? null;
   for (let depth = 0; depth < 64; depth++) {
@@ -906,7 +907,7 @@ function readChain(node) {
         hi,
         spans: {
           shape: spanOf(cur),
-          rate: rateSpans.length === 1 ? rateSpans[0] : null,
+          rate: rateArms === 1 && rateSpans.length === 1 ? rateSpans[0] : null,
           range: rangeSpan,
           chainEnd
         }
@@ -922,11 +923,13 @@ function readChain(node) {
     } else if (cur.tag === "Slow") {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null;
       periodCycles *= cur.factor;
+      rateArms++;
       const span = spanOf(cur);
       if (span) rateSpans.push(span);
     } else if (cur.tag === "Fast") {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null;
       periodCycles /= cur.factor;
+      rateArms++;
       const span = spanOf(cur);
       if (span) rateSpans.push(span);
     }

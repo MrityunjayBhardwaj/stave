@@ -167,6 +167,40 @@ describe('signalAutomations — WHERE each leg is written (#1464 Stage 2)', () =
     expect(slice(src, a.spans.range)).toBe('.range(0.2,0.4)')
   })
 
+  it('counts ARMS, not spans: two arms where only one is located is still null', () => {
+    // ⚠ THE ONE HAND-BUILT NODE IN THIS FILE, and the exception is the point.
+    // Every other case goes through the real parser because a fixture would pin
+    // this module against a belief about the IR. This tree is different: the
+    // parser attaches a source range to every rate arm it builds, so it CANNOT
+    // produce the shape the guard exists for. Testing it needs the shape made by
+    // hand or not at all, and "not at all" means the guard is unexercised.
+    const ir = parseStrudel('$: s("bd*4").gain(sine.slow(4).fast(2).range(0,1))') as never
+    const [reference] = signalAutomations(ir)
+    expect(reference.spans.rate).toBeNull() // both arms located — already null
+
+    // Now the same chain with the INNER arm's range stripped.
+    const stripped = JSON.parse(JSON.stringify(ir), (k, v) => v) as never
+    // ⚠ BY FACTOR, not by tag. `s("bd*4")` also parses to a `Fast`, on the
+    // PATTERN rather than in the signal chain — stripping that one changes
+    // nothing this reader looks at, and an earlier version of this test did
+    // exactly that and passed against the unfixed code. The signal's arm is the
+    // `.fast(2)`.
+    const dropRateLocByFactor = (node: unknown, factor: number): boolean => {
+      if (!node || typeof node !== 'object') return false
+      if (Array.isArray(node)) return node.some((c) => dropRateLocByFactor(c, factor))
+      const n = node as Record<string, unknown>
+      if ((n.tag === 'Fast' || n.tag === 'Slow') && n.factor === factor && n.loc) {
+        delete n.loc
+        return true
+      }
+      return Object.entries(n).some(([k, v]) => k !== 'loc' && dropRateLocByFactor(v, factor))
+    }
+    expect(dropRateLocByFactor(stripped, 2), 'the fixture did not strip the signal\'s rate arm').toBe(true)
+    const [a] = signalAutomations(stripped)
+    expect(a.periodCycles).toBe(2)      // still two arms composing
+    expect(a.spans.rate).toBeNull()     // and still nowhere honest to write
+  })
+
   it('TWO rate arms leave the rate span null — a defined rate with no place to write it', () => {
     const src = '$: s("bd*4").gain(sine.slow(4).fast(2).range(0,1))'
     const [a] = read(src)

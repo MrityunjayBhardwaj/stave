@@ -185,6 +185,18 @@ function readChain(node: PatternIR): ChainRead | null {
   let rangeSpan: SourceLocation | null = null
   // Every rate arm met, not the first — the count is what decides whether a
   // control may write one at all. See `SignalSpans.rate`.
+  //
+  // ⚠ ARMS AND SPANS ARE COUNTED SEPARATELY. The safety condition is about the
+  // ARMS: two rate arms compose, so writing `.slow(n)` to one of them gives the
+  // asked-for rate while silently changing what the other means. Counting spans
+  // instead would let a two-arm chain in which only ONE arm carries a source
+  // range read as "one arm, safe to write".
+  //
+  // Today's parser attaches a range to every arm it builds, so that tree does
+  // not arise from parsing — this is a latent hole rather than an observed
+  // defect, closed because the cost is one integer and the failure would be a
+  // silently wrong document.
+  let rateArms = 0
   const rateSpans: SourceLocation[] = []
   // The OUTERMOST node's end: the insertion point for a leg the source omits.
   // Taken on the first iteration, before any descent, because that node is the
@@ -205,7 +217,7 @@ function readChain(node: PatternIR): ChainRead | null {
         hi,
         spans: {
           shape: spanOf(cur),
-          rate: rateSpans.length === 1 ? rateSpans[0] : null,
+          rate: rateArms === 1 && rateSpans.length === 1 ? rateSpans[0] : null,
           range: rangeSpan,
           chainEnd,
         },
@@ -225,11 +237,13 @@ function readChain(node: PatternIR): ChainRead | null {
     } else if (cur.tag === 'Slow') {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null
       periodCycles *= cur.factor
+      rateArms++
       const span = spanOf(cur)
       if (span) rateSpans.push(span)
     } else if (cur.tag === 'Fast') {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null
       periodCycles /= cur.factor
+      rateArms++
       const span = spanOf(cur)
       if (span) rateSpans.push(span)
     }
