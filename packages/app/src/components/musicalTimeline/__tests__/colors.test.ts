@@ -8,7 +8,10 @@ import {
   STEM_FALLBACK,
   TRACK_PALETTE_32,
   paletteForTrack,
-  trackIndexOf, colorForAutomation, AUTOMATION_PALETTE, TRACK_PALETTE_32 } from '../colors'
+  trackIndexOf,
+  colorForAutomation,
+  AUTOMATION_PALETTE,
+} from '../colors'
 
 describe('trackColorFromStem — drum family (DV-04 / DV-11)', () => {
   const drumIds = ['bd', 'hh', 'sd', 'cp', 'hat', 'kick', 'snare', 'drum', 'perc', 'ride', 'crash', 'tom']
