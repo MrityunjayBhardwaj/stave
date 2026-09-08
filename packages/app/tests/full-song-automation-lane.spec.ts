@@ -224,3 +224,100 @@ test('two automated parameters on one lane draw in different colours', async ({ 
 
   expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
 })
+
+/** Same parameter, same rate, same bounds — only the KIND differs, so the dash
+ *  is the sole variable between these two arms (#1486). */
+const FAITHFUL_SONG = 's("bd*2").cutoff(sine.slow(4).range(200, 2000))'
+const FABRICATED_SONG = 's("bd*2").cutoff(perlin.slow(4).range(200, 2000))'
+
+/**
+ * How much of the curve's horizontal extent is actually painted.
+ *
+ * A solid stroke marks very nearly every x column it spans; a dashed one leaves
+ * regular gaps, so the same span is painted in fewer columns. Measuring the
+ * RATIO rather than a pixel count keeps this independent of canvas width, zoom
+ * and how tall the curve happens to be.
+ */
+async function readCoverage(page: Page) {
+  return page.locator('[data-full-song-canvas]').evaluate((el) => {
+    const c = el as HTMLCanvasElement
+    const ctx = c.getContext('2d')!
+    const { width: W, height: H } = c
+    const img = ctx.getImageData(0, 0, W, H).data
+    const xs = new Set<number>()
+    let minX = Infinity
+    let maxX = -Infinity
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4
+        const r = img[i], g = img[i + 1], b = img[i + 2]
+        // The same blue-dominant detector the first test's control arm proves
+        // fires on the curve and not on the lane's furniture.
+        if (b > 120 && b - r > 45 && b - g > 20) {
+          xs.add(x)
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+        }
+      }
+    }
+    const span = maxX >= minX ? maxX - minX + 1 : 0
+    return { columns: xs.size, span, coverage: span > 0 ? xs.size / span : 0 }
+  })
+}
+
+test('a fabricated curve is drawn dashed, a faithful one solid', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`) })
+
+  await bootShell(page)
+
+  await typeSongAndEval(page, FAITHFUL_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+  const solid = await readCoverage(page)
+
+  await typeSongAndEval(page, FABRICATED_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+  const dashed = await readCoverage(page)
+
+  // REPORT BEFORE ASSERTING: a tripped expectation must not take the two
+  // measurements with it, or a failure says only "it was wrong", not "by how
+  // much" — which is the difference between a bound to fix and a rule to rethink.
+  // eslint-disable-next-line no-console
+  console.log(`  faithful ${JSON.stringify(solid)}\n  fabricated ${JSON.stringify(dashed)}`)
+
+  // Both arms must actually have drawn something, or the comparison below is
+  // between two kinds of nothing.
+  expect(solid.span, `no faithful curve on the canvas: ${JSON.stringify(solid)}`).toBeGreaterThan(50)
+  expect(dashed.span, `no fabricated curve on the canvas: ${JSON.stringify(dashed)}`).toBeGreaterThan(50)
+
+  /**
+   * ⚠ A RATIO OF TWO READINGS IN ONE RUN, never an absolute coverage.
+   *
+   * A solid stroke does NOT mark 100% of the columns it spans — measured at
+   * 0.88 for a plain `sine`, because the detector needs a blue-dominant pixel
+   * and the antialiased edge of a steep segment does not always produce one.
+   * An absolute bound would therefore encode this machine's antialiasing, and
+   * the first threshold written here (`> 0.9`) failed for exactly that reason.
+   * Comparing the two arms cancels it: same parameter, same rate, same bounds,
+   * same canvas, same run.
+   *
+   * ⚠ THE DASH IS NOT THE ONLY VARIABLE, and this arm should not be read as
+   * though it were. `perlin`'s contour is more erratic than `sine`'s, so some of
+   * the drop is shape rather than stroke — measured 0.88 against 0.32, a gap far
+   * wider than the dash alone accounts for. What isolates the dash is the unit
+   * test (`drawTimeline.automation.test.ts`), which asserts the dash array is
+   * set for stochastic kinds and empty for every faithful one. THIS arm answers
+   * the different question that one cannot: whether it reaches real pixels as a
+   * visibly broken stroke. Neither is sufficient alone.
+   */
+  expect(
+    dashed.coverage,
+    `a perlin curve is no more broken up than a sine one, so nothing on screen ` +
+      `says it is indicative: ${JSON.stringify({ solid, dashed })}`,
+  ).toBeLessThan(solid.coverage * 0.85)
+
+  expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
+})

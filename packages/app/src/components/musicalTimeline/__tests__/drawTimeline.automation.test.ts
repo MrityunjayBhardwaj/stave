@@ -25,7 +25,7 @@ const THEME: DrawTheme = {
 }
 const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 400, viewportWidth: 400 }
 
-interface Path { points: { x: number; y: number }[]; style: string }
+interface Path { points: { x: number; y: number }[]; style: string; dash: readonly number[] }
 interface Text { text: string; x: number; y: number; style: string }
 interface Fill { x: number; y: number; w: number; h: number; style: string; alpha: number }
 
@@ -36,7 +36,8 @@ function mockCtx() {
   let cur: { x: number; y: number }[] = []
   const ctx = {
     fillStyle: '', strokeStyle: '', globalAlpha: 1, lineWidth: 1, lineJoin: '',
-    font: '', textBaseline: '',
+    font: '', textBaseline: '', _dash: [] as readonly number[],
+    setLineDash(d: readonly number[]) { ctx._dash = d },
     clearRect() {}, save() {}, restore() {},
     fillRect(x: number, y: number, w: number, h: number) {
       fills.push({ x, y, w, h, style: ctx.fillStyle, alpha: ctx.globalAlpha })
@@ -46,7 +47,7 @@ function mockCtx() {
     beginPath() { cur = [] },
     moveTo(x: number, y: number) { cur.push({ x, y }) },
     lineTo(x: number, y: number) { cur.push({ x, y }) },
-    stroke() { paths.push({ points: cur, style: ctx.strokeStyle }) },
+    stroke() { paths.push({ points: cur, style: ctx.strokeStyle, dash: ctx._dash }) },
   }
   return { ctx: ctx as unknown as CanvasRenderingContext2D, paths, texts, fills }
 }
@@ -280,5 +281,50 @@ describe('unresolvable automations do not stack their alpha (#1485)', () => {
   it('keeps each unresolvable parameter identifiable by colour', () => {
     const styles = bands(run([fast('cutoff'), fast('pan')])).map((f) => f.style)
     expect(new Set(styles).size).toBe(2)
+  })
+})
+
+/**
+ * #1486 — `rand`/`perlin`/`berlin`/`brand` and the mouse signals are 120 of the
+ * 313 curves this lane draws, and their stream depends on a runtime seed the
+ * static IR does not carry. The drawn contour is a stand-in at the right RATE
+ * and between the right BOUNDS; the path itself is invented.
+ */
+describe('a fabricated curve is drawn as indicative (#1486)', () => {
+  const dashOf = (kind: SignalAutomation['kind']) =>
+    run([auto({ kind, periodCycles: 2 })]).paths[0].dash
+
+  it('dashes the stochastic kinds', () => {
+    for (const kind of ['rand', 'rand2', 'brand', 'perlin', 'berlin'] as const) {
+      expect(dashOf(kind), kind).not.toEqual([])
+    }
+  })
+
+  it('dashes the live-input kinds, whose path is equally unknowable', () => {
+    for (const kind of ['mousex', 'mousey', 'mouseX', 'mouseY'] as const) {
+      expect(dashOf(kind), kind).not.toEqual([])
+    }
+  })
+
+  it('leaves every faithful waveform SOLID', () => {
+    // The control arm: if this dashed too, "dashed" would say nothing.
+    for (const kind of [
+      'sine', 'sine2', 'cosine', 'cosine2', 'saw', 'saw2', 'isaw', 'isaw2',
+      'tri', 'tri2', 'itri', 'itri2', 'square', 'square2',
+    ] as const) {
+      expect(dashOf(kind), kind).toEqual([])
+    }
+  })
+
+  it('leaves `time` solid — deterministic, so the drawn ramp IS the signal', () => {
+    // It is unbounded, not fabricated. The two are different objections and it
+    // already abstains for the other one.
+    expect(dashOf('time')).toEqual([])
+  })
+
+  it('does not leave the dash set for whatever strokes next', () => {
+    const m = run([auto({ kind: 'perlin', periodCycles: 2 }), auto({ kind: 'sine', periodCycles: 2 })])
+    const sine = m.paths[1]
+    expect(sine.dash, 'a faithful curve inherited the previous curve\'s dash').toEqual([])
   })
 })

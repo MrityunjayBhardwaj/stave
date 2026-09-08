@@ -485,6 +485,11 @@ const AUTOMATION_LABEL_MIN_H = 22
  */
 const AUTOMATION_MIN_PERIOD_PX = COARSEN_PX
 
+/** The dash a fabricated curve is stroked with (#1486). Long enough to read as
+ *  deliberate at a 1.5px stroke rather than as a rendering artefact, short
+ *  enough that the curve's SHAPE — the real part — still reads. */
+const AUTOMATION_INDICATIVE_DASH: readonly number[] = [4, 3]
+
 /** Round a bound for display: enough precision to distinguish `0.4` from `0.6`,
  *  without printing `2000.0000000002` for a value the user wrote as `2000`. */
 function formatBound(v: number): string {
@@ -509,33 +514,69 @@ function formatBound(v: number): string {
  * with a plausible shape. A deterministic stand-in at the right RATE tells the
  * truth that is available: this parameter jumps around, this often.
  */
+/**
+ * The kinds this module can draw FAITHFULLY — a closed form the document alone
+ * determines, so the curve on screen is the curve the engine will produce.
+ *
+ * ⚠ THIS TABLE IS THE SINGLE SOURCE OF TRUTH for both questions asked of a
+ * kind: what shape to plot (`signalUnit`) and whether that shape is real
+ * (`isIndicativeKind`). They were a switch and a list at first, which is two
+ * places to add a kind and one place to forget — and forgetting the second is
+ * silent, because a fabricated curve drawn as faithful looks exactly like a
+ * faithful one. Membership answers both, so it cannot drift.
+ */
+const FAITHFUL_UNIT: Readonly<Record<string, (t: number) => number>> = {
+  sine: (t) => (Math.sin(2 * Math.PI * t) + 1) / 2,
+  sine2: (t) => (Math.sin(2 * Math.PI * t) + 1) / 2,
+  cosine: (t) => (Math.cos(2 * Math.PI * t) + 1) / 2,
+  cosine2: (t) => (Math.cos(2 * Math.PI * t) + 1) / 2,
+  saw: (t) => t,
+  saw2: (t) => t,
+  isaw: (t) => 1 - t,
+  isaw2: (t) => 1 - t,
+  tri: (t) => (t < 0.5 ? t * 2 : 2 - t * 2),
+  tri2: (t) => (t < 0.5 ? t * 2 : 2 - t * 2),
+  itri: (t) => (t < 0.5 ? 1 - t * 2 : t * 2 - 1),
+  itri2: (t) => (t < 0.5 ? 1 - t * 2 : t * 2 - 1),
+  square: (t) => (t < 0.5 ? 0 : 1),
+  square2: (t) => (t < 0.5 ? 0 : 1),
+  // `time` is the cycle position — deterministic, so the drawn ramp IS the
+  // signal. It is not fabricated; it is simply unbounded, which is why it
+  // abstains without an explicit `.range()` long before it reaches here.
+  time: (t) => t,
+}
+
+/**
+ * Is this kind's drawn curve INDICATIVE rather than a literal trace? (#1486)
+ *
+ * True for `rand`, `perlin`, `berlin`, `brand` and the mouse signals — 120 of
+ * the 313 curves the timeline draws, so the second and third most common shapes
+ * after `sine`. Their real stream depends on `controls.randSeed` (or on a live
+ * pointer), a runtime value the static IR does not carry, so no curve drawn
+ * from the document alone can be the real one.
+ */
+function isIndicativeKind(kind: string): boolean {
+  return !(kind in FAITHFUL_UNIT)
+}
+
 function signalUnit(kind: string, phase: number): number {
   const t = phase - Math.floor(phase) // wrap to [0,1)
-  switch (kind) {
-    case 'sine': case 'sine2': return (Math.sin(2 * Math.PI * t) + 1) / 2
-    case 'cosine': case 'cosine2': return (Math.cos(2 * Math.PI * t) + 1) / 2
-    case 'saw': case 'saw2': return t
-    case 'isaw': case 'isaw2': return 1 - t
-    case 'tri': case 'tri2': return t < 0.5 ? t * 2 : 2 - t * 2
-    case 'itri': case 'itri2': return t < 0.5 ? 1 - t * 2 : t * 2 - 1
-    case 'square': case 'square2': return t < 0.5 ? 0 : 1
-    case 'time': return t
-    default: {
-      // rand / perlin / berlin / brand / mouse* — a stable hash-based contour.
-      // perlin-family reads as smooth, rand-family as stepped, which is the one
-      // distinction a viewer needs to tell them apart at a glance.
-      const step = kind.startsWith('perlin') || kind.startsWith('berlin')
-      const h = (n: number): number => {
-        const x = Math.sin(n * 127.1) * 43758.5453
-        return x - Math.floor(x)
-      }
-      const i = Math.floor(t * 8)
-      if (!step) return h(i)
-      const f = t * 8 - i
-      const sm = f * f * (3 - 2 * f) // smoothstep between adjacent samples
-      return h(i) * (1 - sm) + h(i + 1) * sm
-    }
+  const faithful = FAITHFUL_UNIT[kind]
+  if (faithful) return faithful(t)
+
+  // rand / perlin / berlin / brand / mouse* — a stable hash-based contour.
+  // perlin-family reads as smooth, rand-family as stepped, which is the one
+  // distinction a viewer needs to tell them apart at a glance.
+  const step = kind.startsWith('perlin') || kind.startsWith('berlin')
+  const h = (n: number): number => {
+    const x = Math.sin(n * 127.1) * 43758.5453
+    return x - Math.floor(x)
   }
+  const i = Math.floor(t * 8)
+  if (!step) return h(i)
+  const f = t * 8 - i
+  const sm = f * f * (3 - 2 * f) // smoothstep between adjacent samples
+  return h(i) * (1 - sm) + h(i + 1) * sm
 }
 
 /**
@@ -624,6 +665,16 @@ function drawAutomation(
 
   for (const a of curves) {
     ctx.strokeStyle = colorOf(a)
+    // ── DASHED means "indicative, not a literal trace" (#1486) ──────────────
+    // Everything else on this lane is faithful: the marks are the real events,
+    // the clips the real arms, a `sine` curve the real sine. A `perlin` curve
+    // is not — its stream depends on a runtime seed the static IR cannot carry
+    // — and drawn identically it invites someone to line a wiggle up against a
+    // note and explain why THAT hit sounds different, reading a shape this code
+    // invented. The file's own discipline is that silence beats a confident
+    // wrong reading; this is the cheapest way to say "extent and rate are real,
+    // the path is not".
+    ctx.setLineDash(isIndicativeKind(a.kind) ? AUTOMATION_INDICATIVE_DASH : [])
     ctx.beginPath()
     let first = true
     for (let x = x0; x <= x1; x += AUTOMATION_STEP_PX) {
@@ -635,6 +686,10 @@ function drawAutomation(
     }
     ctx.stroke()
   }
+  // The enclosing `restore()` would clear this too — it is reset here so the
+  // dash's scope is the loop that sets it, and a later stroke added between
+  // here and the restore cannot silently inherit it.
+  ctx.setLineDash([])
 
   // ── The BOUNDS, stated rather than drawn ──────────────────────────────────
   // Every curve is plotted over the full band height in its OWN range, because
