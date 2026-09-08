@@ -39,6 +39,7 @@ const THEME: DrawTheme = {
   gridline: '#grid',
   clipFill: '#clipFill',
   clipCaption: '#fff', clipBorder: '#clipBorder',
+  automationLine: '#automationLine',
 }
 const TRANSFORM: DrawTransform = {
   scrollLeft: 0,

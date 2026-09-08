@@ -32,6 +32,7 @@ function mockCtx(): { ctx: CanvasRenderingContext2D; rects: Rect[] } {
 const THEME: DrawTheme = {
   background: '#0f0f1a', rowAlt: 'rgba(255,255,255,0.02)', section: '#111', sectionAlt: '#222',
   gridline: '#333', clipFill: '#444', clipCaption: '#fff', clipBorder: '#555',
+  automationLine: '#automationLine',
 }
 const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 100, viewportWidth: 100 }
 
@@ -43,7 +44,7 @@ function scene(): TimelineScene {
       notes: [{ cycle: 0.1, end: 0.2, pitch: null, gain: 1 }],
       pitchMin: null, pitchMax: null, voices: [],
       clips: [{ armIndex: -1, startCycle: 0, endCycle: 1, label: null, nameRange: null, sectionName: '' }],
-      sourceOffset: null, arrangeOffset: null, labelOffset: null,
+      sourceOffset: null, arrangeOffset: null, labelOffset: null, automations: [],
     }],
     sections: [], displayCycles: 1, windowOriginCycles: 0, period: null, peakDensity: 1,
     notesCapped: false,

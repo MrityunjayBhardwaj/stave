@@ -56,6 +56,7 @@ function sceneFixture(): TimelineScene {
         sourceOffset: null,
         arrangeOffset: null,
         labelOffset: null,
+        automations: [],
       },
     ],
     sections: [],

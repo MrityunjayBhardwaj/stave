@@ -54,6 +54,10 @@ const DEFAULT_THEME: DrawTheme = {
   // the clip without competing with the music drawn inside it.
   clipCaption: 'rgba(255,255,255,0.45)',
   clipBorder: 'rgba(255,255,255,0.18)',
+  // #1464 Stage 1 — the automation curve. Brighter than the clip furniture and
+  // cooler than the lane colours, so it reads as an overlay ON the lane rather
+  // than as another piece of the lane's own content.
+  automationLine: 'rgba(140,200,255,0.75)',
 }
 
 /** Cap the backing-store DPR — 2D fills are cheap, but matching the viz
