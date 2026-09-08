@@ -267,3 +267,63 @@ export function signalAutomations(ir: PatternIR | null | undefined): readonly Si
   }
   return out
 }
+
+/**
+ * Every parameter KEY whose argument carries a signal anywhere (#1465).
+ *
+ * ⚠ THIS IS A DIFFERENT QUESTION FROM `signalAutomations`, ON THE SAME IR, and
+ * the difference is the point rather than an oversight. That reader asks "can I
+ * PLOT this?" and abstains on anything without a closed form. This one asks "does
+ * this control MOVE?" — and `.gain(sine.add(saw))` has no closed form, cannot be
+ * drawn, and absolutely does make every cycle differ.
+ *
+ * Measured over the sweep's own corpus (`loadCorpus`, 142 documents that
+ * evaluate): the closed-form reader sees 199 signal-carrying `Param` nodes and
+ * this one sees 239. Answering the period question with the drawing reader would
+ * silently under-report by those 40.
+ *
+ * Returns KEYS rather than nodes because that is what the consumer needs: the
+ * cycle fingerprint reads an event's whole value partition (`eventValueKey.ts` —
+ * `{note, freq, s, gain, velocity, color} ∪ params`), and a key is how a
+ * dimension is named there. `cutoff`/`resonance`/`pan`/`room` arrive via
+ * `params`; `gain` has a dedicated slot. Both are addressed by key.
+ *
+ * Structural and horizon-FREE, which is the property that matters. An earlier
+ * attempt at this exclusion derived it by watching a probe window, so a field
+ * whose period exceeded that window read as unstable and got dropped — it
+ * discarded `note` and `s` in ~75 documents. `Param{value: …Signal}` is the same
+ * fact at horizon 4 and at horizon 256, so it cannot drift with the horizon it
+ * feeds.
+ */
+export function signalCarryingParamKeys(ir: PatternIR | null | undefined): ReadonlySet<string> {
+  const keys = new Set<string>()
+  if (!ir) return keys
+  const stack: PatternIR[] = [ir]
+  const seen = new Set<PatternIR>()
+  while (stack.length > 0) {
+    const node = stack.pop() as PatternIR
+    if (!node || typeof node !== 'object' || seen.has(node)) continue
+    seen.add(node)
+    if (node.tag === 'Param' && typeof node.key === 'string' && node.key.length > 0) {
+      const value: unknown = node.value
+      if (value && typeof value === 'object' && carriesSignal(value)) keys.add(node.key)
+    }
+    for (const child of childNodes(node)) stack.push(child)
+  }
+  return keys
+}
+
+/** Does this subtree contain a `Signal` anywhere? Deliberately unconditional —
+ *  no allowlist, no closed-form requirement — because ANY signal underneath a
+ *  control means that control moves. */
+function carriesSignal(value: unknown, depth = 0): boolean {
+  if (!value || typeof value !== 'object' || depth > 24) return false
+  if (Array.isArray(value)) return value.some((v) => carriesSignal(v, depth + 1))
+  const o = value as Record<string, unknown>
+  if (o.tag === 'Signal') return true
+  for (const [key, child] of Object.entries(o)) {
+    if (SKIP_KEYS.has(key)) continue
+    if (carriesSignal(child, depth + 1)) return true
+  }
+  return false
+}

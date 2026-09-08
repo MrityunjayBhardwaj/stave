@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { parseStrudel } from '../../../../../editor/src/ir/parseStrudel'
-import { signalAutomations } from '../signalAutomation'
+import { signalAutomations, signalCarryingParamKeys } from '../signalAutomation'
 
 const read = (src: string) => signalAutomations(parseStrudel(src) as never)
 
@@ -109,5 +109,49 @@ describe('signalAutomations — attribution', () => {
   it('returns nothing for a null IR rather than throwing', () => {
     expect(signalAutomations(null)).toEqual([])
     expect(signalAutomations(undefined)).toEqual([])
+  })
+})
+
+describe('signalCarryingParamKeys — the broader question (#1465)', () => {
+  const keys = (src: string) => [...signalCarryingParamKeys(parseStrudel(src) as never)].sort()
+
+  it('names the key of a plainly automated control', () => {
+    expect(keys('$: s("bd*4").cutoff(saw.slow(4).range(200, 2000))')).toEqual(['cutoff'])
+  })
+
+  it('⚠ names a control the DRAWING reader declines — the whole reason it exists', () => {
+    // `.add()` has no closed form, so nothing can be plotted. But the control
+    // still moves, so the cycle fingerprint must know about it.
+    const src = '$: s("bd*4").gain(sine.add(saw))'
+    expect(signalAutomations(parseStrudel(src) as never)).toEqual([])
+    expect(keys(src)).toEqual(['gain'])
+  })
+
+  it('names an UNBOUNDED signal the drawing reader abstains on', () => {
+    const src = '$: s("bd*4").cutoff(time)'
+    expect(signalAutomations(parseStrudel(src) as never)).toEqual([])
+    expect(keys(src)).toEqual(['cutoff'])
+  })
+
+  it('names every automated control across every track, deduplicated', () => {
+    expect(keys('$: s("bd*4").cutoff(saw).pan(sine)\n$: s("hh*8").cutoff(perlin).gain(0.5)'))
+      .toEqual(['cutoff', 'pan'])
+  })
+
+  it('says nothing about a constant parameter', () => {
+    expect(keys('$: s("bd*4").cutoff(800).gain(0.5)')).toEqual([])
+  })
+
+  it('is empty for a document with no automation, and for no document', () => {
+    expect(keys('$: s("bd sd")')).toEqual([])
+    expect([...signalCarryingParamKeys(null)]).toEqual([])
+    expect([...signalCarryingParamKeys(undefined)]).toEqual([])
+  })
+
+  it('reaches a signal nested behind an opaque wrapper', () => {
+    // `.segment()` opaques the expression, but the signal is still in there and
+    // the control still moves. A reader that stopped at the opaque node would
+    // under-report exactly the documents this issue is about.
+    expect(keys('$: s("bd*4").pan(perlin.range(0,1).segment(8))')).toEqual(['pan'])
   })
 })

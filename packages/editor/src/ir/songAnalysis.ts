@@ -32,12 +32,19 @@
  * progressive horizon is exhausted such lanes ABSTAIN and the span comes from
  * the lanes that do loop, which is #488's phasing rule applied to the case the
  * veto used to cover — see `detectDisplayPeriodAtCap`. That returned 20 of the
- * 69 to a real period, so the swept figure is now 49.
+ * 69 to a real period, so the swept figure was then 49. ⚠ #1107 later moved it
+ * to 56 — see the sweep test's own tally line, which carries the whole chain
+ * (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107).
  *
- * Those 49 are aperiodic under every rule measured — 32 of them have a single
- * lane, so there is nothing to borrow a period from at all. What the display
- * should do with them is #1105, and it is a display question, not a reason to
- * ask a narrower question about identity here.
+ * Of those, 32 have a single lane, so there is nothing to borrow a period from
+ * at all, and what the display should do with them is #1105.
+ *
+ * ⚠ "APERIODIC UNDER EVERY RULE MEASURED" WAS TRUE WHEN WRITTEN AND IS NOT NOW.
+ * #1465 prices a rule that recovers 19 of the 56 by asking the identity question
+ * without the dimensions the document's own SOURCE says are continuously
+ * modulated — an exclusion read structurally from the IR, which is what the
+ * earlier probe-window attempt could not do. Priced, not shipped; the numbers and
+ * the safety properties are in `song-period-signal-exclusion.test.ts`.
  *
  * A DETECTED PERIOD CAN ALSO BE TOO SHORT TO BE THIS SONG'S (#1107). It can be
  * true of everything the analysis has heard and still describe only part of the
@@ -371,8 +378,10 @@ const MIN_ABSTAINED_PERIOD = 4
  *
  * Swept consequence: 20 documents leave the cap for a real period (6, 8, 14, 16,
  * 23, 24, 28, 32×4, 48×2, 64, 96×3); nothing changes below the cap, no period is
- * lost, and none collapse to 1. The remaining 49 are aperiodic by every reading
- * and belong to the display question, not to this rule.
+ * lost, and none collapse to 1. The 49 that remained (56 after #1107) were
+ * aperiodic by every reading THEN and belong to the display question, not to this
+ * rule — but see #1465, which prices a source-informed exclusion reaching 19 of
+ * them, including 5 single-lane documents this rule cannot help by construction.
  */
 export function detectDisplayPeriodAtCap(
   events: readonly IREvent[],

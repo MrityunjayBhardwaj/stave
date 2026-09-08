@@ -52,6 +52,7 @@ import {
   analyzeSong,
   cycleFingerprints,
   detectPeriod,
+  displayPeriodRule,
   laneKeyOf,
 } from '../../../editor/src/ir/songAnalysis'
 import type { IREvent } from '../../../editor/src/ir/IREvent'
@@ -62,6 +63,8 @@ import {
   loadCorpus,
   type SongTrack,
 } from '../../../editor/src/visualEdit/miniSource/__tests__/evalHarness'
+import { parseStrudel } from '../../../editor/src/ir/parseStrudel'
+import { signalCarryingParamKeys } from '../../src/components/musicalTimeline/signalAutomation'
 
 // Re-exported so the two sweep tests can guard themselves without reaching
 // across packages for a rule this file already depends on (#1307). One copy,
@@ -309,10 +312,200 @@ export function abstainingDetector(
   }
 }
 
+
+/** The detector shape the production path takes: events + the horizon reached. */
+export type DetectPeriodFn = (events: readonly IREvent[], horizon: number) => number | null
+
+/**
+ * What a candidate rule may know about the DOCUMENT it is judging (#1465).
+ *
+ * ⚠ THE SEAM EXISTED BUT THE CHANNEL DID NOT. `detectPeriodFn` receives events
+ * and a horizon and nothing else, so a rule could not be told which controls the
+ * SOURCE says are modulated — only what it could infer by watching the events go
+ * by. That inference is exactly what sank the earlier attempt at this exclusion:
+ * a probe window can only see periods shorter than itself, so a slow field read
+ * as unstable and got dropped (`song-period-sweep.test.ts` header — it discarded
+ * `note` and `s` in ~75 documents).
+ *
+ * `periodOfDocument` has held the document's source all along, so the channel is
+ * one signature wide. `signalKeys` is read STRUCTURALLY from the IR and is
+ * therefore horizon-free: the same fact at horizon 4 and at horizon 256, which is
+ * the property `songAnalysis.ts` requires when it says a derived exclusion rule
+ * has to share the horizon of the detection it feeds.
+ */
+export interface DocumentContext {
+  readonly name: string
+  readonly code: string
+  /**
+   * Parameter keys the document's IR says carry a signal — `cutoff`, `gain`,
+   * `pan`… Addressed by KEY because that is how the cycle fingerprint names a
+   * dimension (`eventValueKey.ts`: `{note, freq, s, gain, velocity, color}` plus
+   * `params`). Empty when the document parses but automates nothing, and also
+   * empty when it fails to parse — see `parsed`, which tells the two apart.
+   */
+  readonly signalKeys: ReadonlySet<string>
+  /** False when the source could not be parsed, so an empty `signalKeys` is not
+   *  mistaken for "this document automates nothing". A rule that cannot tell
+   *  those apart reports its own blind spot as a clean result. */
+  readonly parsed: boolean
+  /**
+   * The LIVE `hasUnheardTrack` predicate — the same closure `analyzeSong` is
+   * given, not a snapshot.
+   *
+   * ⚠ A CANDIDATE THAT CANNOT SEE THIS CANNOT DELEGATE TO PRODUCTION, and a
+   * candidate that does not delegate is not measuring what would ship. The
+   * production rule is `displayPeriodRule(events, horizon, cap, hasUnheardTrack)`
+   * and that fourth argument changes its answer (#1107). An injected detector is
+   * called with only `(events, horizon)`, so without this channel a candidate has
+   * to re-implement the rule it means to extend — and a re-implementation that is
+   * subtly cruder reports its OWN differences as the candidate's effect. Measured
+   * the hard way: approximating production as
+   * `detectPeriod(cycleFingerprints(events, horizon))` — a global fingerprint
+   * where production is per-lane — moved 8 documents that resolve below the cap,
+   * including two periods LENGTHENED (28→56, 23→92), which the candidate rule is
+   * mathematically incapable of doing. Every one of those was the approximation
+   * showing through, not the rule.
+   *
+   * Asked at decision time rather than passed as a value because its answer moves
+   * with the horizon — the same reason `analyzeSong` asks it that way.
+   */
+  readonly hasUnheardTrack: () => boolean
+}
+
+/** A rule that needs to know about the document, built fresh per document.
+ *  Returning `undefined` means "use the production rule for this one". */
+export type DetectorFactory = (ctx: DocumentContext) => DetectPeriodFn | undefined
+
+/**
+ * Either a document-INDEPENDENT detector (what every existing caller passes) or
+ * a document-dependent one. Wrapped in an object rather than offered as a bare
+ * second function type because both are functions at runtime and a union of two
+ * function types cannot be told apart — the wrapper makes the choice explicit at
+ * the call site and impossible to get wrong by accident.
+ */
+export type SweepDetector = DetectPeriodFn | { readonly perDocument: DetectorFactory }
+
+/** The half of the context that comes from the SOURCE. Never throws: a document
+ *  that will not parse yields `parsed: false` rather than aborting a
+ *  150-document sweep. */
+export type StructuralContext = Omit<DocumentContext, 'hasUnheardTrack'>
+
+export function documentContext(name: string, code: string): StructuralContext {
+  try {
+    return { name, code, signalKeys: signalCarryingParamKeys(parseStrudel(code) as never), parsed: true }
+  } catch {
+    return { name, code, signalKeys: new Set<string>(), parsed: false }
+  }
+}
+
+
+/**
+ * A candidate for #1465: at the cap, ask the identity question WITHOUT the
+ * dimensions the document's own source says are continuously modulated.
+ *
+ * ── THE ARGUMENT ─────────────────────────────────────────────────────────────
+ * `cycleFingerprints` summarises a cycle from the event's whole value partition,
+ * which is right — that is what fixed #1102. But a control driven by an LFO makes
+ * every cycle genuinely differ on that one axis, so the LANE goes aperiodic and
+ * the document falls to the 256-cycle cap. The structure did not change; one
+ * dimension is sweeping over it. Excluding exactly that dimension asks "does the
+ * rest of this repeat?", which is the question the display span actually needs.
+ *
+ * ── WHY THIS IS NOT THE RULE THAT WAS ALREADY REJECTED ───────────────────────
+ * "Drop dimensions with no period of their own" was prototyped and set aside
+ * because its stability question could only see as far as its probe window, so a
+ * field whose period exceeded that window read as unstable and was dropped —
+ * it discarded `note` and `s` in ~75 documents. This takes the exclusion from the
+ * IR instead: `Param{value: …Signal}` is a fact about the SOURCE, identical at
+ * every horizon, so it cannot drift with the horizon it feeds. Same intent,
+ * different evidence, and the objection was entirely about the evidence.
+ *
+ * ── WHERE THE SAFETY ACTUALLY COMES FROM, which is not where I argued ────────
+ * The plan for this claimed `atCapOnly` was structurally REQUIRED: dropping a
+ * dimension can only shorten or preserve a period, shortening is the #1102
+ * defect, and below the cap a `null` is what buys the next doubling — so
+ * narrowing the question early would answer with whatever short period survived.
+ *
+ * ⚠ MEASURED, THAT IS WRONG. The unconditional arm scores IDENTICALLY on this
+ * corpus: 19 recovered, 0 below-cap documents changed, 0 periods destroyed, 0
+ * collapsed to 1. The safety comes from `if (production !== null) return
+ * production` — this rule only ever ADDS a period where production found none
+ * and never replaces one production already answered, so a document that
+ * resolves below the cap is untouchable regardless of the horizon gate.
+ *
+ * The gate is kept anyway, and the measurement is the reason it can be: it costs
+ * exactly ZERO recoveries, and it converts "no below-cap document changed" from
+ * something true of these 142 documents into something a reader can see is true
+ * of any document. Free insurance is worth keeping; a required guarantee is what
+ * it is not, and the difference matters to whoever reads this next.
+ */
+export interface SignalExclusionRule {
+  /** Only ask the narrowed question once the progressive horizon is exhausted. */
+  atCapOnly: boolean
+  cap?: number
+  /** Refuse a period below this, falling back to aperiodic — the guard against
+   *  trading a 256-cycle sliver for a meaningless 1-cycle one. */
+  minPeriod?: number
+}
+
+/** Strip one dimension from an event, in whichever half of the partition holds
+ *  it. A `VALUE_SLOTS` member becomes `undefined` (a constant in every cycle);
+ *  anything else is a `params` entry and is removed outright. */
+function withoutKeys(ev: IREvent, keys: ReadonlySet<string>): IREvent {
+  const copy = { ...ev } as unknown as Record<string, unknown>
+  let touched = false
+  for (const k of keys) {
+    if (k in copy && !(copy.params && typeof copy.params === 'object' && k in (copy.params as object))) {
+      if (copy[k] !== undefined) { copy[k] = undefined; touched = true }
+    }
+  }
+  const params = ev.params
+  if (params) {
+    let dropped = false
+    const next: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (keys.has(k)) { dropped = true; continue }
+      next[k] = v
+    }
+    if (dropped) { copy.params = next; touched = true }
+  }
+  return (touched ? copy : ev) as unknown as IREvent
+}
+
+export function signalExcludingDetector(
+  ctx: DocumentContext,
+  rule: SignalExclusionRule,
+): DetectPeriodFn {
+  const cap = rule.cap ?? 256
+  return (events, horizon) => {
+    // DELEGATE, never re-implement: this is the production rule, called exactly
+    // as `analyzeSong` calls it. The candidate's whole content is WHICH EVENTS it
+    // is asked about, so anything else that differs is a bug in the harness.
+    const unheard = ctx.hasUnheardTrack()
+    const production = displayPeriodRule(events, horizon, cap, unheard)
+
+    // Below the cap this IS production, returned untouched. Not a tuning choice:
+    // dropping a dimension can only shorten or preserve a period, and below the
+    // cap a `null` is what buys the next doubling, so narrowing the question
+    // early answers with whatever short period happened to survive.
+    if (rule.atCapOnly && horizon < cap) return production
+    // Already answered — nothing to recover.
+    if (production !== null) return production
+    if (ctx.signalKeys.size === 0) return null
+
+    const stripped = events.map((ev) => withoutKeys(ev, ctx.signalKeys))
+    const p = displayPeriodRule(stripped, horizon, cap, unheard)
+    if (p === null) return null
+    if (rule.minPeriod !== undefined && p < rule.minPeriod) return null
+    return p
+  }
+}
+
 /** Analyse one already-evaluated document through the production path. */
 export async function periodOfTracks(
   tracks: readonly SongTrack[],
-  detectPeriodFn?: (events: readonly IREvent[], horizon: number) => number | null,
+  detector?: SweepDetector,
+  structural?: StructuralContext,
 ): Promise<Omit<PeriodVerdict, 'name' | 'ok' | 'error'>> {
   let events = 0
   const collect = trackCollector(tracks)
@@ -323,6 +516,20 @@ export async function periodOfTracks(
   // `MusicalTimeline` reaches by recording raw keys before its remap.
   const declared = tracks.map((t) => t.trackId)
   const heard = new Set<string>()
+  const hasUnheardTrack = (): boolean => declared.some((id) => !heard.has(id))
+  // A per-document rule is BUILT HERE, because this is the only scope that holds
+  // both halves of its context: the structural read (from the source, passed in)
+  // and the live `hasUnheardTrack` closure (from this collection).
+  const detectPeriodFn =
+    typeof detector === 'function' || detector === undefined
+      ? detector
+      : detector.perDocument({
+          name: structural?.name ?? '',
+          code: structural?.code ?? '',
+          signalKeys: structural?.signalKeys ?? new Set<string>(),
+          parsed: structural?.parsed ?? false,
+          hasUnheardTrack,
+        })
   const analysis = await analyzeSong(null, {
     // no yield: this is a batch sweep, not a frame budget. The yield primitive is
     // injectable precisely so the slicing logic stays deterministic under test.
@@ -334,7 +541,7 @@ export async function periodOfTracks(
       return evs
     },
     detectPeriodFn,
-    hasUnheardTrack: () => declared.some((id) => !heard.has(id)),
+    hasUnheardTrack,
   })
   const shipped = new Set(analysis.lanes.map((l) => l.laneKey))
   return {
@@ -355,7 +562,7 @@ export async function periodOfTracks(
 export async function periodOfDocument(
   code: string,
   name: string,
-  detectPeriodFn?: (events: readonly IREvent[], horizon: number) => number | null,
+  detector?: SweepDetector,
 ): Promise<PeriodVerdict> {
   const r = await evalSongTracks(code)
   if (!r.ok) {
@@ -372,7 +579,11 @@ export async function periodOfDocument(
     }
   }
   try {
-    return { name, ok: true, ...(await periodOfTracks(r.tracks, detectPeriodFn)) }
+    return {
+      name,
+      ok: true,
+      ...(await periodOfTracks(r.tracks, detector, documentContext(name, code))),
+    }
   } catch (e: unknown) {
     return {
       name,
@@ -395,12 +606,10 @@ export async function periodOfDocument(
  * Pass one to price a CANDIDATE rule over the same documents through the same
  * loop, so the two sweeps differ in exactly one function.
  */
-export async function sweepCorpus(
-  detectPeriodFn?: (events: readonly IREvent[], horizon: number) => number | null,
-): Promise<PeriodVerdict[]> {
+export async function sweepCorpus(detector?: SweepDetector): Promise<PeriodVerdict[]> {
   const corpus = await loadCorpus()
   const out: PeriodVerdict[] = []
-  for (const { name, code } of corpus) out.push(await periodOfDocument(code, name, detectPeriodFn))
+  for (const { name, code } of corpus) out.push(await periodOfDocument(code, name, detector))
   return out
 }
 

@@ -57,9 +57,17 @@
  * abstaining below the cap and three different tests of WHICH lanes answered are
  * all already measured and all fail.
  *
- * The 49 that remain are aperiodic under every rule measured — 32 of them have a
- * single lane, so there is no other lane to borrow a period from at all. They are
- * a DISPLAY question, not a detection one, and they are #1105.
+ * The 49 that remained — 56 after #1107, the tally line below carries the whole
+ * chain — have 32 single-lane documents among them, so for those there is no
+ * other lane to borrow a period from at all.
+ *
+ * ⚠ THEY WERE "aperiodic under every rule measured" WHEN THIS WAS WRITTEN. That
+ * is no longer true: #1465 prices a rule recovering 19 of the 56, and 5 of those
+ * are single-lane — the group this file calls unreachable, because #1104's
+ * abstention needs a second lane to borrow from. The difference is where the
+ * exclusion comes from. Every earlier candidate inferred it by watching events;
+ * this one reads it from the IR, so it has no probe window to be shorter than a
+ * field's period. See `song-period-signal-exclusion.test.ts`.
  *
  * ── AND THEN A FOURTH ERA (#1107): 49 → 56, A RISE ON PURPOSE ────────────────
  * Seven documents were accepting a span that left a whole track drawing empty and
