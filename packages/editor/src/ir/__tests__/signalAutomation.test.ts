@@ -19,7 +19,16 @@ const read = (src: string) => signalAutomations(parseStrudel(src) as never)
 describe('signalAutomations — the three legs #1464 names', () => {
   it('reads shape, rate and range off one nested node', () => {
     expect(read('$: s("bd*4").cutoff(saw.slow(4).range(200, 2000))')).toEqual([
-      { trackId: 'd1', paramKey: 'cutoff', kind: 'saw', periodCycles: 4, lo: 200, hi: 2000, ranged: true, offset: expect.any(Number) },
+      {
+        trackId: 'd1', paramKey: 'cutoff', kind: 'saw', periodCycles: 4,
+        lo: 200, hi: 2000, ranged: true, offset: expect.any(Number),
+        spans: {
+          shape: { start: expect.any(Number), end: expect.any(Number) },
+          rate: { start: expect.any(Number), end: expect.any(Number) },
+          range: { start: expect.any(Number), end: expect.any(Number) },
+          chainEnd: expect.any(Number),
+        },
+      },
     ])
   })
 
@@ -109,6 +118,74 @@ describe('signalAutomations — attribution', () => {
   it('returns nothing for a null IR rather than throwing', () => {
     expect(signalAutomations(null)).toEqual([])
     expect(signalAutomations(undefined)).toEqual([])
+  })
+})
+
+describe('signalAutomations — WHERE each leg is written (#1464 Stage 2)', () => {
+  /** Slice the source with a span. This is the whole contract: what comes back
+   *  is the text a control replaces, so an off-by-one is visible as a wrong
+   *  string rather than as a number nobody can check by eye. */
+  const slice = (src: string, span: { start: number; end: number } | null): string | null =>
+    span ? src.slice(span.start, span.end) : null
+
+  it('every leg of a fully spelled chain slices back to its own call', () => {
+    const src = '$: s("bd*4").cutoff(saw.slow(4).range(200,2000))'
+    const [a] = read(src)
+    expect(slice(src, a.spans.shape)).toBe('saw')
+    expect(slice(src, a.spans.rate)).toBe('.slow(4)')
+    expect(slice(src, a.spans.range)).toBe('.range(200,2000)')
+  })
+
+  it('an unspelled leg is null, and `chainEnd` is where its call would go', () => {
+    const src = '$: s("bd*4").gain(sine)'
+    const [a] = read(src)
+    expect(slice(src, a.spans.shape)).toBe('sine')
+    expect(a.spans.rate).toBeNull()
+    expect(a.spans.range).toBeNull()
+
+    // The decisive check: splicing at `chainEnd` produces the document the
+    // control means to write, and re-reading it yields the asked-for range.
+    const edited = src.slice(0, a.spans.chainEnd as number) + '.range(0.2,0.8)' + src.slice(a.spans.chainEnd as number)
+    expect(edited).toBe('$: s("bd*4").gain(sine.range(0.2,0.8))')
+    expect(read(edited)[0]).toMatchObject({ lo: 0.2, hi: 0.8, ranged: true })
+  })
+
+  it('`chainEnd` sits past the OUTERMOST arm, not past the signal', () => {
+    const src = '$: s("bd*4").gain(sine.range(0,1))'
+    const [a] = read(src)
+    const edited = src.slice(0, a.spans.chainEnd as number) + '.slow(4)' + src.slice(a.spans.chainEnd as number)
+    expect(edited).toBe('$: s("bd*4").gain(sine.range(0,1).slow(4))')
+    expect(read(edited)[0]).toMatchObject({ periodCycles: 4, lo: 0, hi: 1 })
+  })
+
+  it('the range span is the one whose bounds WON, not the one it supersedes', () => {
+    // `readChain` adopts the outermost `.range()`; an inner one is already dead
+    // in the document, and editing it would change nothing the lane draws.
+    const src = '$: s("bd*4").gain(sine.range(0,1).range(0.2,0.4))'
+    const [a] = read(src)
+    expect(a).toMatchObject({ lo: 0.2, hi: 0.4 })
+    expect(slice(src, a.spans.range)).toBe('.range(0.2,0.4)')
+  })
+
+  it('TWO rate arms leave the rate span null — a defined rate with no place to write it', () => {
+    const src = '$: s("bd*4").gain(sine.slow(4).fast(2).range(0,1))'
+    const [a] = read(src)
+    expect(a.periodCycles).toBe(2)            // the rate is perfectly well defined
+    expect(a.spans.rate).toBeNull()           // and yet there is nowhere to set it
+    // A control must not pick an arm: writing `.slow(2)` here would give the
+    // right rate while silently deleting the user's `.fast(2)` intent.
+  })
+
+  it('replacing a span in place changes only that leg — a real round-trip', () => {
+    const src = '$: s("bd*4").cutoff(saw.slow(4).range(200,2000))'
+    const [a] = read(src)
+    const span = a.spans.range as { start: number; end: number }
+    const edited = src.slice(0, span.start) + '.range(300,3000)' + src.slice(span.end)
+    expect(edited).toBe('$: s("bd*4").cutoff(saw.slow(4).range(300,3000))')
+
+    const [b] = read(edited)
+    // The edited leg moved; every other leg is byte-identically what it was.
+    expect(b).toMatchObject({ lo: 300, hi: 3000, kind: 'saw', periodCycles: 4, paramKey: 'cutoff' })
   })
 })
 

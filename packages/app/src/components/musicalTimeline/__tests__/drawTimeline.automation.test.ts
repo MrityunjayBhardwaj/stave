@@ -52,9 +52,13 @@ function mockCtx() {
   return { ctx: ctx as unknown as CanvasRenderingContext2D, paths, texts, fills }
 }
 
+const NO_SPANS = { shape: null, rate: null, range: null, chainEnd: null } as const
+
 const auto = (over: Partial<SignalAutomation> = {}): SignalAutomation => ({
   trackId: 'd1', paramKey: 'cutoff', kind: 'sine', periodCycles: 1,
-  lo: 0, hi: 1, ranged: true, offset: 0, ...over,
+  // Spans are Stage 2's WRITE coordinates; nothing on the drawing path reads
+  // them, which is why the drawing fixtures leave them empty.
+  lo: 0, hi: 1, ranged: true, offset: 0, spans: NO_SPANS, ...over,
 })
 
 const lane = (automations: readonly SignalAutomation[]): SceneLane => ({

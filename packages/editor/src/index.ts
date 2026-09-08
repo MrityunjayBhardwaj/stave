@@ -17,7 +17,7 @@ export { parseMini, parseStrudel, classifyLiteralRhs } from './ir'
 // #1464 Stage 1's IR reader, re-exported for the timeline lane that draws it
 // (moved out of @stave/app by #1489 so `songAnalysis` can reach it too).
 export { signalAutomations, signalCarryingParamKeys } from './ir'
-export type { SignalAutomation, SignalKind } from './ir'
+export type { SignalAutomation, SignalKind, SignalSpans } from './ir'
 
 // Phase 19-07 (#79) — parser stage helpers. PK10 propagation: re-exported
 // from the top-level barrel so the app can `import { runRawStage, ... }

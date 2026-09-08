@@ -11,17 +11,20 @@
  *                                body: Slow{factor:4,
  *                                       body: Signal{kind:'saw'}}}}
  *
- * This module turns that into what a lane needs to DRAW one. It is the read half
- * of #1464 and nothing else: Stage 1 is option 1 (render, do not edit), so there
- * is deliberately no inverse here and no caller in any write-back path. The
- * byte-verbatim round-trip #1482 established is preserved by CONSTRUCTION rather
- * than by test — there is no code here that could emit source.
+ * This module turns that into what a lane needs to DRAW one, plus — since Stage 2
+ * (#1464 option 2) — WHERE each leg is written, so a control can edit it in place.
+ * It still emits no source and holds no inverse: `SignalSpans` carries source
+ * COORDINATES, and the byte-verbatim round-trip #1482 established stays preserved
+ * by construction here, because nothing in this file can produce text. What
+ * changes is that a caller now has somewhere precise to write, which is exactly
+ * the leverage Stage 2 needs and the whole of what this file lends it.
  *
  * Mirrors `trackOrder.ts`: pure and structural, no eval and no source scanning,
  * producing an IR-derived input for `buildTimelineScene` (which is documented
  * PURE — no IR walk) rather than reaching into the IR from inside the scene.
  */
 import type { PatternIR } from './PatternIR'
+import type { SourceLocation } from './IREvent'
 
 type SignalNode = PatternIR & { tag: 'Signal' }
 export type SignalKind = SignalNode['kind']
@@ -87,6 +90,51 @@ export interface SignalAutomation {
    *  lanes already carry, so a later stage can bind this to the editor without a
    *  second provenance channel invented for it. */
   readonly offset: number | null
+  /** WHERE each leg is written (#1464 Stage 2). Read the type's own doc. */
+  readonly spans: SignalSpans
+}
+
+/**
+ * Where each of the three legs is SPELLED in the source (#1464 Stage 2).
+ *
+ * ⚠ THIS IS THE ONLY WAY A CONTROL CAN WRITE, and the reason is structural, not
+ * stylistic. `Range` regenerates from `rawArgs` and `Param` from its own
+ * `rawArgs` (`toStrudel.ts:226`, `:196`) — that is what buys the byte-verbatim
+ * round-trip #1482 established. The consequence is that setting `lo`/`hi` on an
+ * IR node and re-emitting writes NOTHING: the raw text wins. So every Stage 2
+ * edit is a source-offset replacement over these spans, on the same path every
+ * other edit surface in this codebase uses.
+ *
+ * A span is `null` when the leg is not spelled — `sine` with no `.range()` names
+ * no numbers to replace. That is not a gap to paper over: it is a DIFFERENT edit
+ * (insert a call at `chainEnd`), and the two must not be confused, because one
+ * preserves every other byte and the other lengthens the document.
+ *
+ * Measured over the sweep corpus (`loadCorpus`, 150 documents, 200 drawable
+ * automations): range spelled 180 (90%), rate spelled 128 (64%), NEITHER 16 (8%).
+ */
+export interface SignalSpans {
+  /** The signal identifier itself — `sine`, `perlin`. Replacing this text is the
+   *  whole of a shape change. */
+  readonly shape: SourceLocation | null
+  /** The single `.slow(n)` / `.fast(n)` call site.
+   *
+   *  ⚠ NULL when the chain carries MORE THAN ONE rate arm, not only when it
+   *  carries none. `sine.slow(2).fast(4)` has a well-defined rate (the product)
+   *  and no well-defined place to write a new one — editing either arm produces
+   *  the asked-for rate while silently changing what the user wrote elsewhere.
+   *  Abstaining is the same discipline `readChain` already applies to shapes it
+   *  cannot account for. */
+  readonly rate: SourceLocation | null
+  /** The `.range(lo,hi)` call site whose bounds WON — the outermost one, which
+   *  is the one `readChain` adopted. An inner `.range()` it supersedes is dead
+   *  in the document already and is not what a control should edit. */
+  readonly range: SourceLocation | null
+  /** Offset just past the whole signal expression, where an ABSENT leg's call
+   *  would be inserted: `sine` + `.range(0,1)` at `chainEnd`. Null when the
+   *  outermost node carries no source range, in which case no edit is possible
+   *  and a control must be offered as disabled rather than as broken. */
+  readonly chainEnd: number | null
 }
 
 /** The transform arms this module understands between a `Param` and its
@@ -104,6 +152,11 @@ interface ChainRead {
   readonly periodCycles: number
   readonly lo: number | null
   readonly hi: number | null
+  /** #1464 Stage 2 — see `SignalSpans`. Collected on the same descent that
+   *  reads the values, because the node carrying a value and the node carrying
+   *  its source range are the same node; a second walk to find them again could
+   *  disagree with this one about which `Range` won. */
+  readonly spans: SignalSpans
 }
 
 /**
@@ -129,6 +182,15 @@ function readChain(node: PatternIR): ChainRead | null {
   let periodCycles = 1
   let lo: number | null = null
   let hi: number | null = null
+  let rangeSpan: SourceLocation | null = null
+  // Every rate arm met, not the first — the count is what decides whether a
+  // control may write one at all. See `SignalSpans.rate`.
+  const rateSpans: SourceLocation[] = []
+  // The OUTERMOST node's end: the insertion point for a leg the source omits.
+  // Taken on the first iteration, before any descent, because that node is the
+  // whole expression as written — `sine.slow(4).range(200,2000)` ends where
+  // `.range(200,2000)`'s own call site ends.
+  const chainEnd = spanOf(node)?.end ?? null
 
   // Bounded by the IR's own depth; the guard is against a malformed cyclic node
   // rather than against legal input.
@@ -136,7 +198,18 @@ function readChain(node: PatternIR): ChainRead | null {
     if (!cur || typeof cur !== 'object' || typeof cur.tag !== 'string') return null
 
     if (cur.tag === 'Signal') {
-      return { signal: cur as SignalNode, periodCycles, lo, hi }
+      return {
+        signal: cur as SignalNode,
+        periodCycles,
+        lo,
+        hi,
+        spans: {
+          shape: spanOf(cur),
+          rate: rateSpans.length === 1 ? rateSpans[0] : null,
+          range: rangeSpan,
+          chainEnd,
+        },
+      }
     }
     if (!CHAIN_TAGS.has(cur.tag)) return null
 
@@ -145,13 +218,20 @@ function readChain(node: PatternIR): ChainRead | null {
       if (lo === null && Number.isFinite(cur.lo) && Number.isFinite(cur.hi)) {
         lo = cur.lo
         hi = cur.hi
+        // The span follows the VALUES it belongs to, in the same branch, so the
+        // two can never end up describing different `.range()` calls.
+        rangeSpan = spanOf(cur)
       }
     } else if (cur.tag === 'Slow') {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null
       periodCycles *= cur.factor
+      const span = spanOf(cur)
+      if (span) rateSpans.push(span)
     } else if (cur.tag === 'Fast') {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null
       periodCycles /= cur.factor
+      const span = spanOf(cur)
+      if (span) rateSpans.push(span)
     }
 
     const body: unknown = (cur as { body?: unknown }).body
@@ -159,6 +239,16 @@ function readChain(node: PatternIR): ChainRead | null {
     cur = body as PatternIR
   }
   return null
+}
+
+/** A node's own source range, or null. `loc` is an ARRAY because some nodes are
+ *  assembled from several source sites; the chain arms this module walks are
+ *  each one call, so the first entry is the whole of it. */
+function spanOf(node: PatternIR): SourceLocation | null {
+  const loc = (node as { loc?: SourceLocation[] }).loc
+  const first = loc?.[0]
+  if (!first) return null
+  return Number.isFinite(first.start) && Number.isFinite(first.end) ? first : null
 }
 
 /**
@@ -236,6 +326,7 @@ function collectFromTrack(trackId: string, root: PatternIR, out: SignalAutomatio
               hi,
               ranged,
               offset: typeof start === 'number' && Number.isFinite(start) ? start : null,
+              spans: read.spans,
             })
           }
         }
