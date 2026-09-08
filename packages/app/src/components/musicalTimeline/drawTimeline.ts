@@ -25,7 +25,7 @@ import type { TimelineScene, SceneLane, SceneNote, SceneClip } from './timelineS
 import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
 import { BEATS_PER_BAR, songCycleToXUnclamped, type SongWindow } from './songAxis'
-import type { SignalAutomation } from './signalAutomation'
+import type { SignalAutomation } from '@stave/editor'
 
 /** The HORIZONTAL view transform + viewport, all in CSS pixels. Vertical
  *  geometry (per-lane top/height, total height) lives in the `LaneLayout`. */

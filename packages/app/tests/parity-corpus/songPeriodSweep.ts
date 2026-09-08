@@ -64,7 +64,7 @@ import {
   type SongTrack,
 } from '../../../editor/src/visualEdit/miniSource/__tests__/evalHarness'
 import { parseStrudel } from '../../../editor/src/ir/parseStrudel'
-import { signalCarryingParamKeys } from '../../src/components/musicalTimeline/signalAutomation'
+import { signalCarryingParamKeys } from '../../../editor/src/ir/signalAutomation'
 
 // Re-exported so the two sweep tests can guard themselves without reaching
 // across packages for a rule this file already depends on (#1307). One copy,

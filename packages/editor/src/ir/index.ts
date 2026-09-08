@@ -61,6 +61,16 @@ export type {
 export { songExtent } from './songExtent'
 export type { SongExtent } from './songExtent'
 
+// Continuous automation read off the IR (#1464 Stage 1, moved here by #1489).
+// Two questions on the same nodes, deliberately different: `signalAutomations`
+// asks "can I PLOT this?" and abstains without a closed form, while
+// `signalCarryingParamKeys` asks "does this control MOVE?" and never abstains.
+// It lives beside the IR rather than beside its first consumer because it reads
+// nothing else — and because `songAnalysis` needs it too, which a module in
+// `@stave/app` could not serve (the dependency only runs app -> editor).
+export { signalAutomations, signalCarryingParamKeys } from './signalAutomation'
+export type { SignalAutomation, SignalKind } from './signalAutomation'
+
 // Event identity (#1102) — exported so the NEXT consumer asking "are these two
 // events the same sound" finds the one answer instead of curating its own field
 // list, which is exactly how the period bug got in.

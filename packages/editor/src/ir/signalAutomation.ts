@@ -21,7 +21,7 @@
  * producing an IR-derived input for `buildTimelineScene` (which is documented
  * PURE — no IR walk) rather than reaching into the IR from inside the scene.
  */
-import type { PatternIR } from '@stave/editor'
+import type { PatternIR } from './PatternIR'
 
 type SignalNode = PatternIR & { tag: 'Signal' }
 export type SignalKind = SignalNode['kind']

@@ -11,7 +11,7 @@
  * have got it wrong.
  */
 import { describe, it, expect } from 'vitest'
-import { parseStrudel } from '../../../../../editor/src/ir/parseStrudel'
+import { parseStrudel } from '../parseStrudel'
 import { signalAutomations, signalCarryingParamKeys } from '../signalAutomation'
 
 const read = (src: string) => signalAutomations(parseStrudel(src) as never)

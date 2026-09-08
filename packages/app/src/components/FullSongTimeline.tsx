@@ -49,7 +49,7 @@ import {
 } from './musicalTimeline/stableVoiceOrder'
 import { collectNoteMarks, readEventsInBand } from './musicalTimeline/timelineMarks'
 import { declaredTracks } from './musicalTimeline/trackOrder'
-import { signalAutomations, type SignalAutomation } from './musicalTimeline/signalAutomation'
+import { signalAutomations, type SignalAutomation } from '@stave/editor'
 import { computeLaneLayout, laneAtY, type LaneLayout } from './musicalTimeline/laneLayout'
 import {
   loadTimelineCamera,
