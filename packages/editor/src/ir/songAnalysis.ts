@@ -636,13 +636,19 @@ function foldWithSignalPeriods(
   periods: readonly number[],
   cap: number,
 ): number {
+  // The result stays a whole number of cycles, and that is a property rather
+  // than a hope: `period` is a cycle count, so it enters as `a/1`, and
+  // `lcm(a/1, c/d) = lcm(a, c) / gcd(1, d) = lcm(a, c)`. A denominator can
+  // never survive the fold, so a signal faster than a cycle — `.fast(3)`,
+  // period 1/3 — folds to the structural period unchanged rather than to a
+  // fractional span nothing could draw.
   let folded = period
   for (const q of periods) {
     const next = rationalLcm(folded, q)
     if (next === null || !Number.isFinite(next) || next > cap) return period
     folded = next
   }
-  return Number.isInteger(folded) ? folded : period
+  return folded
 }
 
 export function displayPeriodRule(

@@ -222,17 +222,19 @@ declare function structuralWalk(ir: PatternIR, window: WalkWindow): LaneSkeleton
  * veto used to cover — see `detectDisplayPeriodAtCap`. That returned 20 of the
  * 69 to a real period, so the swept figure was then 49. ⚠ #1107 later moved it
  * to 56 — see the sweep test's own tally line, which carries the whole chain
- * (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107).
+ * (53 pre-#1102 → 69 post-#1102 → 49 post-#1104 → 56 post-#1107 → 37 post-#1465).
  *
  * Of those, 32 have a single lane, so there is nothing to borrow a period from
  * at all, and what the display should do with them is #1105.
  *
  * ⚠ "APERIODIC UNDER EVERY RULE MEASURED" WAS TRUE WHEN WRITTEN AND IS NOT NOW.
- * #1465 prices a rule that recovers 19 of the 56 by asking the identity question
+ * #1465 SHIPPED a rule that recovers 19 of the 56 by asking the identity question
  * without the dimensions the document's own SOURCE says are continuously
- * modulated — an exclusion read structurally from the IR, which is what the
- * earlier probe-window attempt could not do. Priced, not shipped; the numbers and
- * the safety properties are in `song-period-signal-exclusion.test.ts`.
+ * modulated, then folding those signals' own rates back in so the answer is a
+ * period the audio honours — an exclusion read structurally from the IR, which is
+ * what the earlier probe-window attempt could not do. `signalInformedPeriod`
+ * carries the argument; `song-period-signal-fold.test.ts` carries the numbers.
+ * That leaves 37 aperiodic at the cap, and they belong to #1105.
  *
  * A DETECTED PERIOD CAN ALSO BE TOO SHORT TO BE THIS SONG'S (#1107). It can be
  * true of everything the analysis has heard and still describe only part of the

@@ -1234,7 +1234,7 @@ function foldWithSignalPeriods(period, periods, cap) {
     if (next === null || !Number.isFinite(next) || next > cap) return period;
     folded = next;
   }
-  return Number.isInteger(folded) ? folded : period;
+  return folded;
 }
 __name(foldWithSignalPeriods, "foldWithSignalPeriods");
 function displayPeriodRule(events, horizon, cap, hasUnheardTrack, signals) {

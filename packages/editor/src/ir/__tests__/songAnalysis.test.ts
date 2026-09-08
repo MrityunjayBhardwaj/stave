@@ -457,3 +457,77 @@ describe('displayPeriodRule (#1107 — a period that leaves a track empty is not
     }
   })
 })
+
+/**
+ * #1465 — the corpus sweep proves this rule over 142 real documents, but it
+ * takes ~144 seconds and reports aggregates. These are the mechanism at unit
+ * speed, and the first one is the issue's own example: the difference between
+ * `.gain(0.5)` and `.gain(sine.slow(4).range(0.05, 1))` on the same document.
+ */
+describe('displayPeriodRule — source-informed exclusion + fold (#1465)', () => {
+  const CAP = 64
+  /** A lane whose structure repeats every `p` cycles. */
+  const structural = (lane: string, p: number, horizon = CAP): IREvent[] =>
+    Array.from({ length: horizon }, (_, c) => ev(c, lane, c % p))
+  /** The same lane with a control sweeping over it — a value that differs every
+   *  cycle, which is what an LFO actually does to a cycle fingerprint. */
+  const modulate = (events: IREvent[]): IREvent[] =>
+    events.map((e, i) => ({ ...e, gain: 0.1 + i / 1000 }))
+
+  const dims = (periods: number[], keys = ['gain']) => ({ keys: new Set(keys), periods })
+
+  it("the issue's example: a swept gain costs the period, and the rule gives it back", () => {
+    // `s("bd*8")` — one lane, identical every cycle — with a 4-cycle gain LFO.
+    const events = modulate(structural('bd', 1))
+    // Every cycle genuinely differs, so the lane is aperiodic in the only sense
+    // this module measures. This is the reported defect.
+    expect(displayPeriodRule(events, CAP, CAP, false)).toBeNull()
+    // Told what the SOURCE says is modulated, it reads the structure through the
+    // sweep and folds the LFO's own rate back in: a 4-cycle song.
+    expect(displayPeriodRule(events, CAP, CAP, false, dims([4]))).toBe(4)
+  })
+
+  it('FOLDS to the period the audio repeats at, not the structural one', () => {
+    // Structure repeats every 2; the LFO does not come back until 4. The honest
+    // answer is 4 — a bounce of 2 would cut the sweep in half.
+    expect(displayPeriodRule(modulate(structural('bd', 2)), CAP, CAP, false, dims([4]))).toBe(4)
+    // Coprime rates take the least common multiple, not the larger one.
+    expect(displayPeriodRule(modulate(structural('bd', 3)), CAP, CAP, false, dims([4]))).toBe(12)
+  })
+
+  it('leaves an already-commensurate period alone', () => {
+    // 8 is already a whole number of 4-cycle LFO periods; the fold is a no-op.
+    expect(displayPeriodRule(modulate(structural('bd', 8)), CAP, CAP, false, dims([4]))).toBe(8)
+    // A signal FASTER than a cycle repeats within any integer span (`.fast(3)`).
+    expect(displayPeriodRule(modulate(structural('bd', 8)), CAP, CAP, false, dims([1 / 3]))).toBe(8)
+  })
+
+  it('returns the structural span when the modulation has no period to fold', () => {
+    // `rand`/`perlin`: the keys are excluded, but nothing repeats, so there is
+    // no rate to fold and the structural span is the only answer available.
+    expect(displayPeriodRule(modulate(structural('bd', 8)), CAP, CAP, false, dims([]))).toBe(8)
+  })
+
+  it('keeps the structural span when the honest fold would exceed the cap', () => {
+    // lcm(8, 63) = 504, far past the cap. A true period nobody can display is
+    // not an improvement on a usable one — `foldWithSignalPeriods` argues this.
+    expect(displayPeriodRule(modulate(structural('bd', 8)), CAP, CAP, false, dims([63]))).toBe(8)
+  })
+
+  it('can only ADD — it never touches a document that already answered', () => {
+    // A plain, unmodulated document resolves the same with and without signals.
+    const plain = structural('bd', 8)
+    expect(displayPeriodRule(plain, CAP, CAP, false)).toBe(8)
+    expect(displayPeriodRule(plain, CAP, CAP, false, dims([4]))).toBe(8)
+  })
+
+  it('stays silent below the cap, where a null is what buys the next doubling', () => {
+    const events = modulate(structural('bd', 1, 16))
+    expect(displayPeriodRule(events, 16, CAP, false, dims([4]))).toBeNull()
+  })
+
+  it('does nothing when the document declares no modulated control', () => {
+    const events = modulate(structural('bd', 1))
+    expect(displayPeriodRule(events, CAP, CAP, false, dims([4], []))).toBeNull()
+  })
+})

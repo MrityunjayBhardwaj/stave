@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { parseStrudel } from '../parseStrudel'
-import { signalAutomations, signalCarryingParamKeys } from '../signalAutomation'
+import { signalAutomations, signalCarryingParamKeys, hasTruePeriod } from '../signalAutomation'
 
 const read = (src: string) => signalAutomations(parseStrudel(src) as never)
 
@@ -153,5 +153,33 @@ describe('signalCarryingParamKeys — the broader question (#1465)', () => {
     // the control still moves. A reader that stopped at the opaque node would
     // under-report exactly the documents this issue is about.
     expect(keys('$: s("bd*4").pan(perlin.range(0,1).segment(8))')).toEqual(['pan'])
+  })
+})
+
+describe('hasTruePeriod — which signals a period can be folded with (#1465)', () => {
+  it('says yes to the waveform family, in both polarities', () => {
+    for (const k of ['sine', 'cosine', 'saw', 'isaw', 'tri', 'itri', 'square'] as const) {
+      expect(hasTruePeriod(k), k).toBe(true)
+      expect(hasTruePeriod(`${k}2` as never), `${k}2`).toBe(true)
+    }
+  })
+
+  it('says no to everything that never comes back', () => {
+    // Noise and unbounded input. Folding a song's period with one of these would
+    // hand it a definite length its audio does not have — the failure mode the
+    // allowlist spelling exists to make impossible.
+    for (const k of ['rand', 'rand2', 'brand', 'perlin', 'berlin', 'time',
+                     'mousex', 'mousey', 'mouseX', 'mouseY',
+                     'cyclesPer', 'per', 'perCycle', 'perx'] as const) {
+      expect(hasTruePeriod(k), k).toBe(false)
+    }
+  })
+
+  it('defaults an UNKNOWN kind to not-periodic, which is the safe direction', () => {
+    // A kind added to `PatternIR` later and forgotten in the allowlist costs a
+    // fold — the period stays the structural one, which is what production
+    // already answers. The denylist spelling would instead fold it as though it
+    // repeated. One under-promises; the other lies.
+    expect(hasTruePeriod('somethingAddedLater' as never)).toBe(false)
   })
 })
