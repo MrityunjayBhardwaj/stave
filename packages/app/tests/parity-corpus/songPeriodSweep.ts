@@ -448,17 +448,39 @@ export interface SignalExclusionRule {
   minPeriod?: number
 }
 
-/** Strip one dimension from an event, in whichever half of the partition holds
- *  it. A `VALUE_SLOTS` member becomes `undefined` (a constant in every cycle);
- *  anything else is a `params` entry and is removed outright. */
-function withoutKeys(ev: IREvent, keys: ReadonlySet<string>): IREvent {
-  const copy = { ...ev } as unknown as Record<string, unknown>
+/**
+ * Strip named dimensions from an event, in whichever half of the value partition
+ * holds them.
+ *
+ * The partition has exactly two halves and they do not overlap: `extractParams`
+ * builds `params` as the COMPLEMENT of `KNOWN_VALUE_FIELDS`, so a key is a
+ * dedicated slot or a `params` entry, never both. Both halves are cleared anyway
+ * — unconditionally, rather than with a guard that assumes the partition — because
+ * the cost is one lookup and the alternative is a silent half-strip if that
+ * invariant ever moves.
+ *
+ * A dedicated slot becomes `undefined` rather than being deleted, because
+ * `eventValueKey` reads `VALUE_SLOTS` positionally and an absent slot still
+ * contributes `slot=undefined` — a constant in every cycle, which is precisely
+ * the neutral value wanted. A `params` entry is removed outright, because that
+ * half is keyed by presence.
+ *
+ * Returns the ORIGINAL event when nothing matched, so the common case allocates
+ * nothing across a 256-cycle sweep.
+ */
+export function withoutKeys(ev: IREvent, keys: ReadonlySet<string>): IREvent {
+  if (keys.size === 0) return ev
+  const rec = ev as unknown as Record<string, unknown>
   let touched = false
+  let copy: Record<string, unknown> | null = null
+
   for (const k of keys) {
-    if (k in copy && !(copy.params && typeof copy.params === 'object' && k in (copy.params as object))) {
-      if (copy[k] !== undefined) { copy[k] = undefined; touched = true }
-    }
+    if (rec[k] === undefined) continue
+    copy ??= { ...rec }
+    copy[k] = undefined
+    touched = true
   }
+
   const params = ev.params
   if (params) {
     let dropped = false
@@ -467,9 +489,13 @@ function withoutKeys(ev: IREvent, keys: ReadonlySet<string>): IREvent {
       if (keys.has(k)) { dropped = true; continue }
       next[k] = v
     }
-    if (dropped) { copy.params = next; touched = true }
+    if (dropped) {
+      copy ??= { ...rec }
+      copy.params = next
+      touched = true
+    }
   }
-  return (touched ? copy : ev) as unknown as IREvent
+  return (touched && copy ? copy : rec) as unknown as IREvent
 }
 
 export function signalExcludingDetector(
