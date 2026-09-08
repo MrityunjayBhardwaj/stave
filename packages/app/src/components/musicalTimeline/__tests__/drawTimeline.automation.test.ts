@@ -26,7 +26,7 @@ const THEME: DrawTheme = {
 const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 400, viewportWidth: 400 }
 
 interface Path { points: { x: number; y: number }[]; style: string }
-interface Text { text: string; x: number; y: number }
+interface Text { text: string; x: number; y: number; style: string }
 interface Fill { x: number; y: number; w: number; h: number; style: string; alpha: number }
 
 function mockCtx() {
@@ -42,7 +42,7 @@ function mockCtx() {
       fills.push({ x, y, w, h, style: ctx.fillStyle, alpha: ctx.globalAlpha })
     },
     measureText(t: string) { return { width: t.length * 6 } as TextMetrics },
-    fillText(text: string, x: number, y: number) { texts.push({ text, x, y }) },
+    fillText(text: string, x: number, y: number) { texts.push({ text, x, y, style: ctx.fillStyle }) },
     beginPath() { cur = [] },
     moveTo(x: number, y: number) { cur.push({ x, y }) },
     lineTo(x: number, y: number) { cur.push({ x, y }) },
@@ -200,5 +200,85 @@ describe('automation curve — too fast to resolve at this zoom', () => {
     const { paths, fills } = run([auto({ periodCycles: 1 })])
     expect(paths).toHaveLength(1)
     expect(fills.filter((f) => f.style === '#AUTO')).toHaveLength(0)
+  })
+})
+
+/**
+ * #1485 — a lane can carry several automated parameters, and drawn in one
+ * colour they are identical lines sharing a band. Every curve is normalised to
+ * its OWN range, so there is no positional cue either: a curve near the top is
+ * not "the high one", it is whichever signal is near its own maximum.
+ */
+describe('several automations on one lane are told apart (#1485)', () => {
+  it('gives each PARAMETER its own curve colour', () => {
+    const m = run([auto({ paramKey: 'cutoff' }), auto({ paramKey: 'pan' })])
+    const styles = m.paths.map((p) => p.style)
+    expect(styles).toHaveLength(2)
+    expect(styles[0]).not.toBe(styles[1])
+  })
+
+  it('draws a caption in ITS OWN curve colour — the only thing tying the two', () => {
+    const m = run([auto({ paramKey: 'cutoff' }), auto({ paramKey: 'pan' })], true)
+    const cutoff = m.texts.find((t) => t.text.startsWith('cutoff'))
+    const pan = m.texts.find((t) => t.text.startsWith('pan'))
+    expect(cutoff, 'the cutoff caption').toBeDefined()
+    expect(pan, 'the pan caption').toBeDefined()
+    // Each caption matches a DRAWN curve, and they do not match each other.
+    expect(m.paths.map((p) => p.style)).toContain(cutoff!.style)
+    expect(m.paths.map((p) => p.style)).toContain(pan!.style)
+    expect(cutoff!.style).not.toBe(pan!.style)
+  })
+
+  it('keeps the theme colour when there is only one curve to tell apart', () => {
+    // The hue exists to disambiguate; with nothing to disambiguate the lane
+    // looks exactly as it did before this change.
+    const m = run([auto({ paramKey: 'cutoff' })])
+    expect(m.paths.map((p) => p.style)).toEqual(['#AUTO'])
+  })
+
+  it('colours a parameter by NAME, not by its position in the lane', () => {
+    // A lane gaining a second automation must not recolour the first, or the
+    // hue would mean "how many curves are here" rather than "which parameter".
+    const first = run([auto({ paramKey: 'pan' }), auto({ paramKey: 'cutoff' })])
+    const swapped = run([auto({ paramKey: 'cutoff' }), auto({ paramKey: 'pan' })])
+    const styleOf = (m: ReturnType<typeof run>, i: number) => m.paths[i].style
+    expect(styleOf(first, 0)).toBe(styleOf(swapped, 1)) // pan
+    expect(styleOf(first, 1)).toBe(styleOf(swapped, 0)) // cutoff
+  })
+})
+
+/**
+ * The sibling defect in the same loop: several parameters too fast to resolve
+ * each filled the SAME rectangle at alpha 0.18, so the alpha compounded and N
+ * parameters rendered darker than one.
+ */
+describe('unresolvable automations do not stack their alpha (#1485)', () => {
+  /** Fast enough that a period spans well under the minimum drawable pixels. */
+  const fast = (paramKey: string) => auto({ paramKey, periodCycles: 0.001 })
+  const bands = (m: ReturnType<typeof run>) => m.fills.filter((f) => f.alpha === 0.18)
+
+  it('covers each band region exactly once, whatever the count', () => {
+    const one = bands(run([fast('cutoff')]))
+    const three = bands(run([fast('cutoff'), fast('pan'), fast('gain')]))
+    expect(one).toHaveLength(1)
+    expect(three).toHaveLength(3)
+    // Same total painted area for 1 and for 3 — the lane's darkness must not
+    // read as an intensity it has no business claiming.
+    const area = (fs: typeof one) => fs.reduce((n, f) => n + f.h, 0)
+    expect(area(three)).toBeCloseTo(area(one), 6)
+  })
+
+  it('gives the slices disjoint vertical ranges', () => {
+    const fs = bands(run([fast('cutoff'), fast('pan'), fast('gain')]))
+      .slice()
+      .sort((a, b) => a.y - b.y)
+    for (let i = 1; i < fs.length; i++) {
+      expect(fs[i].y).toBeGreaterThanOrEqual(fs[i - 1].y + fs[i - 1].h - 1e-6)
+    }
+  })
+
+  it('keeps each unresolvable parameter identifiable by colour', () => {
+    const styles = bands(run([fast('cutoff'), fast('pan')])).map((f) => f.style)
+    expect(new Set(styles).size).toBe(2)
   })
 })

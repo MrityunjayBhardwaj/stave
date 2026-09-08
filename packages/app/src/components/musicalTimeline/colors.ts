@@ -189,3 +189,48 @@ export interface TrackIdentity {
 export function trackIdentity(key: string, customColor?: string): TrackIdentity {
   return { key, name: key, color: customColor ?? colorForTrack(key) }
 }
+
+/**
+ * Automation-curve hues, keyed by PARAMETER (#1485).
+ *
+ * A lane can carry several automated parameters — 47 corpus documents automate
+ * `pan` and 76 automate `cutoff`, and a track doing both is ordinary. Drawn in
+ * one colour they are three identical lines sharing a band, and since every
+ * curve is normalised to its OWN range there is no positional cue either: a
+ * curve near the top of the band is not "the high one", it is whichever signal
+ * happens to be near its own maximum. The stacked bounds captions name three
+ * parameters and tie none of them to a line.
+ *
+ * ⚠ DELIBERATELY NOT `TRACK_PALETTE_32`. Reusing the track palette is the
+ * obvious "reuse the solved problem" move and it collides: an automation curve
+ * is drawn INSIDE a lane, over that lane's own marks, so a `cutoff` curve
+ * landing on a neighbouring track's swatch reads as belonging to that track.
+ * What is genuinely reused is the solved part — `fnv1a32`, a stable string to
+ * slot — over a palette of its own.
+ *
+ * Chosen to stay legible over both the light and dark row fills the timeline
+ * draws, and to be distinguishable from each other at 1.5px stroke width, which
+ * is what a curve is.
+ */
+export const AUTOMATION_PALETTE: readonly string[] = [
+  '#8cc8ff', // blue — the family's original single colour, kept as slot 0
+  '#f0a3c8', // pink
+  '#8ce8b4', // green
+  '#ffd08a', // amber
+  '#c9a8ff', // violet
+  '#6fe3e3', // teal
+  '#ff9e8a', // salmon
+  '#d6e08c', // olive
+]
+
+/**
+ * A parameter's stable curve colour.
+ *
+ * Keyed on the parameter name rather than on its position in the lane, so
+ * `cutoff` is the same colour in every track and across redraws — a lane
+ * gaining a second automation must not recolour the first, or the hue means
+ * "how many curves are here" instead of "which parameter is this".
+ */
+export function colorForAutomation(paramKey: string): string {
+  return AUTOMATION_PALETTE[fnv1a32(paramKey) % AUTOMATION_PALETTE.length]
+}

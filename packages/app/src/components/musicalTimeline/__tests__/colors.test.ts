@@ -9,6 +9,8 @@ import {
   TRACK_PALETTE_32,
   paletteForTrack,
   trackIndexOf,
+  colorForAutomation,
+  AUTOMATION_PALETTE,
 } from '../colors'
 
 describe('trackColorFromStem — drum family (DV-04 / DV-11)', () => {
@@ -131,5 +133,31 @@ describe('20-11 — 32-palette + paletteForTrack + trackIndexOf', () => {
 
   it('trackColorFromStem still works (back-compat shim)', () => {
     expect(trackColorFromStem('bd')).toBe(STEM_DRUMS)
+  })
+})
+
+describe('colorForAutomation — a parameter\'s stable curve colour (#1485)', () => {
+  it('is stable for a given parameter name', () => {
+    expect(colorForAutomation('cutoff')).toBe(colorForAutomation('cutoff'))
+  })
+
+  it('separates the parameters a lane actually carries together', () => {
+    // The measured pairing this exists for: 47 corpus documents automate `pan`
+    // and 76 automate `cutoff`, and a track doing both is ordinary.
+    expect(colorForAutomation('cutoff')).not.toBe(colorForAutomation('pan'))
+    expect(colorForAutomation('gain')).not.toBe(colorForAutomation('cutoff'))
+  })
+
+  it('always returns a colour from the automation palette', () => {
+    for (const k of ['cutoff', 'pan', 'gain', 'room', 'delaytime', 'lpq', 'speed', 'crush', '']) {
+      expect(AUTOMATION_PALETTE, k).toContain(colorForAutomation(k))
+    }
+  })
+
+  it('does NOT borrow the track palette', () => {
+    // A curve is drawn INSIDE a lane, over that lane's own marks: sharing the
+    // track palette lets a curve land on a neighbouring track's swatch and read
+    // as belonging to it.
+    for (const c of AUTOMATION_PALETTE) expect(TRACK_PALETTE_32).not.toContain(c)
   })
 })

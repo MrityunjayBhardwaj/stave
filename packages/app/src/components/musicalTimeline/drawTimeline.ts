@@ -26,6 +26,7 @@ import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
 import { BEATS_PER_BAR, songCycleToXUnclamped, type SongWindow } from './songAxis'
 import type { SignalAutomation } from '@stave/editor'
+import { colorForAutomation } from './colors'
 
 /** The HORIZONTAL view transform + viewport, all in CSS pixels. Vertical
  *  geometry (per-lane top/height, total height) lives in the `LaneLayout`. */
@@ -575,26 +576,54 @@ function drawAutomation(
   const pxPerCycle = toScreenX(1) - toScreenX(0)
 
   ctx.save()
-  ctx.strokeStyle = theme.automationLine
   ctx.lineWidth = 1.5
   ctx.lineJoin = 'round'
-  for (const a of automations) {
-    if (!(a.periodCycles > 0) || !Number.isFinite(a.periodCycles)) continue
 
-    // Too fast to draw cycle-by-cycle at this zoom: state the modulation as a
-    // translucent BAND across the band's height instead of smearing 128 strokes
-    // into a solid block. The band is the honest reading — "this control sweeps
-    // its whole range, faster than this view can resolve" — and it degrades back
-    // into the real curve the moment the user zooms in far enough to see one.
-    if (a.periodCycles * pxPerCycle < AUTOMATION_MIN_PERIOD_PX) {
-      ctx.save()
-      ctx.globalAlpha = 0.18
-      ctx.fillStyle = theme.automationLine
-      ctx.fillRect(x0, top + AUTOMATION_PAD_Y, x1 - x0, bandH)
-      ctx.restore()
-      continue
-    }
+  const drawable = automations.filter(
+    (a) => a.periodCycles > 0 && Number.isFinite(a.periodCycles),
+  )
+  // Too fast to draw cycle-by-cycle at this zoom (see the band comment below).
+  const tooFast = drawable.filter((a) => a.periodCycles * pxPerCycle < AUTOMATION_MIN_PERIOD_PX)
+  const curves = drawable.filter((a) => a.periodCycles * pxPerCycle >= AUTOMATION_MIN_PERIOD_PX)
 
+  /**
+   * The curve's colour, and the same colour its caption gets (#1485).
+   *
+   * With ONE automation there is nothing to disambiguate, so the lane keeps the
+   * theme's own automation colour and looks exactly as it did. The per-parameter
+   * hue appears only when it carries information — which is also why it is keyed
+   * on the parameter and not on position: a lane gaining a second curve must not
+   * recolour the first, or the hue would mean "how many are here" rather than
+   * "which parameter is this".
+   */
+  const colorOf = (a: SignalAutomation): string =>
+    automations.length <= 1 ? theme.automationLine : colorForAutomation(a.paramKey)
+
+  // ── The unresolvable ones, as horizontal SLICES of the band ───────────────
+  // State the modulation as a translucent band instead of smearing 128 strokes
+  // into a solid block. The band is the honest reading — "this control sweeps
+  // its whole range, faster than this view can resolve" — and it degrades back
+  // into the real curve the moment the user zooms in far enough to see one.
+  //
+  // ⚠ ONE SLICE EACH, NOT ONE BAND EACH. Every such parameter used to fill the
+  // SAME rectangle at alpha 0.18, so the alpha compounded and N unresolvable
+  // parameters rendered darker than one — the lane's darkness read as an
+  // intensity it had no business claiming. Slicing removes the overlap (so the
+  // shade is the same whatever N is) and keeps each parameter identifiable,
+  // which redrawing one shared band would have thrown away.
+  if (tooFast.length > 0) {
+    const sliceH = bandH / tooFast.length
+    ctx.save()
+    ctx.globalAlpha = 0.18
+    tooFast.forEach((a, i) => {
+      ctx.fillStyle = colorOf(a)
+      ctx.fillRect(x0, top + AUTOMATION_PAD_Y + i * sliceH, x1 - x0, sliceH)
+    })
+    ctx.restore()
+  }
+
+  for (const a of curves) {
+    ctx.strokeStyle = colorOf(a)
     ctx.beginPath()
     let first = true
     for (let x = x0; x <= x1; x += AUTOMATION_STEP_PX) {
@@ -622,9 +651,13 @@ function drawAutomation(
   if (expanded && bandH >= AUTOMATION_LABEL_MIN_H) {
     ctx.font = AUTOMATION_LABEL_FONT
     ctx.textBaseline = 'top'
-    ctx.fillStyle = theme.automationLine
     let labelY = top + AUTOMATION_PAD_Y
     for (const a of automations) {
+      // THE TIE (#1485): a caption is drawn in its own curve's colour, which is
+      // the only thing linking the two — the curves share a band and each is
+      // normalised to its own range, so neither position nor height can say
+      // which line a name belongs to.
+      ctx.fillStyle = colorOf(a)
       if (labelY + 10 > top + rowHeight) break
       // `ranged` is why this reads honestly: an explicit `.range(lo,hi)` shows the
       // user's own numbers, while a signal's natural polarity is marked `~` so a
