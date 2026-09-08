@@ -19,7 +19,7 @@
  * function, so the draw path can use its own canvas context and a hit-test can
  * use another, while the field arithmetic stays in one place.
  */
-import type { SignalAutomation } from '@stave/editor'
+import type { SignalAutomation, OffsetEdit } from '@stave/editor'
 
 /** 9px monospace, matching the rest of the lane's small type. */
 export const AUTOMATION_LABEL_FONT = '9px ui-monospace, SFMono-Regular, Menlo, monospace'
@@ -188,14 +188,6 @@ export function captionHit(
   return null
 }
 
-/** A replacement over a half-open source range. The shape `applyOffsetEditsToFile`
- *  already takes, so a caption edit travels the path every other edit surface
- *  in this codebase uses. An INSERT is `start === end`. */
-export interface SourceEdit {
-  readonly start: number
-  readonly end: number
-  readonly text: string
-}
 
 /**
  * Turn "the user typed `nextText` into this caption field" into a source edit,
@@ -220,7 +212,7 @@ export interface SourceEdit {
  * unchanged value, an inverted or degenerate range, or an automation whose
  * spans give it nowhere to write.
  */
-export function captionEdit(hit: CaptionHit, nextText: string): SourceEdit | null {
+export function captionEdit(hit: CaptionHit, nextText: string): OffsetEdit | null {
   const { field, row } = hit
   const a = row.automation
   // The parameter name is the shape menu's anchor, not a typed field.
@@ -244,16 +236,20 @@ export function captionEdit(hit: CaptionHit, nextText: string): SourceEdit | nul
   // curve the engine does not play.
   if (!(hi > lo)) return null
 
-  // `String`, never `formatBound` — the document gets the full number, and the
-  // display's rounding stays on the display side of this function.
+  // ⚠ `String`, and DELIBERATELY NOT the house `formatNumber` helper, which
+  // exists for drag handlers whose arithmetic produces float noise. There is no
+  // arithmetic here: one bound is the number the user just typed and the other
+  // is the one already in the document. `formatNumber(0.30001)` is `'0.3'` —
+  // running the untouched bound through it would reintroduce exactly the
+  // rounding (1) exists to keep out.
   const call = `.range(${String(lo)},${String(hi)})`
   const span = a.spans.range
-  if (span) return { start: span.start, end: span.end, text: call }
+  if (span) return { range: [span.start, span.end], text: call }
 
   // See (3): nothing to replace, so append the call to the whole expression.
   const at = a.spans.chainEnd
   if (at === null) return null
-  return { start: at, end: at, text: call }
+  return { range: [at, at], text: call }
 }
 
 /**
@@ -263,9 +259,9 @@ export function captionEdit(hit: CaptionHit, nextText: string): SourceEdit | nul
  * `saw` — which is why this needs only the shape span and touches no argument.
  * Null when the kind is unchanged or the signal carries no source range.
  */
-export function shapeEdit(a: SignalAutomation, nextKind: string): SourceEdit | null {
+export function shapeEdit(a: SignalAutomation, nextKind: string): OffsetEdit | null {
   if (nextKind === a.kind || nextKind.length === 0) return null
   const span = a.spans.shape
   if (!span) return null
-  return { start: span.start, end: span.end, text: nextKind }
+  return { range: [span.start, span.end], text: nextKind }
 }

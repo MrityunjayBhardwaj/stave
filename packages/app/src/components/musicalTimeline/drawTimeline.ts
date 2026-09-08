@@ -26,7 +26,7 @@ import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
 import { BEATS_PER_BAR, songCycleToXUnclamped, type SongWindow } from './songAxis'
 import type { SignalAutomation } from '@stave/editor'
-import { colorForAutomation } from './colors'
+import { automationColorOnLane } from './colors'
 import {
   AUTOMATION_PAD_Y,
   AUTOMATION_LABEL_FONT,
@@ -635,7 +635,7 @@ function drawAutomation(
    * "which parameter is this".
    */
   const colorOf = (a: SignalAutomation): string =>
-    automations.length <= 1 ? theme.automationLine : colorForAutomation(a.paramKey)
+    automationColorOnLane(a.paramKey, automations.length, theme.automationLine)
 
   // ── The unresolvable ones, as horizontal SLICES of the band ───────────────
   // State the modulation as a translucent band instead of smearing 128 strokes

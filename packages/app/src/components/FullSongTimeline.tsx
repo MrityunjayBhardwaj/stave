@@ -23,8 +23,42 @@
 'use client'
 
 import * as React from 'react'
+
+/**
+ * Measure caption text in the caption's own face (#1464 Stage 2).
+ *
+ * The hit-test needs the same widths the canvas drew with, and it runs outside
+ * the draw. One offscreen context, created once and kept, gives exactly that:
+ * the same font string measured by the same engine. `captionHit` takes this as
+ * an argument rather than owning it, so the geometry stays pure and testable
+ * with an arithmetic-legible stand-in.
+ *
+ * Returns 0 if a 2D context is unavailable (jsdom without a canvas shim), which
+ * collapses every field box to zero width — a hit-test that finds nothing rather
+ * than one that finds the wrong thing.
+ */
+let captionMeasureCtx: CanvasRenderingContext2D | null | undefined
+function measureCaption(text: string): number {
+  if (captionMeasureCtx === undefined) {
+    const c = typeof document === 'undefined' ? null : document.createElement('canvas')
+    captionMeasureCtx = c?.getContext('2d') ?? null
+    if (captionMeasureCtx) captionMeasureCtx.font = AUTOMATION_LABEL_FONT
+  }
+  if (!captionMeasureCtx) return 0
+  return captionMeasureCtx.measureText(text).width
+}
+
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { SongAnalysis, PatternIR, HapStream, IREvent } from '@stave/editor'
+import type { SongAnalysis, PatternIR, HapStream, IREvent, OffsetEdit } from '@stave/editor'
+import {
+  captionRows,
+  captionHit,
+  captionEdit,
+  AUTOMATION_LABEL_FONT,
+  type CaptionHit,
+} from './musicalTimeline/automationCaption'
+import { automationColorOnLane } from './musicalTimeline/colors'
+import { DEFAULT_THEME } from './SongTimelineCanvas'
 import {
   structuralWalk,
   wholeWalkWindow,
@@ -203,6 +237,12 @@ export interface FullSongTimelineProps {
    *  the anchor and writes a surgical set-weight edit. Optional — without it the
    *  clips stay read-only (no trim grips). Only real `arrange`/`cat` arms
    *  (`armIndex ≥ 0`) are trimmable; a bare track's implicit clip is not. */
+  /** Edit an automation's bounds from its lane caption (#1464 Stage 2 — the
+   *  range control). Receives a source edit the caption module built and a
+   *  gesture name for the write seam's refusal reporting. Optional — without it
+   *  the captions stay read-only, exactly as Stage 1 left them, and no caption
+   *  claims a pointer. */
+  readonly onEditAutomation?: (edit: OffsetEdit, gesture: string) => void
   readonly onTrimClip?: (req: {
     sourceOffset: number | null
     armIndex: number
@@ -1170,6 +1210,65 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // directly (not `clipAtCycle`): that grabs the LAST clip's edge too (its end is
   // the song end, contained in no clip) and disambiguates a shared boundary to
   // the clip whose edge is nearest. Reads live refs so it's closure-stable.
+  // ── The caption control (#1464 Stage 2) ───────────────────────────────────
+  //
+  // ⚠ THE CAPTION SITS ON PIXELS FOUR OTHER GESTURES ALREADY CLAIM. The
+  // automation band spans the WHOLE lane row, and the caption is drawn at its
+  // top-left — over any clip that reaches x≈4. Today a press there resolves, in
+  // order, to a trim drag (`clipEdgeAt`), a clip select / move (`clipBodyAt`),
+  // or a jump-to-code (#610); a double-press collapses the lane, which is the
+  // one gesture that makes the caption itself disappear. All four are settled
+  // the same way the existing pair already settles: by PRECEDENCE. The caption
+  // is tested first and returns, so nothing downstream ever sees the press.
+  //
+  // The editor is a real DOM input, and that is load-bearing rather than
+  // convenient. The grid takes keyboard focus on every press so its clip
+  // shortcuts work — S splits, ⌘D duplicates, Delete/Backspace deletes. Typing a
+  // number into a canvas-drawn field would leave those live, and BACKSPACE while
+  // retyping a bound would silence a clip. An input takes focus off the grid, so
+  // `handleGridKeyDown` cannot fire at all.
+  const { onEditAutomation } = props
+  const [editingCaption, setEditingCaption] = useState<CaptionHit | null>(null)
+
+  /** The caption field under a client point, or null. X is VIEWPORT-relative and
+   *  Y is CONTENT-relative, because that is how the canvas draws: it is pinned
+   *  left and scrolled in Y, so the caption's x never moves with `scrollLeft`. */
+  const captionAt = React.useCallback(
+    (clientX: number, clientY: number): CaptionHit | null => {
+      if (!onEditAutomation) return null
+      const el = areaRef.current
+      if (!el) return null
+      const rect = el.getBoundingClientRect()
+      const contentY = clientY - rect.top + scrollTopRef.current
+      const laneKey = laneAtY(layoutRef.current, contentY)
+      if (laneKey == null) return null
+      const box = layoutRef.current.boxes.find((b) => b.laneKey === laneKey)
+      const lane = sceneRef.current.lanes.find((l) => l.laneKey === laneKey)
+      if (!box || !lane) return null
+      const rows = captionRows(lane.automations, box.top, box.height, box.expanded)
+      return captionHit(rows, clientX - rect.left, contentY, measureCaption)
+    },
+    [onEditAutomation],
+  )
+
+  /** Commit whatever is in the editor, then close it.
+   *
+   *  ⚠ The edit is BUILT by `captionEdit`, never here — that function is where
+   *  the "unchanged writes nothing", "the rounding cannot escape" and "an
+   *  unspelled leg inserts" rules live, and routing every commit through it is
+   *  what makes them unavoidable rather than remembered. */
+  const commitCaption = React.useCallback(
+    (value: string): void => {
+      const hit = editingCaption
+      setEditingCaption(null)
+      if (!hit || !onEditAutomation) return
+      const edit = captionEdit(hit, value)
+      if (!edit) return
+      onEditAutomation(edit, `automation ${hit.row.automation.paramKey} ${hit.field.kind}`)
+    },
+    [editingCaption, onEditAutomation],
+  )
+
   const clipEdgeAt = React.useCallback(
     (clientX: number, clientY: number): { lane: (typeof sceneRef.current.lanes)[number]; clip: NonNullable<ReturnType<typeof clipAtCycle>> } | null => {
       if (!onTrimClip) return null
@@ -1295,6 +1394,17 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       // keystroke leaks to Monaco / the last-focused control (#488). `preventScroll`
       // so taking focus never yanks the timeline into view mid-gesture.
       areaRef.current?.focus({ preventScroll: true })
+      // #1464 Stage 2 — FIRST, before any clip test. See `captionAt`: these
+      // pixels are contested, and precedence is how this component already
+      // resolves that (the trim test precedes the body test for the same
+      // reason). Returning here is what keeps a caption click from also
+      // selecting a clip, arming the clip shortcuts, or jumping the editor.
+      const caption = captionAt(e.clientX, e.clientY)
+      if (caption) {
+        e.preventDefault()
+        setEditingCaption(caption)
+        return
+      }
       const hit = clipEdgeAt(e.clientX, e.clientY)
       if (!hit) {
         // Not a clip edge. A press on a clip BODY begins a PENDING gesture that
@@ -1358,7 +1468,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       const cw = dragAwareContentWidth(areaRef.current!.getBoundingClientRect().width)
       setTrimEdgeX(songCycleToX(hit.clip.endCycle, songWindow, cw))
     },
-    [clipEdgeAt, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
+    [captionAt, clipEdgeAt, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
   )
 
   const handleGridPointerMove = React.useCallback(
@@ -1998,7 +2108,13 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
           onPointerUp={handleGridPointerUp}
           onPointerCancel={handleGridPointerCancel}
           onKeyDown={handleGridKeyDown}
-          onDoubleClick={(e) => handleExpandAtClientY(e.clientY)}
+          onDoubleClick={(e) => {
+            // A double-click is the natural gesture for "select this number to
+            // retype it", and expanding/collapsing here would remove the very
+            // caption being aimed at — captions are drawn on EXPANDED lanes only.
+            if (captionAt(e.clientX, e.clientY)) return
+            handleExpandAtClientY(e.clientY)
+          }}
         >
           {/* Inner content is contentWidth wide (the scroll spacer for the native
               scrollbar); the canvas sits sticky inside and redraws the visible
@@ -2071,6 +2187,56 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
               )}
               {playheadVisible && (
                 <div data-full-song="playhead" style={{ ...styles.playhead, left: playheadX - scrollLeft }} />
+              )}
+              {/* #1464 Stage 2 — the bounds editor, sitting exactly over the
+                  caption field it replaces. This overlay is the right home for
+                  it: pinned left and scrolled in Y, which is the SAME frame the
+                  caption is drawn and hit-tested in, so `box.x` and `box.y` need
+                  no correction. The overlay is `pointerEvents: none`, so the
+                  input re-enables them for itself alone. */}
+              {editingCaption && (
+                <input
+                  data-full-song="automation-bound"
+                  autoFocus
+                  defaultValue={editingCaption.field.text}
+                  aria-label={`${editingCaption.row.automation.paramKey} ${editingCaption.field.kind === 'lo' ? 'low' : 'high'} bound`}
+                  style={{
+                    ...styles.captionInput,
+                    left: editingCaption.box.x,
+                    top: editingCaption.box.y,
+                    // Room to type a longer number than the one being replaced;
+                    // a field sized to the old text cannot hold `2000` over `20`.
+                    width: Math.max(editingCaption.box.w + 28, 44),
+                    // The SAME rule the canvas painted the caption with, read
+                    // from one place — see `automationColorOnLane`.
+                    color: automationColorOnLane(
+                      editingCaption.row.automation.paramKey,
+                      sceneRef.current.lanes.find(
+                        (l) => l.laneKey === editingCaption.row.automation.trackId,
+                      )?.automations.length ?? 1,
+                      DEFAULT_THEME.automationLine,
+                    ),
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    // The grid's clip shortcuts are out of reach anyway (focus is
+                    // here, not on the grid) — this stops the keystrokes reaching
+                    // any ANCESTOR handler as well, which is a different path.
+                    e.stopPropagation()
+                    if (e.key === 'Escape') {
+                      setEditingCaption(null)
+                      return
+                    }
+                    if (e.key !== 'Enter') return
+                    commitCaption(e.currentTarget.value)
+                  }}
+                  // Committing on blur as well as on Enter: clicking away from a
+                  // half-typed number is the ordinary way people leave a field,
+                  // and `captionEdit` returns null for anything it cannot do
+                  // honestly, so a stray blur writes nothing on its own.
+                  onBlur={(e) => commitCaption(e.currentTarget.value)}
+                />
               )}
               {trimEdgeX != null && (
                 <div data-full-song="trim-edge" style={{ ...styles.trimEdge, left: trimEdgeX - scrollLeft }} />
@@ -2406,6 +2572,19 @@ const styles = {
   // canvas + live overlay (sticky left:0, marginTop:-height set inline). Children
   // are positioned in viewport space (`contentX - scrollLeft`) so they ride the
   // canvas's React-state scroll clock, never the natively-scrolled content.
+  captionInput: {
+    position: 'absolute' as const,
+    pointerEvents: 'auto' as const,
+    font: '9px ui-monospace, SFMono-Regular, Menlo, monospace',
+    padding: 0,
+    margin: 0,
+    height: 12,
+    lineHeight: '12px',
+    border: 'none',
+    borderBottom: '1px solid currentColor',
+    background: 'var(--bg-primary, rgba(0,0,0,0.85))',
+    outline: 'none',
+  },
   marksOverlay: {
     position: 'sticky' as const,
     left: 0,

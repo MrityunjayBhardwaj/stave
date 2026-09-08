@@ -136,7 +136,7 @@ describe('captionEdit — the three things it exists to enforce', () => {
     const a = auto({ lo: 0.30001, hi: 1, spans: RANGED })
     expect(captionText(a)).toBe('cutoff 0.3→1')
     expect(captionEdit(hitOn(a, 'hi'), '2')).toEqual({
-      start: 30, end: 46, text: '.range(0.30001,2)',
+      range: [30, 46], text: '.range(0.30001,2)',
     })
   })
 
@@ -153,7 +153,7 @@ describe('captionEdit — the three things it exists to enforce', () => {
     const a = auto({ paramKey: 'pan', lo: 0, hi: 1, ranged: false,
       spans: { shape: null, rate: null, range: null, chainEnd: 21 } })
     expect(captionEdit(hitOn(a, 'hi'), '0.8')).toEqual({
-      start: 21, end: 21, text: '.range(0,0.8)',
+      range: [21, 21], text: '.range(0,0.8)',
     })
   })
 
@@ -183,7 +183,7 @@ describe('captionEdit — the three things it exists to enforce', () => {
 describe('shapeEdit — replacing the signal identifier is the whole of it', () => {
   it('rewrites just the identifier', () => {
     const a = auto({ kind: 'sine', spans: { shape: { start: 20, end: 24 }, rate: null, range: null, chainEnd: 40 } })
-    expect(shapeEdit(a, 'saw')).toEqual({ start: 20, end: 24, text: 'saw' })
+    expect(shapeEdit(a, 'saw')).toEqual({ range: [20, 24], text: 'saw' })
   })
 
   it('writes nothing for the kind it already is', () => {
