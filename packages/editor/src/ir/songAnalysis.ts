@@ -507,14 +507,53 @@ export interface SignalDimensions {
   readonly periods: readonly number[]
 }
 
-/** Read `SignalDimensions` off a document's IR. The caller holds the IR;
- *  `analyzeSong` only ever sees events, so this is how the fact reaches it. */
+/**
+ * Read `SignalDimensions` off a document's IR. The caller holds the IR;
+ * `analyzeSong` only ever sees events, so this is how the fact reaches it.
+ *
+ * ⚠ MUTED TRACKS ARE EXCLUDED FROM THE READ (#1488), and the fold is why this
+ * is not a nicety. The exclusion half could afford to be sloppy here — a muted
+ * track emits no events, so stripping a key nothing carries changes no
+ * fingerprint — but the fold is pure arithmetic on the IR and never consults
+ * events at all. Measured on `0/-9BuEqUq3uzT`: its two audible tracks modulate
+ * only `gain`, at period 1, while a SILENT `_$:` block carries
+ * `.lpq(sine.range(2,10).slow(32))`. Reading the whole document folded that
+ * document's 2-cycle structure up to 32 — a 16x overstatement sourced entirely
+ * from a track that makes no sound, and offered to the user as a bounce length.
+ *
+ * Only the TOP level is scoped, which is the level muting exists at: a `_$:`
+ * silences a whole statement, and nothing inside a sounding track is muted
+ * independently.
+ */
 export function signalDimensionsOf(ir: PatternIR | null | undefined): SignalDimensions {
+  const audible = audibleTracks(ir)
   const periods: number[] = []
-  for (const a of signalAutomations(ir)) {
-    if (hasTruePeriod(a.kind) && a.periodCycles > 0) periods.push(a.periodCycles)
+  const keys = new Set<string>()
+  for (const t of audible) {
+    for (const a of signalAutomations(t)) {
+      if (hasTruePeriod(a.kind) && a.periodCycles > 0) periods.push(a.periodCycles)
+    }
+    for (const k of signalCarryingParamKeys(t)) keys.add(k)
   }
-  return { keys: signalCarryingParamKeys(ir), periods }
+  return { keys, periods }
+}
+
+/**
+ * The document's sounding top-level nodes.
+ *
+ * A document is a `Stack` of `Track`s, a single `Track`, or a bare expression
+ * with no `Track` wrapper at all. Only the first two can carry a mute marker —
+ * muting is a prefix on a LABEL, and a bare statement has no label to prefix
+ * (`trackOrder.ts` measured that across every spelling) — so an unwrapped
+ * document is returned whole rather than treated as unmuted-by-default, which
+ * would be the same answer reached by a weaker argument.
+ */
+function audibleTracks(ir: PatternIR | null | undefined): readonly PatternIR[] {
+  if (!ir) return []
+  const roots: readonly PatternIR[] = ir.tag === 'Stack' ? ir.tracks : [ir]
+  const tracks = roots.filter((n): n is PatternIR => n?.tag === 'Track')
+  if (tracks.length === 0) return [ir]
+  return tracks.filter((t) => t.tag !== 'Track' || t.muted !== true)
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   analyzeEvents,
   analyzeSong,
   displayPeriodRule,
+  signalDimensionsOf,
   laneKeyOf,
 } from '../songAnalysis'
 
@@ -529,5 +530,56 @@ describe('displayPeriodRule — source-informed exclusion + fold (#1465)', () =>
   it('does nothing when the document declares no modulated control', () => {
     const events = modulate(structural('bd', 1))
     expect(displayPeriodRule(events, CAP, CAP, false, dims([4], []))).toBeNull()
+  })
+})
+
+/**
+ * #1488 — a track that makes no sound must not inform the song's length. The
+ * exclusion half could survive being sloppy here (a muted track emits no
+ * events, so stripping a key nothing carries is a no-op); the FOLD cannot,
+ * because it is arithmetic on the IR and never looks at events.
+ */
+describe('signalDimensionsOf — muted tracks do not inform the period (#1488)', () => {
+  const read = (src: string) => signalDimensionsOf(parseStrudel(src) as never)
+
+  it('reads an audible track', () => {
+    const d = read('$: s("bd*4").gain(sine.slow(4))')
+    expect([...d.keys]).toEqual(['gain'])
+    expect(d.periods).toEqual([4])
+  })
+
+  it('reads NOTHING from the same track once it is muted', () => {
+    const d = read('_$: s("bd*4").gain(sine.slow(4))')
+    expect([...d.keys]).toEqual([])
+    expect(d.periods).toEqual([])
+  })
+
+  it('the measured case: a silent LFO cannot lengthen an audible song', () => {
+    // `0/-9BuEqUq3uzT` in miniature. Before this scoping the muted `.lpq` at
+    // period 32 folded the whole document to 32 cycles; its audible content
+    // repeats every cycle.
+    const d = read([
+      '$: s("bd*4").gain(sine)',
+      '_$: s("hh*8").lpq(sine.range(2,10).slow(32))',
+    ].join('\n'))
+    expect([...d.keys]).toEqual(['gain'])
+    expect(d.periods).toEqual([1])
+  })
+
+  it('a bare expression has no label, so it cannot be muted and is read whole', () => {
+    // Muting is a prefix ON a label; a statement with none has nothing to
+    // prefix. Returning it unread would silently drop every unwrapped document.
+    const d = read('s("bd*4").gain(sine.slow(2))')
+    expect([...d.keys]).toEqual(['gain'])
+    expect(d.periods).toEqual([2])
+  })
+
+  it('keeps a named track and drops only the muted one beside it', () => {
+    const d = read([
+      'drums: s("bd*4").gain(sine.slow(2))',
+      '_bass: s("e1").cutoff(sine.slow(8))',
+    ].join('\n'))
+    expect([...d.keys]).toEqual(['gain'])
+    expect(d.periods).toEqual([2])
   })
 })

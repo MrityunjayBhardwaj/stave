@@ -127,6 +127,27 @@ export type PatternIR =
       body: PatternIR
       loc?: SourceLocation[]                     // $: line range OR .p() call-site range OR undefined (synthetic d1)
       userMethod?: string                        // 'p' if from .p(); undefined if synthetic from $: or single-expression
+      /**
+       * The `_` mute prefix on the statement's label (`_$:`, `_drums:`), #1488.
+       *
+       * ⚠ NOT identity, and it must never become identity — `trackId.ts` strips
+       * the marker before deriving `trackId` precisely so a muted track keeps
+       * its lane, and that stays true. This records the fact SEPARATELY, for
+       * consumers that legitimately need to know whether a track sounds.
+       *
+       * It exists because the fact was otherwise recoverable only from the
+       * SOURCE, by reading the character at `loc[0].start` — so every consumer
+       * needing it had to be handed the document text as well as its IR. The
+       * period rule (`signalDimensionsOf`) is the one that made that untenable:
+       * it folds a modulating signal's rate into the song's length, which is
+       * arithmetic on the IR alone, so a silent track's LFO was lengthening
+       * audible songs.
+       *
+       * ⚠ ABSENT rather than `false` when a track is not muted, deliberately:
+       * an unmuted `Track` serialises byte-identically to before this field
+       * existed. Read it as `=== true`, never as a required boolean.
+       */
+      muted?: boolean
     }   // Phase 20-11 — Track tag (musician-track-identity wrapper; PV35 + PV37 model extension)
   | { tag: 'Loop';   body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
   | {
@@ -300,8 +321,12 @@ export const IR = {
     trackId: string,
     body: PatternIR,
     meta?: TagMeta,
+    /** `_$:` / `_name:` — see the `muted` field on the Track node (#1488).
+     *  Spread in only when true, so an unmuted track is byte-identical to
+     *  what this builder produced before the field existed. */
+    muted?: boolean,
   ): PatternIR =>
-    attachMeta({ tag: 'Track', trackId, body }, meta),
+    attachMeta({ tag: 'Track', trackId, body, ...(muted === true ? { muted: true } : {}) }, meta),
   ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Ramp', param, from, to, cycles, body }, meta),
   fast: (factor: number, body: PatternIR, meta?: TagMeta): PatternIR =>

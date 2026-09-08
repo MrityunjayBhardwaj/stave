@@ -102,8 +102,8 @@
     "lanes": 7
   },
   "0/-9BuEqUq3uzT": {
-    "period": 32,
-    "span": 32,
+    "period": 2,
+    "span": 2,
     "reachedCap": false,
     "lanes": 2
   },

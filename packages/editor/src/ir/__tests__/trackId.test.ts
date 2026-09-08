@@ -7,7 +7,7 @@
  * same way the DISPLAY deriver (`labelAtOffset`) already does.
  */
 import { describe, it, expect } from 'vitest'
-import { trackIdFromLabel } from '../trackId'
+import { trackIdFromLabel, isMutedLabel } from '../trackId'
 import { parseStrudel } from '../parseStrudel'
 import type { PatternIR } from '../PatternIR'
 
@@ -48,5 +48,33 @@ describe('parseStrudel — muted tracks keep their lane (#737 regression)', () =
 
   it('mixed muted/unmuted anon stay in their positional slots', () => {
     expect(trackIds(parseStrudel('$: s("bd")\n_$: s("hh")\n$: s("cp")'))).toEqual(['d1', 'd2', 'd3'])
+  })
+})
+
+describe('isMutedLabel — the other half of the `_` prefix (#1488)', () => {
+  it('reads the mute marker on both label spellings', () => {
+    expect(isMutedLabel('_$')).toBe(true)
+    expect(isMutedLabel('_drums')).toBe(true)
+  })
+
+  it('is false for an unmuted label', () => {
+    expect(isMutedLabel('$')).toBe(false)
+    expect(isMutedLabel('drums')).toBe(false)
+  })
+
+  it('is false — not unknown — for a statement with NO label', () => {
+    // Muting is a prefix ON a label, so a bare `s("bd*4")` has nothing to
+    // prefix and cannot be muted. Treating absence as unknown would make every
+    // unwrapped document unreadable to the period rule.
+    expect(isMutedLabel(undefined)).toBe(false)
+  })
+
+  it('agrees with the identity strip: same marker, opposite halves', () => {
+    // `trackIdFromLabel` throws the marker away so a muted track keeps its
+    // lane; this reads it. The two must never disagree about what a marker is.
+    expect(trackIdFromLabel('_drums', 0)).toBe('drums')
+    expect(isMutedLabel('_drums')).toBe(true)
+    expect(trackIdFromLabel('_$', 2)).toBe('d3')
+    expect(isMutedLabel('_$')).toBe(true)
   })
 })

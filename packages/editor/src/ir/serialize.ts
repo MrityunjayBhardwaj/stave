@@ -283,6 +283,13 @@ function validateNode(raw: unknown, path: string): PatternIR {
       }
       if (Array.isArray(node.loc)) out.loc = node.loc as SourceLocation[]
       if (typeof node.userMethod === 'string') out.userMethod = node.userMethod
+      // #1488 — the mute flag is exactly the trap this case's own comment
+      // warns about: `patternToJSON` is a plain stringify and emits it, while
+      // this rebuilds the node field by field, so without this line a document
+      // would lose its muting on save-and-reload and the period rule would go
+      // back to folding silent tracks into the song's length. Written as
+      // `=== true` so an absent flag stays absent rather than becoming `false`.
+      if (node.muted === true) out.muted = true
       return out
     }
 

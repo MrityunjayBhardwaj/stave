@@ -1,5 +1,5 @@
-import { I as IREvent, a as IRPattern, P as PatternIR, S as SourceLocation, L as LiveCodingEngine, E as EngineComponents, H as HapEvent, b as HapStream, c as PatternScheduler, V as VizDescriptor, d as VizRenderer, e as VizOptions, f as P5SketchFactory, g as VizQualityLevel, h as StreamingComponent, A as AudioComponent, Q as QueryableComponent, i as InlineVizComponent, j as VizRendererSource } from './vizConfig-Ihlmzllt.js';
-export { D as DEFAULT_VIZ_CONFIG, k as DEFAULT_VIZ_QUALITY, l as IR, m as IRComponent, n as PlayParams, o as VizConfig, p as VizQualitySettings, q as VizRefs, W as WorkerVizConfig, r as createVizConfig, s as deriveVizQuality, t as getVizConfig, u as setVizConfig, v as updateVizConfig } from './vizConfig-Ihlmzllt.js';
+import { I as IREvent, a as IRPattern, P as PatternIR, S as SourceLocation, L as LiveCodingEngine, E as EngineComponents, H as HapEvent, b as HapStream, c as PatternScheduler, V as VizDescriptor, d as VizRenderer, e as VizOptions, f as P5SketchFactory, g as VizQualityLevel, h as StreamingComponent, A as AudioComponent, Q as QueryableComponent, i as InlineVizComponent, j as VizRendererSource } from './vizConfig-yFweRUIY.js';
+export { D as DEFAULT_VIZ_CONFIG, k as DEFAULT_VIZ_QUALITY, l as IR, m as IRComponent, n as PlayParams, o as VizConfig, p as VizQualitySettings, q as VizRefs, W as WorkerVizConfig, r as createVizConfig, s as deriveVizQuality, t as getVizConfig, u as setVizConfig, v as updateVizConfig } from './vizConfig-yFweRUIY.js';
 import * as react_jsx_runtime from 'react/jsx-runtime';
 import * as React from 'react';
 import React__default, { ReactNode } from 'react';
@@ -445,8 +445,24 @@ interface SignalDimensions {
      *  that comes back", which is a different answer from "not modulated". */
     readonly periods: readonly number[];
 }
-/** Read `SignalDimensions` off a document's IR. The caller holds the IR;
- *  `analyzeSong` only ever sees events, so this is how the fact reaches it. */
+/**
+ * Read `SignalDimensions` off a document's IR. The caller holds the IR;
+ * `analyzeSong` only ever sees events, so this is how the fact reaches it.
+ *
+ * ⚠ MUTED TRACKS ARE EXCLUDED FROM THE READ (#1488), and the fold is why this
+ * is not a nicety. The exclusion half could afford to be sloppy here — a muted
+ * track emits no events, so stripping a key nothing carries changes no
+ * fingerprint — but the fold is pure arithmetic on the IR and never consults
+ * events at all. Measured on `0/-9BuEqUq3uzT`: its two audible tracks modulate
+ * only `gain`, at period 1, while a SILENT `_$:` block carries
+ * `.lpq(sine.range(2,10).slow(32))`. Reading the whole document folded that
+ * document's 2-cycle structure up to 32 — a 16x overstatement sourced entirely
+ * from a track that makes no sound, and offered to the user as a bounce length.
+ *
+ * Only the TOP level is scoped, which is the level muting exists at: a `_$:`
+ * silences a whole statement, and nothing inside a sounding track is muted
+ * independently.
+ */
 declare function signalDimensionsOf(ir: PatternIR | null | undefined): SignalDimensions;
 /**
  * Partition `[0, horizon)` into contiguous sections, cutting wherever the set

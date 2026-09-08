@@ -43,7 +43,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hasCorpusArchive, sweepCorpus } from './songPeriodSweep'
+import { hasCorpusArchive, sweepCorpus, documentContext } from './songPeriodSweep'
+import { loadCorpus } from '../../../editor/src/visualEdit/miniSource/__tests__/evalHarness'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 /**
@@ -94,6 +95,23 @@ describe('Song display period — source-informed exclusion + fold (#1465)', () 
         }
       }
 
+      /**
+       * THE PROPERTY THE FOLD EXISTS TO PROVIDE, checked rather than described:
+       * a recovered period should be a whole number of every AUDIBLE periodic
+       * signal's period, so a bounce of it contains whole LFO cycles. The one
+       * legitimate exception is a fold that would exceed the cap, where
+       * `foldWithSignalPeriods` deliberately keeps the structural span.
+       */
+      const codeOf = new Map((await loadCorpus()).map((d) => [d.name, d.code]))
+      const incommensurate: string[] = []
+      let commensurate = 0
+      for (const r of recovered) {
+        const periods = documentContext(r.name, codeOf.get(r.name) ?? '').signals.periods
+        const off = periods.filter((q) => Math.abs(r.to / q - Math.round(r.to / q)) > 1e-9)
+        if (off.length === 0) commensurate++
+        else incommensurate.push(`${r.name}:${r.to}c/[${off.join(',')}]`)
+      }
+
       const aperiodicBefore = Object.values(base).filter((b) => b.period === null && b.reachedCap).length
       const hist = new Map<number, number>()
       for (const r of recovered) hist.set(r.to, (hist.get(r.to) ?? 0) + 1)
@@ -113,14 +131,16 @@ describe('Song display period — source-informed exclusion + fold (#1465)', () 
           `          periods destroyed . ${brokeAPeriod.length}`,
           `          lengthened ........ ${lengthened.length}`,
           '',
-          `  WHAT THE FOLD IS FOR, measured per document when this shipped:`,
-          `    9 modulated only by noise (rand/perlin) — no fold exists, and the`,
-          `      structural span is the only answer available;`,
-          `    4 already landed on a multiple of every LFO period;`,
-          `    4 folded UP to the period the audio actually repeats at`,
-          `      (2c->32c, 8c->40c, 12c->60c, 12c->96c);`,
-          `    2 fold past the cap (792c and 1801800c) and keep the structural`,
-          `      span — see \`foldWithSignalPeriods\`, which argues that choice.`,
+          `  COMMENSURATE with every audible periodic signal ... ${commensurate}`,
+          `    incommensurate, i.e. the honest fold exceeded the cap  ${incommensurate.length}   ${incommensurate.join(' ')}`,
+          '',
+          `  Three documents fold UP to a period their audio honours rather than`,
+          `  to their bare structural span: 8c->40c, 12c->60c, 12c->96c.`,
+          '',
+          `  ⚠ A FOURTH used to be here (2c->32c) and was WRONG. That fold came`,
+          `  entirely from \`.lpq(sine.slow(32))\` inside a MUTED track, which`,
+          `  sounds nothing — #1488. Scoping the read to audible tracks returned`,
+          `  that document to 2c, its real audible period, and moved no other.`,
           '',
           `  rules already measured on this corpus:`,
           `    drop params 6 · params+gain 0 · gain alone 14 · #1104 abstention 20`,
@@ -134,6 +154,13 @@ describe('Song display period — source-informed exclusion + fold (#1465)', () 
       expect(brokeAPeriod, `destroyed a period: ${brokeAPeriod.join(', ')}`).toEqual([])
       expect(lengthened, `lengthened a period, which this rule cannot do: ${lengthened.join(', ')}`).toEqual([])
       expect(recovered.length, 'the shipped rule no longer recovers what it shipped recovering').toBe(RECOVERED)
+      // Every incommensurate case must be one the cap explains. Two documents
+      // fold to 792c and 1801800c; anything else here is the fold failing at
+      // the one job it has.
+      expect(
+        incommensurate.length,
+        `a recovered period is not a whole number of its own audible LFO periods: ${incommensurate.join(', ')}`,
+      ).toBeLessThanOrEqual(2)
       expect(
         recovered.filter((r) => r.lanes <= 1).length,
         'the single-lane recoveries are the ones nothing else can reach — losing them is losing the reason this rule exists',

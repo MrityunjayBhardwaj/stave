@@ -140,7 +140,7 @@ var IR = {
   cycle: /* @__PURE__ */ __name((...items) => ({ tag: "Cycle", items }), "cycle"),
   when: /* @__PURE__ */ __name((gate, body, meta) => attachMeta({ tag: "When", gate, body }, meta), "when"),
   param: /* @__PURE__ */ __name((key2, value, rawArgs, body, meta) => attachMeta({ tag: "Param", key: key2, value, rawArgs, body }, meta), "param"),
-  track: /* @__PURE__ */ __name((trackId, body, meta) => attachMeta({ tag: "Track", trackId, body }, meta), "track"),
+  track: /* @__PURE__ */ __name((trackId, body, meta, muted3) => attachMeta({ tag: "Track", trackId, body, ...muted3 === true ? { muted: true } : {} }, meta), "track"),
   ramp: /* @__PURE__ */ __name((param, from, to, cycles, body, meta) => attachMeta({ tag: "Ramp", param, from, to, cycles, body }, meta), "ramp"),
   fast: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Fast", factor, body }, meta), "fast"),
   slow: /* @__PURE__ */ __name((factor, body, meta) => attachMeta({ tag: "Slow", factor, body }, meta), "slow"),
@@ -1191,13 +1191,26 @@ function spanCoversEveryLane(events, period) {
 }
 __name(spanCoversEveryLane, "spanCoversEveryLane");
 function signalDimensionsOf(ir) {
+  const audible = audibleTracks(ir);
   const periods = [];
-  for (const a of signalAutomations(ir)) {
-    if (hasTruePeriod(a.kind) && a.periodCycles > 0) periods.push(a.periodCycles);
+  const keys = /* @__PURE__ */ new Set();
+  for (const t of audible) {
+    for (const a of signalAutomations(t)) {
+      if (hasTruePeriod(a.kind) && a.periodCycles > 0) periods.push(a.periodCycles);
+    }
+    for (const k of signalCarryingParamKeys(t)) keys.add(k);
   }
-  return { keys: signalCarryingParamKeys(ir), periods };
+  return { keys, periods };
 }
 __name(signalDimensionsOf, "signalDimensionsOf");
+function audibleTracks(ir) {
+  if (!ir) return [];
+  const roots = ir.tag === "Stack" ? ir.tracks : [ir];
+  const tracks = roots.filter((n) => n?.tag === "Track");
+  if (tracks.length === 0) return [ir];
+  return tracks.filter((t) => t.tag !== "Track" || t.muted !== true);
+}
+__name(audibleTracks, "audibleTracks");
 function withoutKeys(ev, keys) {
   if (keys.size === 0) return ev;
   const rec = ev;
@@ -1726,6 +1739,7 @@ function validateNode(raw, path) {
       };
       if (Array.isArray(node.loc)) out.loc = node.loc;
       if (typeof node.userMethod === "string") out.userMethod = node.userMethod;
+      if (node.muted === true) out.muted = true;
       return out;
     }
     case "Code": {
@@ -2051,6 +2065,10 @@ function trackIdFromLabel(label, index) {
   return bare && bare !== "$" ? bare : `d${index + 1}`;
 }
 __name(trackIdFromLabel, "trackIdFromLabel");
+function isMutedLabel(label) {
+  return label !== void 0 && label.startsWith("_");
+}
+__name(isMutedLabel, "isMutedLabel");
 
 // src/ir/statementHeads.ts
 var NON_TRACK_HEADS = /* @__PURE__ */ new Set([
@@ -2426,7 +2444,7 @@ function parseStrudel(code, _opts) {
       const trackId0 = trackIdFromLabel(t.label, 0);
       return IR.track(trackId0, body, {
         loc: [{ start: t.dollarStart, end: t.end }]
-      });
+      }, isMutedLabel(t.label));
     }
     return IR.stack(
       ...tracks.map((t, i) => {
@@ -2434,7 +2452,7 @@ function parseStrudel(code, _opts) {
         const trackId = trackIdFromLabel(t.label, i);
         return IR.track(trackId, body, {
           loc: [{ start: t.dollarStart, end: t.end }]
-        });
+        }, isMutedLabel(t.label));
       })
     );
   } catch {
@@ -3873,14 +3891,14 @@ function runChainAppliedStage(input) {
         const armLoc = armSourceSpan(applied);
         const meta = tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0 ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] } : armLoc !== void 0 ? { loc: [armLoc] } : void 0;
         const trackId = trackIdFromLabel(tMeta.trackLabel, i);
-        return IR.track(trackId, applied, meta);
+        return IR.track(trackId, applied, meta, isMutedLabel(tMeta.trackLabel));
       })
     );
   }
   const sMeta = input;
   const singleTrackId = trackIdFromLabel(sMeta.trackLabel, 0);
   const singleMeta = sMeta.dollarStart !== void 0 && sMeta.dollarEnd !== void 0 ? { loc: [{ start: sMeta.dollarStart, end: sMeta.dollarEnd }] } : void 0;
-  return IR.track(singleTrackId, applyOnTrack(input), singleMeta);
+  return IR.track(singleTrackId, applyOnTrack(input), singleMeta, isMutedLabel(sMeta.trackLabel));
 }
 __name(runChainAppliedStage, "runChainAppliedStage");
 function applyOnTrack(node) {
