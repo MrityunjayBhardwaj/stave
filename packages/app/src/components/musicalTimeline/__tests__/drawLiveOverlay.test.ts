@@ -283,7 +283,7 @@ describe('a lit mark over a waveform is outlined, not covered (#1508)', () => {
     expect(glow.h - glow.lineWidth).toBeCloseTo(base.h, 5)
   })
 
-  it('the core is a hairline on the mark\'s own border', () => {
+  it('the core is a hairline hugging the mark from OUTSIDE', () => {
     const scene = sceneFixture()
     const layout = layoutFor(scene)
     const base = baseRectFor(scene, layout)
@@ -292,10 +292,36 @@ describe('a lit mark over a waveform is outlined, not covered (#1508)', () => {
     const core = strokes[1]
     expect(core.style).toBe(THEME.lit)
     expect(core.lineWidth).toBe(1)
-    // Half-pixel offsets: the stroke lands ON a pixel row instead of straddling
-    // two at half coverage. So it covers the mark's outermost pixel ring only.
-    expect(core.x).toBeCloseTo(base.x + 0.5, 5)
-    expect(core.w).toBeCloseTo(base.w - 1, 5)
+    // The ring's INNER edge is its path plus half the line width, and that must
+    // land exactly ON the mark's bounds — meaning the ink occupies the pixel
+    // OUTSIDE and none of the interior. A border drawn on the mark instead would
+    // cover the outermost row, which is where a full-scale peak reaches.
+    expect(core.x + core.lineWidth / 2).toBeCloseTo(base.x, 5)
+    expect(core.y + core.lineWidth / 2).toBeCloseTo(base.y, 5)
+    expect(core.w - core.lineWidth).toBeCloseTo(base.w, 5)
+    expect(core.h - core.lineWidth).toBeCloseTo(base.h, 5)
+  })
+
+  it('at the DEFAULT row height the shape keeps every row it has', () => {
+    // The gate admits a 7px mark, so the default is the size that actually has
+    // to work — a fix verified only on a deliberately tall row would hide a
+    // border eating 2 of 7 rows. 25 is the untouched row-height default.
+    const scene = sceneFixture()
+    const layout = computeLaneLayout(scene.lanes, new Set(), 25, 96)
+    const band = laneMarkBands(scene.lanes[0], layout.boxes[0])[0]
+    const r = markRect(scene.lanes[0].notes[0], band, 1000, 4000, 0, 4, (c) => c * 1000)
+    expect(r).not.toBeNull()
+    expect(r!.h).toBeGreaterThanOrEqual(MIN_WAVEFORM_H) // precondition: it DOES draw
+    const { ctx, rects, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layout, 1.2, SIG, THEME, waveformsFor('saw', 1))
+    expect(rects.length).toBe(0)
+    // Every stroke's ink lies outside the mark: inner edge at or beyond bounds.
+    for (const st of strokes) {
+      expect(st.x + st.lineWidth / 2).toBeLessThanOrEqual(r!.x + 1e-9)
+      expect(st.y + st.lineWidth / 2).toBeLessThanOrEqual(r!.y + 1e-9)
+      expect(st.w - st.lineWidth).toBeGreaterThanOrEqual(r!.w - 1e-9)
+      expect(st.h - st.lineWidth).toBeGreaterThanOrEqual(r!.h - 1e-9)
+    }
   })
 
   it('a sample that has not decoded yet lights the old way', () => {

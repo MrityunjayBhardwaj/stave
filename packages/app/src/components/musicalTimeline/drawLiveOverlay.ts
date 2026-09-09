@@ -236,13 +236,18 @@ function drawLitMark(
     ctx.globalAlpha = glowAlpha
     ctx.lineWidth = glowPad
     ctx.strokeRect(r.x - glowPad / 2, r.y - glowPad / 2, r.w + glowPad, r.h + glowPad)
-    // The core as the mark's own 1px border. The half-pixel offsets land the
-    // stroke ON a pixel row instead of straddling two at half coverage, which
-    // is what makes a thin border read as a border rather than a smudge.
+    // The core as a 1px ring hugging the mark from OUTSIDE, not a border drawn
+    // on it. A waveform column is centred on the mark's middle with half-height
+    // r.h/2, so a full-scale peak reaches the mark's very edges — a border ON
+    // the mark covers the loudest content it exists to reveal. At the default
+    // row height that is the outer 2 of 7 rows, 29% of the amplitude range.
+    // Sitting one pixel out keeps the whole interior for the shape at every
+    // size. The half-pixel offsets land the stroke ON a pixel row rather than
+    // straddling two at half coverage.
     ctx.strokeStyle = theme.lit
     ctx.globalAlpha = coreAlpha
     ctx.lineWidth = 1
-    ctx.strokeRect(r.x + 0.5, r.y + 0.5, Math.max(0, r.w - 1), Math.max(0, r.h - 1))
+    ctx.strokeRect(r.x - 0.5, r.y - 0.5, r.w + 1, r.h + 1)
     ctx.globalAlpha = 1
     return
   }
