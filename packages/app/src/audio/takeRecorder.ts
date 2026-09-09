@@ -55,8 +55,6 @@ export interface ActiveRecording {
    * because a double-click on a stop button should not be an error.
    */
   stop(): Promise<Blob>;
-  /** True until `stop` has been called. */
-  isRecording(): boolean;
 }
 
 /**
@@ -80,14 +78,6 @@ function classifyGumError(err: unknown): RecordStartFailure {
   return "unavailable";
 }
 
-/** Injectable edges, so the whole path is drivable without a real microphone. */
-export interface TakeRecorderDeps {
-  /** Defaults to `navigator.mediaDevices.getUserMedia`. */
-  readonly getStream?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-  /** Defaults to the global `MediaRecorder`. */
-  readonly createRecorder?: (stream: MediaStream) => MediaRecorder;
-}
-
 /**
  * Begin recording from the default audio input.
  *
@@ -96,30 +86,28 @@ export interface TakeRecorderDeps {
  * browser cannot" — three cases that need three different things said to the
  * user, and which a single "recording failed" would flatten.
  */
-export async function startRecording(
-  deps: TakeRecorderDeps = {},
-): Promise<ActiveRecording> {
-  const getStream =
-    deps.getStream ??
-    (typeof navigator !== "undefined" && navigator.mediaDevices
-      ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
-      : undefined);
-  const createRecorder =
-    deps.createRecorder ??
-    (typeof MediaRecorder !== "undefined" ? (s: MediaStream) => new MediaRecorder(s) : undefined);
-
-  if (!getStream || !createRecorder) throw new RecordStartError("unsupported");
+export async function startRecording(): Promise<ActiveRecording> {
+  // No injection seam here, deliberately. One was written and then removed: the
+  // browser spec drives the REAL `getUserMedia` against Chromium's fake capture
+  // device, which is a strictly better seam — it exercises the actual API
+  // rather than a stand-in — and injected alternatives would have been dead
+  // branches nothing ever took.
+  const canCapture =
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof MediaRecorder !== "undefined";
+  if (!canCapture) throw new RecordStartError("unsupported");
 
   let stream: MediaStream;
   try {
-    stream = await getStream({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
     throw new RecordStartError(classifyGumError(err), err);
   }
 
   let recorder: MediaRecorder;
   try {
-    recorder = createRecorder(stream);
+    recorder = new MediaRecorder(stream);
   } catch (err) {
     // The stream opened but nothing can encode it. Release the microphone
     // rather than leaving it held by a recording that never started.
@@ -147,7 +135,6 @@ export async function startRecording(
 
   let stopped = false;
   return {
-    isRecording: () => !stopped,
     async stop() {
       if (!stopped) {
         stopped = true;
