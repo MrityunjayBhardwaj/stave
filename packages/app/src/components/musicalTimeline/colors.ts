@@ -234,3 +234,23 @@ export const AUTOMATION_PALETTE: readonly string[] = [
 export function colorForAutomation(paramKey: string): string {
   return AUTOMATION_PALETTE[fnv1a32(paramKey) % AUTOMATION_PALETTE.length]
 }
+
+/**
+ * The colour one automation takes ON ITS LANE — the palette hue when the lane
+ * carries several, the theme's own automation colour when it carries one.
+ *
+ * ⚠ THE RULE LIVES HERE BECAUSE IT NOW HAS TWO READERS. The curve and its
+ * caption are drawn by `drawTimeline`; #1464 Stage 2 draws an input over that
+ * caption, and the input must take the same colour or the tie between a bound
+ * and its curve breaks for exactly the lanes the hue exists to disambiguate.
+ * With ONE automation there is nothing to disambiguate, so the lane keeps the
+ * theme colour and looks as it always did — and the count, not the position, is
+ * what decides, so a lane gaining a second curve does not recolour the first.
+ */
+export function automationColorOnLane(
+  paramKey: string,
+  laneAutomationCount: number,
+  singleColor: string,
+): string {
+  return laneAutomationCount <= 1 ? singleColor : colorForAutomation(paramKey)
+}

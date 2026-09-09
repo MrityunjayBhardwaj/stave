@@ -51,6 +51,9 @@ export type WriteSource =
   | 'transport'
   | 'mixer'
   | 'rename'
+  // #1464 Stage 2 — the Song Timeline's automation caption (a bound or a signal
+  // kind edited in place on the lane).
+  | 'automation'
 
 /** A single replacement, addressed by absolute pre-edit doc offsets. */
 export interface OffsetEdit {

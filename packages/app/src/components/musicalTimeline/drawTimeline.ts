@@ -26,7 +26,13 @@ import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
 import { BEATS_PER_BAR, songCycleToXUnclamped, type SongWindow } from './songAxis'
 import type { SignalAutomation } from '@stave/editor'
-import { colorForAutomation } from './colors'
+import { automationColorOnLane } from './colors'
+import {
+  AUTOMATION_PAD_Y,
+  AUTOMATION_LABEL_FONT,
+  CAPTION_PAD_X,
+  captionRows,
+} from './automationCaption'
 
 /** The HORIZONTAL view transform + viewport, all in CSS pixels. Vertical
  *  geometry (per-lane top/height, total height) lives in the `LaneLayout`. */
@@ -448,9 +454,6 @@ function drawClips(
 /** Faint per-beat vertical guides inside an expanded lane (rhythm readability).
  *  Cycle boundaries are already drawn by the global gridlines; this adds the
  *  in-between beats (BEATS_PER_BAR subdivisions), suppressed when they'd crowd. */
-/** Vertical inset of the automation curve inside its lane band, so the curve
- *  never collides with the band's own top/bottom edge. */
-const AUTOMATION_PAD_Y = 3
 /** Horizontal sampling step for the curve, in px. One sample per ~2px is below
  *  the resolution of the stroke itself, so a finer step costs time and changes
  *  no pixel. */
@@ -459,11 +462,6 @@ const AUTOMATION_STEP_PX = 2
  *  rather than as a thick line, so it draws none. Silence over a smear — the
  *  same rule `CLIP_CAPTION_MIN_W` applies to captions. */
 const AUTOMATION_MIN_BAND_H = 10
-/** Label font for the automation bounds. Same literal-mono discipline as
- *  `CLIP_CAPTION_FONT` — canvas cannot read CSS custom properties. */
-const AUTOMATION_LABEL_FONT = '9px ui-monospace, SFMono-Regular, Menlo, monospace'
-/** Vertical room one bounds label needs before it is worth drawing. */
-const AUTOMATION_LABEL_MIN_H = 22
 /**
  * Minimum pixels per full OSCILLATION before the curve is drawn cycle-by-cycle.
  *
@@ -489,14 +487,6 @@ const AUTOMATION_MIN_PERIOD_PX = COARSEN_PX
  *  deliberate at a 1.5px stroke rather than as a rendering artefact, short
  *  enough that the curve's SHAPE — the real part — still reads. */
 const AUTOMATION_INDICATIVE_DASH: readonly number[] = [4, 3]
-
-/** Round a bound for display: enough precision to distinguish `0.4` from `0.6`,
- *  without printing `2000.0000000002` for a value the user wrote as `2000`. */
-function formatBound(v: number): string {
-  if (!Number.isFinite(v)) return '?'
-  if (Number.isInteger(v)) return String(v)
-  return String(Math.round(v * 1000) / 1000)
-}
 
 /**
  * The signal's value at a given cycle, normalised to 0..1 of its own range.
@@ -638,7 +628,7 @@ function drawAutomation(
    * "which parameter is this".
    */
   const colorOf = (a: SignalAutomation): string =>
-    automations.length <= 1 ? theme.automationLine : colorForAutomation(a.paramKey)
+    automationColorOnLane(a.paramKey, automations.length, theme.automationLine)
 
   // ── The unresolvable ones, as horizontal SLICES of the band ───────────────
   // State the modulation as a translucent band instead of smearing 128 strokes
@@ -703,28 +693,23 @@ function drawAutomation(
   //
   // Only on an EXPANDED lane: collapsed rows are a contour view, and a label per
   // parameter would cost more legibility than it returns at that height.
-  if (expanded && bandH >= AUTOMATION_LABEL_MIN_H) {
-    ctx.font = AUTOMATION_LABEL_FONT
-    ctx.textBaseline = 'top'
-    let labelY = top + AUTOMATION_PAD_Y
-    for (const a of automations) {
-      // THE TIE (#1485): a caption is drawn in its own curve's colour, which is
-      // the only thing linking the two — the curves share a band and each is
-      // normalised to its own range, so neither position nor height can say
-      // which line a name belongs to.
-      ctx.fillStyle = colorOf(a)
-      if (labelY + 10 > top + rowHeight) break
-      // `ranged` is why this reads honestly: an explicit `.range(lo,hi)` shows the
-      // user's own numbers, while a signal's natural polarity is marked `~` so a
-      // bound this module SUPPLIED is never presented as one the user wrote.
-      const mark = a.ranged ? '' : '~'
-      ctx.fillText(
-        `${a.paramKey} ${mark}${formatBound(a.lo)}\u2192${formatBound(a.hi)}`,
-        CLIP_CAPTION_PAD_X,
-        labelY,
-      )
-      labelY += 11
-    }
+  //
+  // ⚠ THE LINES AND THEIR POSITIONS COME FROM `captionRows`, NOT FROM A LOOP
+  // HERE. #1464 Stage 2 makes these numbers clickable, and a hit-test needs to
+  // know where each one sits; a second copy of that arithmetic would drift from
+  // this one silently, and the symptom is a click landing on the wrong bound.
+  // Same discipline as `laneMarkBands` and the live overlay (PV120): one
+  // geometry, two readers. The text — including the `~` that marks a bound this
+  // code supplied rather than one the user wrote — is decided there too.
+  ctx.font = AUTOMATION_LABEL_FONT
+  ctx.textBaseline = 'top'
+  for (const row of captionRows(automations, top, rowHeight, expanded)) {
+    // THE TIE (#1485): a caption is drawn in its own curve's colour, which is
+    // the only thing linking the two — the curves share a band and each is
+    // normalised to its own range, so neither position nor height can say
+    // which line a name belongs to.
+    ctx.fillStyle = colorOf(row.automation)
+    ctx.fillText(row.text, CAPTION_PAD_X, row.y)
   }
   ctx.restore()
 }

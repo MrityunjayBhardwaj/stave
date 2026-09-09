@@ -9,7 +9,7 @@ import {
   TRACK_PALETTE_32,
   paletteForTrack,
   trackIndexOf,
-  colorForAutomation,
+  automationColorOnLane, colorForAutomation,
   AUTOMATION_PALETTE,
 } from '../colors'
 
@@ -159,5 +159,23 @@ describe('colorForAutomation — a parameter\'s stable curve colour (#1485)', ()
     // track palette lets a curve land on a neighbouring track's swatch and read
     // as belonging to it.
     for (const c of AUTOMATION_PALETTE) expect(TRACK_PALETTE_32).not.toContain(c)
+  })
+})
+
+describe('automationColorOnLane — one rule, read by the curve and by its editor (#1464)', () => {
+  const THEME_LINE = '#theme'
+
+  it('a lane with ONE automation keeps the theme colour — nothing to disambiguate', () => {
+    expect(automationColorOnLane('cutoff', 1, THEME_LINE)).toBe(THEME_LINE)
+    expect(automationColorOnLane('cutoff', 0, THEME_LINE)).toBe(THEME_LINE)
+  })
+
+  it('a lane with several takes the per-parameter hue', () => {
+    expect(automationColorOnLane('cutoff', 2, THEME_LINE)).toBe(colorForAutomation('cutoff'))
+  })
+
+  it('the hue is keyed on the PARAMETER, so a lane gaining a curve does not recolour the first', () => {
+    expect(automationColorOnLane('cutoff', 2, THEME_LINE))
+      .toBe(automationColorOnLane('cutoff', 5, THEME_LINE))
   })
 })

@@ -43,7 +43,11 @@ export interface SongTimelineCanvasProps {
 
 /** Literal dark-theme colors (canvas can't read CSS custom properties); these
  *  mirror the DOM `FullSongTimeline` style fallbacks so the views match. */
-const DEFAULT_THEME: DrawTheme = {
+/** ⚠ EXPORTED for #1464 Stage 2's caption editor, which draws an input over a
+ *  caption and must take the SAME colour the canvas gave it — the shared hue is
+ *  what ties a bound to its curve on a lane carrying several. Exporting the one
+ *  theme rather than copying the literal is what keeps the two in step. */
+export const DEFAULT_THEME: DrawTheme = {
   background: '#0f0f1a',
   rowAlt: 'rgba(255,255,255,0.02)',
   section: 'rgba(255,255,255,0.04)',

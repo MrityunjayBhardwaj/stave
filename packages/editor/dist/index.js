@@ -893,23 +893,45 @@ function readChain(node) {
   let periodCycles = 1;
   let lo = null;
   let hi = null;
+  let rangeSpan = null;
+  let rateArms = 0;
+  const rateSpans = [];
+  const chainEnd = spanOf(node)?.end ?? null;
   for (let depth = 0; depth < 64; depth++) {
     if (!cur || typeof cur !== "object" || typeof cur.tag !== "string") return null;
     if (cur.tag === "Signal") {
-      return { signal: cur, periodCycles, lo, hi };
+      return {
+        signal: cur,
+        periodCycles,
+        lo,
+        hi,
+        spans: {
+          shape: spanOf(cur),
+          rate: rateArms === 1 && rateSpans.length === 1 ? rateSpans[0] : null,
+          range: rangeSpan,
+          chainEnd
+        }
+      };
     }
     if (!CHAIN_TAGS.has(cur.tag)) return null;
     if (cur.tag === "Range") {
       if (lo === null && Number.isFinite(cur.lo) && Number.isFinite(cur.hi)) {
         lo = cur.lo;
         hi = cur.hi;
+        rangeSpan = spanOf(cur);
       }
     } else if (cur.tag === "Slow") {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null;
       periodCycles *= cur.factor;
+      rateArms++;
+      const span = spanOf(cur);
+      if (span) rateSpans.push(span);
     } else if (cur.tag === "Fast") {
       if (!Number.isFinite(cur.factor) || cur.factor <= 0) return null;
       periodCycles /= cur.factor;
+      rateArms++;
+      const span = spanOf(cur);
+      if (span) rateSpans.push(span);
     }
     const body = cur.body;
     if (!body || typeof body !== "object") return null;
@@ -918,6 +940,13 @@ function readChain(node) {
   return null;
 }
 __name(readChain, "readChain");
+function spanOf(node) {
+  const loc = node.loc;
+  const first = loc?.[0];
+  if (!first) return null;
+  return Number.isFinite(first.start) && Number.isFinite(first.end) ? first : null;
+}
+__name(spanOf, "spanOf");
 function childNodes(node) {
   const out = [];
   const visit = /* @__PURE__ */ __name((value, depth) => {
@@ -968,7 +997,8 @@ function collectFromTrack(trackId, root, out) {
               lo,
               hi,
               ranged,
-              offset: typeof start === "number" && Number.isFinite(start) ? start : null
+              offset: typeof start === "number" && Number.isFinite(start) ? start : null,
+              spans: read5.spans
             });
           }
         }

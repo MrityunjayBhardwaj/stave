@@ -608,6 +608,21 @@ export function MusicalTimeline(
     [snapshot],
   )
 
+  // Edit an automation's bounds from its lane caption (#1464 Stage 2).
+  //
+  // The edit arrives already BUILT — `captionEdit` composed it from the
+  // automation's own numbers and refused anything it could not do honestly, so
+  // there is nothing left to decide here. All this owes is the write seam: the
+  // offsets came from the IR the timeline is currently drawing, and `writeArrange`
+  // guards them against a stale document and NAMES the refusal when one fires,
+  // which is the whole reason every timeline write goes through it (#1414).
+  const handleEditAutomation = React.useCallback(
+    (edit: OffsetEdit, gesture: string): void => {
+      writeArrange([edit], 'automation', gesture)
+    },
+    [writeArrange],
+  )
+
   // Trim a clip on the Song canvas (Phase 5b, #437): the timeline hands up the
   // dragged clip's source anchor (a lane offset inside the combinator call), its
   // arm index, and the new whole-cycle weight. We parse the arrangement at that
@@ -840,6 +855,7 @@ export function MusicalTimeline(
           onSeek={props.onSeek ?? (() => {})}
           getDrawerOpen={props.getDrawerOpen}
           getActiveTabId={props.getActiveTabId}
+          onEditAutomation={handleEditAutomation}
           onTrimClip={handleTrimClip}
           onDeleteClip={handleDeleteClip}
           onMoveClip={handleMoveClip}
