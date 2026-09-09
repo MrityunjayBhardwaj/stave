@@ -10,6 +10,7 @@ import {
   type RecordStartFailure,
 } from "../audio/takeRecorder";
 import { decodeDurationSeconds, saveTake } from "../audio/saveTake";
+import { warmWaveforms } from "../audio/waveformWarm";
 import { notifyAssetProvidersChanged } from "./registry";
 
 /**
@@ -92,6 +93,10 @@ export function RecordTakeButton(): React.JSX.Element {
       // The provider reads records live, so the panel only needs telling that
       // the catalog changed.
       notifyAssetProvidersChanged();
+      // #1506 — and decode it, so the take can be SEEN on the Song timeline
+      // without first being played. Only when it registered: an unplayable take
+      // has no URL to decode, and warming would be a guaranteed miss.
+      if (playable) void warmWaveforms([record.name]);
       setMessage(
         playable
           ? `Saved ${record.name}`
