@@ -174,6 +174,18 @@ describe('drawTimeline — waveform tier', () => {
     expect(bed!.alpha).toBeLessThan(1)
   })
 
+  it('draws a waveform at the DEFAULT row height, with no settings changed', () => {
+    // The product-level guarantee behind "a take can be seen": 25 is the default
+    // sub-row height, giving a 7px mark. If a change ever pushes the threshold
+    // above that, takes stop drawing for everyone who has not gone looking for a
+    // size setting — and every other arm here, which uses a tall row, stays green.
+    const defaultRow = computeLaneLayout(sceneWith(oneTake).lanes, new Set(), 25, 88)
+    const warm: WaveformSource = { cps: 1, peaksFor: () => fullScalePeaks(0.1) }
+    const { ctx, rects } = mockCtx()
+    drawTimeline(ctx, sceneWith(oneTake), transform, theme, defaultRow, undefined, warm)
+    expect(waveformColumns(rects).length).toBeGreaterThan(0)
+  })
+
   it('never asks about a synth note, which has no sample to draw', () => {
     const asked: string[] = []
     const source: WaveformSource = {

@@ -54,12 +54,20 @@ export const MIN_WAVEFORM_W = 6
 /**
  * Shortest mark height worth drawing a waveform into, in px.
  *
- * A mark is ~3px tall at the default row height, which is one pixel either side
- * of the centre line — an amplitude that cannot vary is not a waveform. Growing
- * the timeline's row height is what buys the detail, which is the "at the
+ * Set from the DEFAULT row height, deliberately. A collapsed lane's mark is
+ * `rowHeight - 18` tall, and the row height defaults to 25, so a mark is 7px —
+ * three pixels either side of its centre line. That is coarse, and it is still
+ * enough to see that a take is loud here and silent there, which is the whole
+ * claim. A threshold above 7 would mean the feature never appeared until the
+ * user went looking for a size setting, and a take you have to configure the
+ * timeline to see is not one that can be seen.
+ *
+ * Below this there is genuinely nothing to vary: at 4px a column is the centre
+ * line plus one pixel, and every sound draws the same rectangle. Raising the
+ * row height (up to 48, so 30px marks) is what buys real detail — the "at the
  * fidelity the row height allows" half of the rule.
  */
-export const MIN_WAVEFORM_H = 8
+export const MIN_WAVEFORM_H = 6
 
 /** How much of a mark a sample's audio fills, and how much of the sample shows. */
 export interface WaveformFit {
