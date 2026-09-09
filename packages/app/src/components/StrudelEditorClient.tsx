@@ -99,6 +99,8 @@ import {
   analyzeSong,
   songExtent,
   signalDimensionsOf,
+  listAssetRecords,
+  registerAssets,
   type SongExtent,
 } from "@stave/editor";
 import { reportWriteRefusal } from "../lib/writeRefusal";
@@ -1599,6 +1601,37 @@ export default function StrudelEditorClient({
   // Same dead-code-eliminated gate as the other `__stave*` hooks — both checks
   // live inside installBounceProbe, which returns its own teardown.
   useEffect(() => installBounceProbe(), []);
+
+  // #1502 — a project's own audio is addressable before the user does anything.
+  //
+  // Records live in the project Y.Doc, bytes live content-addressed in IDB, and
+  // neither is any use to `s("my_take")` until the pair has been handed to
+  // superdough. This is where that happens: keyed on `projectId`, so switching
+  // projects registers the new project's takes rather than leaving the previous
+  // one's names resolving.
+  //
+  // Safe to run at mount without checking `isDocReady`: EditorWrapper awaits
+  // `initProjectDoc` before this component is rendered at all, so the doc has
+  // already synced and a read here cannot race the persisted state.
+  //
+  // Best-effort by design — `registerAssets` skips any record whose bytes the
+  // browser has evicted rather than registering a URL that 404s on the first
+  // note, and returns the names that did resolve.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const records = listAssetRecords();
+      if (records.length === 0 || cancelled) return;
+      try {
+        await registerAssets(records);
+      } catch {
+        /* a project whose assets cannot register still opens */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // E2E-only handle onto the binary asset store (#1500). Phase 1 ships no UI
   // on purpose, so there is no gesture that could drive the store — this is

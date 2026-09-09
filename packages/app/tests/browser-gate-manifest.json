@@ -7,6 +7,10 @@
     "runs": "gate",
     "why": "collected by the gate \u2014 it runs the whole chromium project"
   },
+  "asset-doc-reload.spec.ts": {
+    "runs": "gate",
+    "why": "collected by the gate \u2014 it runs the whole chromium project"
+  },
   "asset-store-roundtrip.spec.ts": {
     "runs": "gate",
     "why": "collected by the gate — it runs the whole chromium project"

@@ -409,6 +409,14 @@ export {
   registerAssets,
   importAsset,
 } from './workspace/assetStore'
+// The project document's memory of its assets (#1502)
+export {
+  listAssetRecords,
+  addAssetRecord,
+  removeAssetRecord,
+  renameAssetRecord,
+  subscribeToAssets,
+} from './workspace/assetDoc'
 export type {
   AssetDigest,
   StoredAsset,
