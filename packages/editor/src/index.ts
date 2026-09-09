@@ -386,6 +386,8 @@ export type { SnapshotMeta } from './workspace/snapshotStore'
 export {
   soundNameFromFilename,
   uniqueSoundName,
+  nextTakeName,
+  TAKE_NAME_PREFIX,
   planAssetImport,
   FALLBACK_ASSET_NAME,
 } from './workspace/assetNaming'

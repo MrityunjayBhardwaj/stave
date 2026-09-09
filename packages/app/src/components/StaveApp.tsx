@@ -108,10 +108,13 @@ import {
 import { getLogHistory } from "@stave/editor";
 import { SilentCaptureError } from "@stave/editor";
 import { startAudition } from "@stave/editor";
+// #1504 — the project's asset records back the library's "sample" provider.
+import { listAssetRecords, subscribeToAssets } from "@stave/editor";
 import { gmFamily, soundfontGroupLabel } from "@stave/editor";
 import { isVizLanguage, languageForRenderer } from "@stave/editor";
 import { mountVizPreview } from "@stave/editor";
 import { getFile } from "@stave/editor";
+import { createSamplesProvider } from "../assetLibrary/samplesProvider";
 import { createVizProvider } from "../assetLibrary/vizProvider";
 import { planVizLibFiles, VIZ_LIB_ROOT, type VizLibItem } from "../assetLibrary/vizLibrary";
 import { PerfOverlay } from "./PerfOverlay";
@@ -1099,6 +1102,29 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       }),
     );
     return unregViz;
+  }, []);
+
+  // #1504 — the project's own audio in the library. `AssetType` has declared
+  // "sample" and `AssetSource` has declared "user" since the library shipped,
+  // both with nothing behind them; recorded takes are exactly that category.
+  //
+  // `list()` reads the records live, so a new take needs no re-registration —
+  // only a notify, which `RecordTakeButton` fires. The subscription here covers
+  // the OTHER writers (rename, remove, and a project switch bringing a
+  // different set of takes), which the button knows nothing about.
+  useEffect(() => {
+    const unreg = registerAssetProvider(
+      createSamplesProvider({
+        readRecords: () => listAssetRecords(),
+        startPreview: (name) => startAudition(name),
+        onInsert: (name) => shellRef.current?.assignSoundToCursor(name),
+      }),
+    );
+    const unsub = subscribeToAssets(() => notifyAssetProvidersChanged());
+    return () => {
+      unsub();
+      unreg();
+    };
   }, []);
 
   // #515 / PV141 #6 — enumerate live drum banks for the Mixer's Kit picker.
