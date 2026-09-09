@@ -223,6 +223,12 @@ export function drawTimeline(
     return got
   }
   let waveformColumnsLeft = WAVEFORM_COLUMN_BUDGET
+  // Read the tempo ONCE per draw, not once per mark. `cps` is a getter that
+  // reaches the live runtime, and it was being read inside the mark loop — a
+  // lane at the 2000-mark cap asked the transport for the tempo 2000 times a
+  // frame to get the same answer. One frame cannot span two tempi, so there is
+  // nothing to gain from asking again inside it.
+  const waveformCps = waveforms?.cps ?? null
 
   // ONE cycle→pixel map, and it is the AXIS's. This renderer used to compute its
   // own — `(cycle / dc) * contentWidth` — which silently assumed the window
@@ -320,7 +326,7 @@ export function drawTimeline(
           // no decoded audio, a row too short, or a mark too narrow simply leaves
           // what was always there.
           waveformColumnsLeft = drawMarkWaveform(
-            ctx, n, r, peaksFor, waveforms?.cps ?? null, pxPerCycle, waveformColumnsLeft,
+            ctx, n, r, peaksFor, waveformCps, pxPerCycle, waveformColumnsLeft,
             lane.color, theme.background,
           )
           ctx.globalAlpha = alpha

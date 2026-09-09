@@ -238,6 +238,30 @@ describe('drawTimeline — waveform tier', () => {
     expect(lookups).toBe(1) // 1, not 8
   })
 
+  it('reads the tempo once per draw, not once per mark', () => {
+    // `cps` is a getter onto the live runtime. Reading it per mark meant a dense
+    // lane asked the transport for the tempo two thousand times a frame to be
+    // told the same number. Asserted by the reads it makes, not by the pixels:
+    // the drawing is identical either way, so only the count can fail.
+    const notes: SceneNote[] = Array.from({ length: 12 }, (_, i) => ({
+      cycle: i * 0.02, end: i * 0.02 + 0.25, pitch: null, gain: 1, voice: 'take_1',
+    }))
+    let cpsReads = 0
+    const counting: WaveformSource = {
+      get cps() {
+        cpsReads++
+        return 1
+      },
+      peaksFor: () => fullScalePeaks(0.1),
+    }
+    const layout = computeLaneLayout(sceneWith(notes).lanes, new Set(), 60, 88)
+    const { ctx, rects } = mockCtx()
+    drawTimeline(ctx, sceneWith(notes), transform, theme, layout, undefined, counting)
+
+    expect(waveformColumns(rects).length).toBeGreaterThan(100) // marks really drew
+    expect(cpsReads).toBe(1) // 1, not 12
+  })
+
   it('asks again for a different pitch, because that can be a different file', () => {
     const asked: (number | null)[] = []
     const source: WaveformSource = {
