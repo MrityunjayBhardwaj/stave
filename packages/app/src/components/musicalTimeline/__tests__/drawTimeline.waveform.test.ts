@@ -148,6 +148,32 @@ describe('drawTimeline — waveform tier', () => {
     expect(waveformColumns(rects)).toHaveLength(250)
   })
 
+  /**
+   * The arm this feature actually needed, and the one it did not have.
+   *
+   * The bar is drawn at `0.4 + 0.6 × gain` in the lane colour, and the waveform
+   * is drawn INSIDE the bar's own height in that same colour. At `gain: 1` the
+   * bar is fully opaque, so before the bed existed the shape was painted
+   * invisibly — and every geometry arm above still passed, because a recording
+   * context reports that a fill was requested, not that anything can be seen.
+   */
+  it('clears a bed so the shape is visible against a FULL-GAIN bar', () => {
+    const warm: WaveformSource = { cps: 1, peaksFor: () => fullScalePeaks(0.1) }
+    const loudest = sceneWith([{ cycle: 0, end: 0.25, pitch: null, gain: 1, voice: 'take_1' }])
+    const { ctx, rects } = mockCtx()
+    drawTimeline(ctx, loudest, transform, theme, tall, undefined, warm)
+
+    const bar = rects.find((r) => r.w === 250 && r.style === LANE_COLOR)!
+    expect(bar.alpha).toBe(1) // the bar really is opaque at this gain
+
+    // A recessed bed exists, exactly as wide as the audio, over the bar's band.
+    const bed = rects.find(
+      (r) => r.style === theme.background && r.w === 100 && r.y === bar.y && r.h === bar.h,
+    )
+    expect(bed).toBeDefined()
+    expect(bed!.alpha).toBeLessThan(1)
+  })
+
   it('never asks about a synth note, which has no sample to draw', () => {
     const asked: string[] = []
     const source: WaveformSource = {

@@ -136,6 +136,23 @@ export interface WaveformSource {
  */
 export const WAVEFORM_COLUMN_BUDGET = 20000
 
+/**
+ * How far the mark's own bar is washed toward the background UNDER a waveform.
+ *
+ * Without this the feature is invisible at full gain, and that is not a
+ * hypothetical: the bar is drawn at `0.4 + 0.6 × gain` and the waveform sits
+ * inside the bar's own height in the SAME lane colour, so at `gain: 1` both are
+ * opaque and the shape cannot be told from the block it is drawn on. Geometry
+ * tests cannot see this — they record that a fill was requested, which is a
+ * different question from whether anything can be seen (#1100).
+ *
+ * So the bar recedes exactly where the waveform replaces it, which is also what
+ * a DAW does: the clip body is furniture, the waveform is the content. Outside
+ * the waveform's extent the bar keeps its full gain-driven weight, so the mark
+ * still reports how loud the hit is.
+ */
+export const WAVEFORM_BED_SCRIM = 0.62
+
 /** Note-bar height scales with its band — mirrors the live monitor's
  *  `leafBarHeight` (MusicalTimeline): the bar fills most of the band, reserving
  *  ~`BAR_PITCH_RESERVE`px for melodic pitch motion, floored so a tiny band still
@@ -304,6 +321,7 @@ export function drawTimeline(
           // what was always there.
           waveformColumnsLeft = drawMarkWaveform(
             ctx, n, r, peaksFor, waveforms?.cps ?? null, pxPerCycle, waveformColumnsLeft,
+            lane.color, theme.background,
           )
           ctx.globalAlpha = alpha
         }
@@ -948,6 +966,8 @@ function drawMarkWaveform(
   cps: number | null,
   pxPerCycle: number,
   budget: number,
+  inkStyle: string,
+  bedStyle: string,
 ): number {
   if (budget <= 0) return budget
   const voice = note.voice
@@ -963,9 +983,19 @@ function drawMarkWaveform(
   if (columns <= 0) return budget
   const centreY = r.y + r.h / 2
   const halfH = r.h / 2
-  // Full opacity over the gain-faded bar, so the shape reads as detail ON the
-  // mark rather than as a second mark of its own.
+
+  // Clear a bed first. The bar underneath is the same colour and, at full gain,
+  // the same opacity — painting the shape straight onto it draws it invisibly.
+  ctx.globalAlpha = WAVEFORM_BED_SCRIM
+  ctx.fillStyle = bedStyle
+  ctx.fillRect(r.x, r.y, columns, r.h)
+
+  // Then the shape, at full opacity against that recessed bed. This assignment
+  // is also what hands the lane colour back to the band loop for the next mark —
+  // painting the bed above changed it, and without this every following bar
+  // would be drawn in the background colour and simply disappear.
   ctx.globalAlpha = 1
+  ctx.fillStyle = inkStyle
   for (let i = 0; i < columns; i++) {
     const col = waveformColumn(peaks.data, peaks.columns, i, columns, fit.visibleFraction)
     const top = centreY - Math.max(-1, Math.min(1, col.max)) * halfH
