@@ -61,8 +61,34 @@ describe('captionRows — the three abstentions the draw path already made', () 
     expect(captionRows([auto()], 0, 40, false)).toEqual([])
   })
 
-  it('a band too short to label has none either', () => {
-    expect(captionRows([auto()], 0, 20, true)).toEqual([])
+  it('a band too short to DRAW has none either', () => {
+    // 15px row = 9px band, under the curve's own floor: nothing is painted here,
+    // so there is nothing to label.
+    expect(captionRows([auto()], 0, 15, true)).toEqual([])
+  })
+
+  it('LABELS THE LANE A DRUM TRACK ACTUALLY GETS (#1495)', () => {
+    // A single-voice PERCUSSIVE lane is one sub-row tall, and the sub-row height
+    // is the density setting — 25px by default. Not the 22px constant the issue
+    // reasoned from: `FullSongTimeline` passes `rowH` for BOTH the row and the
+    // sub-row, so the lane is 1 x 25 and expanding it changes nothing.
+    //
+    // 25px row = 19px band. That sat between the caption's old 22px floor and
+    // the curve's 10px one, which is the whole of the bug: the sweep was drawn
+    // and the numbers it swept between were not. Asserting the row is PRESENT
+    // and carries all three fields, because an empty array was the old answer.
+    const rows = captionRows([auto()], 0, 25, true)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text).toBe('cutoff 200→2000')
+    expect(rows[0].fields.map((f) => f.kind)).toEqual(['param', 'lo', 'hi'])
+  })
+
+  it('a drum lane at the SMALLEST density still declines, and the largest still labels', () => {
+    // The setting is clamped to 12..48 (`setMusicalTimelineSubRowHeight`), so
+    // these are the real ends of the range, not hypotheticals. The floor has to
+    // land inside it or it is not a floor at all.
+    expect(captionRows([auto()], 0, 12, true)).toEqual([]) // 6px band
+    expect(captionRows([auto()], 0, 48, true)).toHaveLength(1) // 42px band
   })
 
   it('stops before overflowing the row rather than laying out invisible lines', () => {

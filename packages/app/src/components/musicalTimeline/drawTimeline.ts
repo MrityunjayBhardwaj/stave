@@ -30,6 +30,7 @@ import { automationColorOnLane } from './colors'
 import {
   AUTOMATION_PAD_Y,
   AUTOMATION_LABEL_FONT,
+  AUTOMATION_MIN_BAND_H,
   CAPTION_PAD_X,
   captionRows,
 } from './automationCaption'
@@ -458,10 +459,6 @@ function drawClips(
  *  the resolution of the stroke itself, so a finer step costs time and changes
  *  no pixel. */
 const AUTOMATION_STEP_PX = 2
-/** A lane band shorter than this has no room for a curve that reads as a shape
- *  rather than as a thick line, so it draws none. Silence over a smear — the
- *  same rule `CLIP_CAPTION_MIN_W` applies to captions. */
-const AUTOMATION_MIN_BAND_H = 10
 /**
  * Minimum pixels per full OSCILLATION before the curve is drawn cycle-by-cycle.
  *

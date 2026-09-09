@@ -341,13 +341,19 @@ async function clickCanvasAt(page: Page, x: number, y: number): Promise<void> {
 }
 
 /**
- * ⚠ MELODIC ON PURPOSE, and the reason is a real limit rather than a test
- * convenience. A single-voice PERCUSSIVE lane is 22px expanded (25px collapsed),
- * so its automation band is 16px — under the 22px floor a caption needs, and no
- * caption is painted there at any zoom. Observed, not assumed: the canvas stayed
- * 25px tall through the expand gesture and a full sweep of click points opened
- * nothing. A melodic lane gets four sub-rows (88px), which is where the bounds
- * are actually reachable today.
+ * MELODIC because a melodic lane is the ROOMIEST case (four sub-rows, 100px at
+ * the default density) — not, as this header used to say, because a percussive
+ * one is unreachable. It was, and #1495 fixed it; the drum-lane arm below is now
+ * the one that matters, and this stays as the control that a roomy lane still
+ * works.
+ *
+ * ⚠ THE ARITHMETIC IN THE OLD HEADER WAS WRONG IN A WAY WORTH KEEPING VISIBLE.
+ * It read `SUB_ROW_HEIGHT = 22` out of `laneLayout.ts` and concluded a 22px lane
+ * with a 16px band. But `FullSongTimeline` passes `rowH` — the density setting,
+ * 25px by default — for the sub-row height too, so the lane is 25px and the band
+ * 19px. The measured canvas height beside it (25px, unchanged by the expand) was
+ * right and the reasoning was wrong. A default parameter is what the code was
+ * WRITTEN with; only the call site says what it RUNS with.
  */
 const MELODIC_AUTOMATED_SONG = 'note("c3 e3 g3 b3").cutoff(saw.slow(4).range(200, 2000))'
 
@@ -509,5 +515,80 @@ test('typing in a bound editor cannot delete the selected clip (#1464 Stage 2)',
   expect(await readDoc(page), 'Delete in the bound editor changed the document').toBe(before)
 
   await page.keyboard.press('Escape')
+  expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
+})
+
+/**
+ * THE DRUM LANE — the document #1495 was filed about, and the shape of the
+ * simplest automated song anyone would write: one percussive track with a swept
+ * filter. A single-voice percussive lane is ONE sub-row, so at the default
+ * density it is 25px tall and its band is 19px. That sat between the caption's
+ * old 22px floor and the curve's 10px one, so the sweep was drawn and the two
+ * numbers it swept BETWEEN were not — and since Stage 2 that also meant the
+ * range could not be edited where it could not be labelled.
+ *
+ * ⚠ THE EXPAND CANNOT BE ASSERTED BY HEIGHT HERE, unlike the melodic arm. A
+ * single-voice percussive lane expands to 1 x rowH — exactly its collapsed
+ * height — so the canvas does not grow, and a height assertion would fail on a
+ * WORKING app. The collapsed sweep is what proves the expand did something:
+ * nothing opens before it, the caption opens after it.
+ */
+test('a drum lane can have its bounds read and retyped (#1495)', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+
+  await bootShell(page)
+  await typeSongAndEval(page, AUTOMATED_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+
+  const editor = page.locator('[data-full-song="automation-bound"]')
+
+  // (0) COLLAPSED: no caption anywhere along the line where one would sit.
+  //     Sweeping rather than clicking one point, so this cannot pass by landing
+  //     in a gap between two fields.
+  for (let x = 6; x <= 140; x += 8) {
+    await clickCanvasAt(page, x, 8)
+    await page.waitForTimeout(60)
+    expect(await editor.count(), `a collapsed drum lane opened an editor at x=${x}`).toBe(0)
+  }
+
+  // EXPAND.
+  const box = await page.locator('[data-full-song-canvas]').boundingBox()
+  if (!box) throw new Error('no canvas')
+  await page.mouse.dblclick(box.x + 200, box.y + 8)
+  await page.waitForTimeout(800)
+
+  // FIND THE HIGH BOUND BY OBSERVATION. Same walk as the melodic arm — the app
+  // says which field each x is, so no glyph width is assumed.
+  let found: { x: number; value: string } | null = null
+  for (let x = 6; x <= 140 && !found; x += 3) {
+    await clickCanvasAt(page, x, 8)
+    await page.waitForTimeout(90)
+    if (await editor.count()) {
+      const value = await editor.inputValue()
+      if (value === '2000') found = { x, value }
+      else await page.keyboard.press('Escape')
+      await page.waitForTimeout(60)
+    }
+  }
+  expect(found, 'the drum lane painted no reachable caption — #1495 is not fixed').not.toBeNull()
+
+  // THE EDIT REACHES THE DOCUMENT.
+  const before = await readDoc(page)
+  expect(before).toContain('.range(200, 2000)')
+  await page.keyboard.press(`${MOD}+A`)
+  await page.keyboard.type('3000')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(600)
+
+  const after = await readDoc(page)
+  expect(after, `the retyped bound did not reach the document. before=${before} after=${after}`)
+    .toContain('.range(200,3000)')
+  expect(after).toContain('s("bd*2").cutoff(saw.slow(4)')
+
   expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
 })

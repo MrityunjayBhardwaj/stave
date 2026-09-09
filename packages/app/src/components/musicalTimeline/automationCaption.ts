@@ -24,9 +24,21 @@ import type { SignalAutomation, OffsetEdit } from '@stave/editor'
 /** 9px monospace, matching the rest of the lane's small type. */
 export const AUTOMATION_LABEL_FONT = '9px ui-monospace, SFMono-Regular, Menlo, monospace'
 
-/** Below this band height a caption costs more legibility than it returns, so
- *  the lane draws the curve alone. */
-export const AUTOMATION_LABEL_MIN_H = 22
+/** Below this band height a curve cannot read as a shape rather than as a thick
+ *  line, so the lane draws none — and, since #1495, no caption either.
+ *
+ *  ⚠ ONE FLOOR, NOT TWO. The caption used to abstain at its own higher
+ *  threshold (22px — two line advances, chosen for the stacked case). Between
+ *  the two floors sat a band where the CURVE WAS DRAWN AND ITS BOUNDS WERE NOT,
+ *  and the bounds are the whole of what says BETWEEN WHICH VALUES the sweep
+ *  runs, because every curve is normalised to its own range. A single-voice
+ *  PERCUSSIVE lane lands exactly there at the default density (a 25px row is a
+ *  19px band), so the commonest automated document there is — one drum track
+ *  with a swept filter — drew a curve nobody could read, and since #1464
+ *  Stage 2 could not edit either. The rule is now: WHATEVER IS DRAWN IS
+ *  LABELLED. Raising this floor again without raising the curve's would reopen
+ *  the same gap, which is why there is only one constant to raise. */
+export const AUTOMATION_MIN_BAND_H = 10
 
 /** Line advance between stacked captions. */
 export const AUTOMATION_LABEL_LINE_H = 11
@@ -115,7 +127,7 @@ export function captionText(a: SignalAutomation): string {
  * Lay out one lane's captions: which lines are drawn, where, and which spans of
  * each line name which leg.
  *
- * Returns empty for a collapsed lane, a band too short to label, or a lane with
+ * Returns empty for a collapsed lane, a band too short to DRAW, or a lane with
  * no automation — the same three abstentions the draw path already made, kept
  * here so the hit-test cannot believe in a caption that was never painted.
  */
@@ -127,7 +139,7 @@ export function captionRows(
 ): readonly CaptionRow[] {
   if (!expanded || automations.length === 0) return []
   const bandH = rowHeight - AUTOMATION_PAD_Y * 2
-  if (bandH < AUTOMATION_LABEL_MIN_H) return []
+  if (bandH < AUTOMATION_MIN_BAND_H) return []
 
   const rows: CaptionRow[] = []
   let y = top + AUTOMATION_PAD_Y
