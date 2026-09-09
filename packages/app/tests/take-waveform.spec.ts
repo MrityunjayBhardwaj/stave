@@ -236,10 +236,15 @@ async function litMarkCoverage(
         }
       }
     }
-    // Inset past the glow ring AND the border, in BACKING-STORE px — the canvas
-    // is DPR-scaled, so a CSS-px pad is worth dpr times as much here.
+    // Inset by the GLOW PAD alone, so the region measured is the mark's own rows
+    // right out to its edge. The pad is 2 CSS px and the core ring lies inside
+    // that same band, so the painted bounding box is set by the glow alone —
+    // insetting by more than 2 skips the mark's outermost row, which is exactly
+    // where ink that covers a full-scale peak would sit. Two earlier versions of
+    // this inset (4, then 3) each read a clean 0 while the outer row was being
+    // painted. Backing-store px, since the canvas is DPR-scaled.
     const dpr = Math.max(1, Math.round(width / Math.max(1, c.clientWidth)))
-    const pad = 4 * dpr
+    const pad = 2 * dpr
     const ix0 = x0 + pad
     const ix1 = x1 - pad
     const iy0 = y0 + pad
@@ -398,8 +403,13 @@ test.describe('a take is visible on the Song timeline', () => {
     // stopped drawing, which would "pass" a coverage test perfectly.
     expect(lit.painted).toBeGreaterThan(0)
     expect(lit.interior).toBeGreaterThan(0)
-    // …and it no longer covers the shape. A filled mark reads ~1 here.
-    expect(lit.covered / lit.interior).toBeLessThan(0.15)
+    // …and it covers NOTHING. Zero rather than a ratio, because the three cases
+    // were measured and a ratio cannot separate them: over this 229x30 mark the
+    // covered count reads 0 with the rings outside, 448 with a 1px border drawn
+    // ON the mark, and 6750 when the mark is filled. As a fraction of the
+    // interior that middle case is 0.066 — under any threshold loose enough to
+    // be safe, and it is a real defect. The count is what discriminates.
+    expect(lit.covered).toBe(0)
 
     await page.screenshot({ path: 'test-results/take-waveform-lit-outline.png' })
     expect(errors).toEqual([])
