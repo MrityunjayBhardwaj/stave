@@ -80,6 +80,8 @@ interface PageProbe {
     isFirstReference: boolean
     written: boolean
   }>
+  remove(hash: string): Promise<void>
+  registerAll(records: unknown[]): Promise<string[]>
   resolve(hash: string): Promise<string | null>
   concurrentResolve(hash: string, n: number): Promise<{ urls: (string | null)[]; opens: number }>
   peek(hash: string): Promise<string | null>
@@ -362,6 +364,40 @@ test('two different files both called vocal.wav get two reachable names', async 
     [TAKE_A, TAKE_B],
   )
   expect(names).toEqual(['vocal', 'vocal_2'])
+})
+
+test('registering a whole project reports every name that resolved', async ({ page }) => {
+  await soundMapPublished(page)
+  const seen = await page.evaluate(
+    async ([a, b]) => {
+      const p = window.__staveAssetProbe!
+      const A = await p.import(a, 'audio/wav', 'take_a.wav', [])
+      const B = await p.import(b, 'audio/wav', 'take_b.wav', [A.record])
+      const names = await p.registerAll([A.record, B.record])
+      return { names, bothInMap: names.every((n) => p.inSoundMap(n)) }
+    },
+    [TAKE_A, TAKE_B],
+  )
+  expect(seen).toEqual({ names: ['take_a', 'take_b'], bothInMap: true })
+})
+
+test('a record whose bytes are gone is skipped, not reported as registered', async ({
+  page,
+}) => {
+  // The control is in the same run: one record still has its bytes and comes
+  // back, so this measures the SKIP rather than a register that does nothing.
+  await soundMapPublished(page)
+  const names = await page.evaluate(
+    async ([a, b]) => {
+      const p = window.__staveAssetProbe!
+      const A = await p.import(a, 'audio/wav', 'kept.wav', [])
+      const B = await p.import(b, 'audio/wav', 'evicted.wav', [A.record])
+      await p.remove(B.record.blobHash)
+      return p.registerAll([A.record, B.record])
+    },
+    [TAKE_A, TAKE_B],
+  )
+  expect(names).toEqual(['kept'])
 })
 
 // ---------------------------------------------------------------------------

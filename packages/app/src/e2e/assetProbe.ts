@@ -50,8 +50,12 @@ export interface AssetProbe {
   peek(hash: string): Promise<string | null>;
   /** Revoke the object URL for a hash. */
   release(hash: string): Promise<void>;
+  /** Drop bytes from the store by hash. */
+  remove(hash: string): Promise<void>;
   /** Register a record so `s(record.name)` addresses it. */
   register(record: AssetRecord): Promise<boolean>;
+  /** Register a whole project's records; returns the names that resolved. */
+  registerAll(records: AssetRecord[]): Promise<string[]>;
   /** Is this name present in superdough's live `soundMap`? */
   inSoundMap(name: string): boolean;
   /** What superdough recorded for a name: its type and the URLs it will fetch. */
@@ -200,9 +204,19 @@ export function installAssetProbe(): () => void {
       m.releaseAsset(hash);
     },
 
+    async remove(hash) {
+      const m = await editor();
+      await m.deleteAsset(hash);
+    },
+
     async register(record) {
       const m = await editor();
       return m.registerAsset(record);
+    },
+
+    async registerAll(records) {
+      const m = await editor();
+      return m.registerAssets(records);
     },
 
     inSoundMap(name) {

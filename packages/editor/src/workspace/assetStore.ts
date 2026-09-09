@@ -124,19 +124,6 @@ export const sha256Hex: AssetDigest = async (bytes) => {
 // The blob store
 // ---------------------------------------------------------------------------
 
-/** True when the store already holds these bytes. */
-export async function hasAsset(hash: string): Promise<boolean> {
-  const db = await openDb()
-  try {
-    const n = await wrap(
-      db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).count(hash),
-    )
-    return n > 0
-  } finally {
-    db.close()
-  }
-}
-
 /** What a `putAsset` did. */
 export interface PutAssetResult {
   /** The content hash the bytes are stored under. */

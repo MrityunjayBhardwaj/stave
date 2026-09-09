@@ -43592,18 +43592,6 @@ var sha256Hex = /* @__PURE__ */ __name(async (bytes) => {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }, "sha256Hex");
-async function hasAsset(hash) {
-  const db = await openDb5();
-  try {
-    const n = await wrap5(
-      db.transaction(STORE_NAME4, "readonly").objectStore(STORE_NAME4).count(hash)
-    );
-    return n > 0;
-  } finally {
-    db.close();
-  }
-}
-__name(hasAsset, "hasAsset");
 async function putAsset(blob, digest = sha256Hex) {
   const hash = await digest(await blob.arrayBuffer());
   const db = await openDb5();
@@ -46820,7 +46808,6 @@ exports.getZoneHeightOverride = getZoneHeightOverride;
 exports.gmFamily = gmFamily;
 exports.groupDrumKits = groupDrumKits;
 exports.groupSoundCatalog = groupSoundCatalog;
-exports.hasAsset = hasAsset;
 exports.hydraKaleidoscope = hydraKaleidoscope;
 exports.hydraPianoroll = hydraPianoroll;
 exports.hydraScope = hydraScope;

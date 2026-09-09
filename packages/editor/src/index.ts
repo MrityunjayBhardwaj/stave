@@ -397,7 +397,6 @@ export type {
 export {
   ASSET_DB_NAME,
   sha256Hex,
-  hasAsset,
   putAsset,
   getAsset,
   deleteAsset,
