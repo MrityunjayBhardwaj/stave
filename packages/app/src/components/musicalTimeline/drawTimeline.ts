@@ -34,6 +34,7 @@ import {
   CAPTION_PAD_X,
   captionRows,
 } from './automationCaption'
+import { waveformColumn, waveformFit } from './waveformLane'
 
 /** The HORIZONTAL view transform + viewport, all in CSS pixels. Vertical
  *  geometry (per-lane top/height, total height) lives in the `LaneLayout`. */
@@ -103,6 +104,38 @@ const CLIP_CAPTION_FONT = '10px ui-monospace, SFMono-Regular, Menlo, monospace'
  *  stays clickable — mirrors the live view's `MIN_BLOCK_PX` (timeAxis.ts). */
 export const MIN_MARK_W = 2
 
+/**
+ * Where a mark's audio shape comes from (#1506), or absent for a timeline that
+ * draws marks alone — every existing caller.
+ *
+ * `peaksFor` is a pure LOOKUP: it reads an already-decoded, already-reduced
+ * envelope and returns null for anything not yet loaded, so a draw never waits
+ * on audio and never provokes a fetch. Injected rather than imported because the
+ * decoded audio lives behind `@stave/editor` (the app has no superdough of its
+ * own) and because it keeps this module testable with plain arrays.
+ */
+export interface WaveformSource {
+  /** Cycles per second; null before the runtime reports a tempo. */
+  readonly cps: number | null
+  /** Envelope for a voice at a pitch, or null when it is not decoded yet. */
+  readonly peaksFor: (
+    voice: string,
+    pitch: number | null,
+  ) => { readonly data: Float32Array; readonly columns: number; readonly duration: number } | null
+}
+
+/**
+ * Most waveform columns one whole draw may paint.
+ *
+ * A waveform costs a fill per column, so a lane of wide overlapping marks — a
+ * dense polyphonic take at high zoom — could ask for far more fills than the
+ * rest of the scene put together. Past this budget marks render as the bars they
+ * already were, which is the same degradation the width and height gates use.
+ * Bounded work per frame beats a timeline that stutters exactly when it is
+ * showing the most detail (#900's third constraint).
+ */
+export const WAVEFORM_COLUMN_BUDGET = 20000
+
 /** Note-bar height scales with its band — mirrors the live monitor's
  *  `leafBarHeight` (MusicalTimeline): the bar fills most of the band, reserving
  *  ~`BAR_PITCH_RESERVE`px for melodic pitch motion, floored so a tiny band still
@@ -145,6 +178,7 @@ export function drawTimeline(
   theme: DrawTheme,
   layout: LaneLayout,
   silenced?: ReadonlySet<string>,
+  waveforms?: WaveformSource,
 ): void {
   const { scrollLeft, contentWidth, viewportWidth } = transform
   const height = layout.totalHeight
@@ -153,6 +187,26 @@ export function drawTimeline(
   if (dc <= 0 || contentWidth <= 0 || viewportWidth <= 0) return
 
   const pxPerCycle = contentWidth / dc
+
+  // Peaks are looked up per MARK, so a lane at the 2000-mark cap would ask the
+  // same question 2000 times a frame for what is usually one answer. This memo
+  // lives for exactly one draw: the envelope cache behind it is long-lived, but
+  // a sample can finish decoding between two frames, and a memo that outlived
+  // the frame would keep drawing "not loaded yet" after it had loaded.
+  // Keyed by pitch as well as voice because a multi-sample instrument resolves
+  // to a DIFFERENT FILE per note, not merely a different playback rate.
+  const peaksMemo = new Map<string, ReturnType<WaveformSource['peaksFor']>>()
+  const peaksFor = (voice: string, pitch: number | null) => {
+    if (!waveforms) return null
+    const key = `${voice}\u0000${pitch ?? ''}`
+    const hit = peaksMemo.get(key)
+    if (hit !== undefined) return hit
+    const got = waveforms.peaksFor(voice, pitch)
+    peaksMemo.set(key, got)
+    return got
+  }
+  let waveformColumnsLeft = WAVEFORM_COLUMN_BUDGET
+
   // ONE cycle→pixel map, and it is the AXIS's. This renderer used to compute its
   // own — `(cycle / dc) * contentWidth` — which silently assumed the window
   // started at cycle 0. It stayed correct only while that was true; at an origin
@@ -241,8 +295,17 @@ export function drawTimeline(
         for (const n of band.notes) {
           const r = markRect(n, band, pxPerCycle, viewportWidth, firstCycle, lastCycle, toScreenX)
           if (!r) continue
-          ctx.globalAlpha = 0.4 + 0.6 * Math.min(1, Math.max(0, n.gain))
+          const alpha = 0.4 + 0.6 * Math.min(1, Math.max(0, n.gain))
+          ctx.globalAlpha = alpha
           ctx.fillRect(r.x, r.y, r.w, r.h)
+          // The mark's own audio shape, drawn INSIDE the bar just placed (#1506).
+          // Additive by construction: the bar is already down, so a sample with
+          // no decoded audio, a row too short, or a mark too narrow simply leaves
+          // what was always there.
+          waveformColumnsLeft = drawMarkWaveform(
+            ctx, n, r, peaksFor, waveforms?.cps ?? null, pxPerCycle, waveformColumnsLeft,
+          )
+          ctx.globalAlpha = alpha
         }
       }
       ctx.globalAlpha = 1
@@ -857,4 +920,57 @@ export function markRect(
     y = bandTop + bandH / 2
   }
   return { x, y, w, h: markH }
+}
+
+/**
+ * Paint one mark's audio shape inside the bar already drawn for it (#1506), and
+ * return what is left of the frame's column budget.
+ *
+ * Every reason to draw nothing is a normal state, not a failure: a synth note
+ * has no sample, a sample may not have finished decoding, the tempo may not be
+ * known yet, and most marks at most zooms have no room. In all of those the bar
+ * that was drawn a moment ago is the whole rendering, which is why this is safe
+ * to call unconditionally.
+ *
+ * Columns are one pixel wide and at least one pixel tall — a column whose peaks
+ * round to nothing still marks that the sound is present there, and a waveform
+ * with holes in it reads as silence that is not in the file.
+ */
+function drawMarkWaveform(
+  ctx: CanvasRenderingContext2D,
+  note: SceneNote,
+  r: { x: number; y: number; w: number; h: number },
+  peaksFor: (voice: string, pitch: number | null) => {
+    readonly data: Float32Array
+    readonly columns: number
+    readonly duration: number
+  } | null,
+  cps: number | null,
+  pxPerCycle: number,
+  budget: number,
+): number {
+  if (budget <= 0) return budget
+  const voice = note.voice
+  // A null-`s` mark is a synth note: it carries a pitch and no sample, so there
+  // is no file whose shape could be drawn.
+  if (voice == null || voice === NO_VOICE) return budget
+  const peaks = peaksFor(voice, note.pitch ?? null)
+  if (peaks == null) return budget
+  const fit = waveformFit(peaks.duration, cps, r.w, r.h, pxPerCycle)
+  if (fit == null) return budget
+
+  const columns = Math.min(Math.floor(fit.extentPx), budget)
+  if (columns <= 0) return budget
+  const centreY = r.y + r.h / 2
+  const halfH = r.h / 2
+  // Full opacity over the gain-faded bar, so the shape reads as detail ON the
+  // mark rather than as a second mark of its own.
+  ctx.globalAlpha = 1
+  for (let i = 0; i < columns; i++) {
+    const col = waveformColumn(peaks.data, peaks.columns, i, columns, fit.visibleFraction)
+    const top = centreY - Math.max(-1, Math.min(1, col.max)) * halfH
+    const bottom = centreY - Math.max(-1, Math.min(1, col.min)) * halfH
+    ctx.fillRect(r.x + i, top, 1, Math.max(1, bottom - top))
+  }
+  return budget - columns
 }

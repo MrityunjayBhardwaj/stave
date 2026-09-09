@@ -29,7 +29,7 @@
 'use client'
 
 import * as React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   signalDimensionsOf,
   type IRSnapshot,
@@ -75,6 +75,8 @@ import {
 } from '@stave/editor'
 import { FullSongTimeline } from './FullSongTimeline'
 import { createSongCollector } from './musicalTimeline/songCollector'
+import { createWaveformSource } from '../audio/waveformSource'
+import { subscribeWaveformsReady } from '../audio/waveformWarm'
 import { reportWriteRefusal } from '../lib/writeRefusal'
 
 export interface MusicalTimelineProps {
@@ -474,6 +476,24 @@ export function MusicalTimeline(
   // editor doesn't select a lane here. Re-derives on cursor move and on
   // active-editor switch — so clicking a lane (#610 moves the caret) and
   // typing/clicking in the editor both converge on the same highlighted lane.
+  // ── The waveform tier's two halves (#1506) ────────────────────────────────
+  // The SOURCE is stable for the life of the component: it reads tempo through
+  // the prop accessor on every draw rather than closing over a value, so a tempo
+  // change cannot leave it rebuilding or drawing at a stale width.
+  const waveforms = useMemo(
+    () => createWaveformSource(() => props.getCps()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read through the
+    // accessor above; rebuilding on every render would defeat the canvas's own
+    // dirty-flagging and repaint the timeline continuously.
+    [],
+  )
+  // The EPOCH is the redraw signal. The canvas repaints on scene/transform/size
+  // and a decode finishing is none of those, so without this a warmed take would
+  // be drawable in memory and absent on screen until something else forced a
+  // repaint.
+  const [waveformsEpoch, setWaveformsEpoch] = useState(0)
+  useEffect(() => subscribeWaveformsReady(() => setWaveformsEpoch((n) => n + 1)), [])
+
   const [selectedStatementOffset, setSelectedStatementOffset] = useState<number | null>(null)
   useEffect(() => {
     const recompute = (): void => {
@@ -851,6 +871,8 @@ export function MusicalTimeline(
           getHapStream={props.getHapStream}
           getTimelineEvents={props.getTimelineEvents}
           getTimelineEventsBand={props.getTimelineEventsBand}
+          waveforms={waveforms}
+          waveformsEpoch={waveformsEpoch}
           getSongPosition={props.getSongPosition ?? (() => null)}
           onSeek={props.onSeek ?? (() => {})}
           getDrawerOpen={props.getDrawerOpen}

@@ -23,7 +23,7 @@ import * as React from 'react'
 import { useEffect, useRef } from 'react'
 import type { TimelineScene } from './musicalTimeline/timelineScene'
 import type { LaneLayout } from './musicalTimeline/laneLayout'
-import { drawTimeline, type DrawTheme } from './musicalTimeline/drawTimeline'
+import { drawTimeline, type DrawTheme, type WaveformSource } from './musicalTimeline/drawTimeline'
 
 export interface SongTimelineCanvasProps {
   readonly scene: TimelineScene
@@ -39,6 +39,13 @@ export interface SongTimelineCanvasProps {
   /** Display names of silenced tracks (muted / soloed-out — #731); their lanes
    *  draw faded to mirror the Mixer's dimmed strips (PV155). Absent → none. */
   readonly silencedNames?: ReadonlySet<string>
+  /** Decoded-audio lookup for the waveform tier (#1506); absent → marks only. */
+  readonly waveforms?: WaveformSource
+  /** Bumped when new audio becomes drawable, purely to re-run the draw effect.
+   *  The canvas is dirty-flagged on scene/transform/size, and a sample finishing
+   *  its decode changes none of those — without this the shape would exist in
+   *  memory and never reach the screen. */
+  readonly waveformsEpoch?: number
 }
 
 /** Literal dark-theme colors (canvas can't read CSS custom properties); these
@@ -69,7 +76,7 @@ export const DEFAULT_THEME: DrawTheme = {
 const MAX_DPR = 2
 
 export function SongTimelineCanvas(props: SongTimelineCanvasProps): React.ReactElement {
-  const { scene, scrollLeft, contentWidth, viewportWidth, layout, silencedNames } = props
+  const { scene, scrollLeft, contentWidth, viewportWidth, layout, silencedNames, waveforms, waveformsEpoch } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const height = layout.totalHeight
 
@@ -88,10 +95,10 @@ export function SongTimelineCanvas(props: SongTimelineCanvasProps): React.ReactE
       const ctx = canvas.getContext('2d')
       if (!ctx) return
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // draw in CSS px
-      drawTimeline(ctx, scene, { scrollLeft, contentWidth, viewportWidth: cssW }, DEFAULT_THEME, layout, silencedNames)
+      drawTimeline(ctx, scene, { scrollLeft, contentWidth, viewportWidth: cssW }, DEFAULT_THEME, layout, silencedNames, waveforms)
     })
     return () => cancelAnimationFrame(raf)
-  }, [scene, scrollLeft, contentWidth, viewportWidth, layout, height, silencedNames])
+  }, [scene, scrollLeft, contentWidth, viewportWidth, layout, height, silencedNames, waveforms, waveformsEpoch])
 
   return (
     <canvas

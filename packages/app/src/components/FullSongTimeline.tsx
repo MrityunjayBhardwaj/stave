@@ -36,6 +36,7 @@ import {
 } from './musicalTimeline/automationCaption'
 import { automationColorOnLane } from './musicalTimeline/colors'
 import { DEFAULT_THEME } from './SongTimelineCanvas'
+import type { WaveformSource } from './musicalTimeline/drawTimeline'
 
 /**
  * Measure caption text in the caption's own face (#1464 Stage 2).
@@ -179,6 +180,13 @@ export interface FullSongTimelineProps {
    */
   readonly getTimelineEventsBand?: (startCycle: number, endCycle: number) => IREvent[]
   /** Transport-offset-aware song position (cycles), or null when stopped. */
+  /** Decoded-audio lookup for the waveform tier (#1506). Passed straight through
+   *  to the canvas: this component owns no audio, and injecting it rather than
+   *  importing keeps the engine out of a module the renderer tests mock. */
+  readonly waveforms?: WaveformSource
+  /** Bumped when new audio becomes drawable, so the dirty-flagged canvas redraws
+   *  for a reason it could not otherwise see (#1506). */
+  readonly waveformsEpoch?: number
   readonly getSongPosition: () => number | null
   /** Seek the transport to an absolute song cycle. */
   readonly onSeek: (cycle: number) => void
@@ -2171,6 +2179,8 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                 viewportWidth={areaWidth}
                 layout={layout}
                 silencedNames={props.silencedNames}
+                waveforms={props.waveforms}
+                waveformsEpoch={props.waveformsEpoch}
               />
             )}
             {/* Live overlay (#500/U3): lights the scene marks that are sounding

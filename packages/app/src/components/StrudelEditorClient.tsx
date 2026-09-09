@@ -114,6 +114,7 @@ import {
 import { PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
 import { installBounceProbe } from "../e2e/bounceProbe";
 import { installAssetProbe } from "../e2e/assetProbe";
+import { warmWaveforms } from "../audio/waveformWarm";
 
 
 // Phase 19-07 (#79) — 4-stage parser pipeline. Each stage emits its own
@@ -1623,7 +1624,12 @@ export default function StrudelEditorClient({
       const records = listAssetRecords();
       if (records.length === 0 || cancelled) return;
       try {
-        await registerAssets(records);
+        const names = await registerAssets(records);
+        // #1506 — decode what registered so each take can DRAW its waveform
+        // before anything has played it. Local bytes only (these are `blob:`
+        // URLs out of IndexedDB), and after the cancellation check, so closing a
+        // project mid-load does not warm audio nobody is looking at.
+        if (!cancelled) await warmWaveforms(names);
       } catch {
         /* a project whose assets cannot register still opens */
       }
