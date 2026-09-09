@@ -14,9 +14,16 @@
  * the surface, the hap subscription, and the per-frame redraw.
  */
 
-import type { TimelineScene, SceneNote } from './timelineScene'
+import { NO_VOICE, type TimelineScene, type SceneNote } from './timelineScene'
 import type { LaneLayout } from './laneLayout'
-import { laneMarkBands, markRect, laneRenderMode, type DrawTransform } from './drawTimeline'
+import {
+  laneMarkBands,
+  markRect,
+  laneRenderMode,
+  type DrawTransform,
+  type WaveformSource,
+} from './drawTimeline'
+import { waveformFit } from './waveformLane'
 import { songCycleToXUnclamped, type SongWindow } from './songAxis'
 
 export interface LiveOverlayTheme {
@@ -118,6 +125,7 @@ export function drawLiveOverlay(
   playheadCycle: number | null,
   activeSigs: ReadonlySet<string>,
   theme: LiveOverlayTheme,
+  waveforms?: WaveformSource,
 ): void {
   const { scrollLeft, contentWidth, viewportWidth } = transform
   ctx.clearRect(0, 0, viewportWidth, layout.totalHeight)
@@ -153,27 +161,96 @@ export function drawLiveOverlay(
         if (!lit.has(n)) continue
         const r = markRect(n, band, pxPerCycle, viewportWidth, firstCycle, lastCycle, toScreenX)
         if (!r) continue
-        drawLitMark(ctx, r, n.gain, theme)
+        drawLitMark(ctx, r, n.gain, theme, markHasWaveform(n, r, waveforms, pxPerCycle))
       }
     }
   })
 }
 
-/** A lit mark: a faint wider glow behind a bright core, so even a ~3px bar pops
- *  as "sounding now". Gain scales the core's opacity (design — gain→intensity). */
+/**
+ * Is this mark drawing a sample's shape inside itself right now (#1506)?
+ *
+ * Asked through the SAME `waveformFit` the base draw uses, reading the same
+ * source, so the two canvases cannot drift on the question — the alternative,
+ * re-deriving "is it a sample" from the note alone, would answer a different
+ * question than the one the base canvas acted on.
+ *
+ * ⚠ One divergence is accepted, and it is benign by construction. The base draw
+ * also stops at `WAVEFORM_COLUMN_BUDGET`, which is spent in scene draw order and
+ * cannot be known here without recomputing that whole draw. Past the budget a
+ * mark renders as the bar it always was and would be OUTLINED rather than
+ * filled: a quieter light over a mark that has no shape to protect. The error
+ * only ever costs brightness, never coverage.
+ */
+function markHasWaveform(
+  note: SceneNote,
+  r: { readonly w: number; readonly h: number },
+  waveforms: WaveformSource | undefined,
+  pxPerCycle: number,
+): boolean {
+  if (waveforms == null) return false
+  // A null-`s` mark is a synth note: a pitch and no sample, so no file shape.
+  const voice = note.voice
+  if (voice == null || voice === NO_VOICE) return false
+  const peaks = waveforms.peaksFor(voice, note.pitch ?? null)
+  if (peaks == null) return false
+  return waveformFit(peaks.duration, waveforms.cps, r.w, r.h, pxPerCycle) != null
+}
+
+/**
+ * A lit mark: a faint wider glow behind a bright core, so even a ~3px bar pops
+ * as "sounding now". Gain scales the core's opacity (design — gain→intensity).
+ *
+ * When the mark is drawing a waveform, both passes become RINGS instead of fills
+ * (#1508). Both of them otherwise cover the shape — the core fills the mark
+ * exactly, and the glow, despite the name, is a filled rect spanning the mark's
+ * INTERIOR as well as the pad around it, so switching only the core would leave
+ * a ~0.16–0.45 alpha wash over the waveform. Outlining keeps the one thing the
+ * light says that the playhead cannot — WHICH lane is sounding, when a lane can
+ * be silenced and a mark can be a rest — and gives the interior back.
+ *
+ * Why not light the waveform's own columns instead, which would be truer: this
+ * overlay redraws every animation frame, where the base canvas is dirty-flagged.
+ * A fill per column per lit mark per frame is the cost `WAVEFORM_COLUMN_BUDGET`
+ * exists to bound on a draw that happens far less often.
+ */
 function drawLitMark(
   ctx: CanvasRenderingContext2D,
   r: { x: number; y: number; w: number; h: number },
   gain: number,
   theme: LiveOverlayTheme,
+  outline: boolean,
 ): void {
   const g = Math.min(1, Math.max(0, Number.isFinite(gain) ? gain : 1))
   const glowPad = 2
+  const glowAlpha = 0.18 + 0.32 * g
+  const coreAlpha = 0.7 + 0.3 * g
+  if (outline) {
+    // The glow as a ring lying ENTIRELY outside the mark. A path on the midline
+    // of the pad — inset glowPad/2 from its outer edge — stroked at lineWidth
+    // glowPad extends glowPad/2 to either side, so the ink spans exactly
+    // [r - glowPad, r] and stops at the mark's edge. That is the whole reason
+    // for the half-pad inset: a stroke of the padded rect itself would reach
+    // glowPad INTO the mark and re-create the wash this is removing.
+    ctx.strokeStyle = theme.litGlow
+    ctx.globalAlpha = glowAlpha
+    ctx.lineWidth = glowPad
+    ctx.strokeRect(r.x - glowPad / 2, r.y - glowPad / 2, r.w + glowPad, r.h + glowPad)
+    // The core as the mark's own 1px border. The half-pixel offsets land the
+    // stroke ON a pixel row instead of straddling two at half coverage, which
+    // is what makes a thin border read as a border rather than a smudge.
+    ctx.strokeStyle = theme.lit
+    ctx.globalAlpha = coreAlpha
+    ctx.lineWidth = 1
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, Math.max(0, r.w - 1), Math.max(0, r.h - 1))
+    ctx.globalAlpha = 1
+    return
+  }
   ctx.fillStyle = theme.litGlow
-  ctx.globalAlpha = 0.18 + 0.32 * g
+  ctx.globalAlpha = glowAlpha
   ctx.fillRect(r.x - glowPad, r.y - glowPad, r.w + 2 * glowPad, r.h + 2 * glowPad)
   ctx.fillStyle = theme.lit
-  ctx.globalAlpha = 0.7 + 0.3 * g
+  ctx.globalAlpha = coreAlpha
   ctx.fillRect(r.x, r.y, r.w, r.h)
   ctx.globalAlpha = 1
 }

@@ -7,30 +7,67 @@ import {
   MAX_LIT_DISTANCE_CYCLES,
   type LiveOverlayTheme,
 } from '../drawLiveOverlay'
-import { laneMarkBands, markRect, COARSEN_PX } from '../drawTimeline'
+import { laneMarkBands, markRect, COARSEN_PX, type WaveformSource } from '../drawTimeline'
+import { MIN_WAVEFORM_H } from '../waveformLane'
 import { computeLaneLayout } from '../laneLayout'
-import type { TimelineScene, SceneNote } from '../timelineScene'
+import { NO_VOICE, type TimelineScene, type SceneNote } from '../timelineScene'
 
-/** Recording mock 2D context — captures fillRect (the only primitive the
- *  overlay draws), like drawTimeline.test's harness. */
+/** Recording mock 2D context — captures fillRect AND strokeRect, each with the
+ *  style/alpha in force at the time. Keeping the paint state is what lets an arm
+ *  ask whether the mark's interior was COVERED, rather than only where ink was
+ *  requested — the distinction #1506 was caught by. */
+type Painted = { x: number; y: number; w: number; h: number; style: string; alpha: number }
 function mockCtx(): {
   ctx: CanvasRenderingContext2D
-  rects: Array<{ x: number; y: number; w: number; h: number }>
+  rects: Painted[]
+  strokes: Array<Painted & { lineWidth: number }>
   calls: { clears: number }
 } {
-  const rects: Array<{ x: number; y: number; w: number; h: number }> = []
+  const rects: Painted[] = []
+  const strokes: Array<Painted & { lineWidth: number }> = []
   const calls = { clears: 0 }
   const ctx = {
     fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
     globalAlpha: 1,
     clearRect() {
       calls.clears++
     },
     fillRect(x: number, y: number, w: number, h: number) {
-      rects.push({ x, y, w, h })
+      rects.push({ x, y, w, h, style: String(ctx.fillStyle), alpha: ctx.globalAlpha })
+    },
+    strokeRect(x: number, y: number, w: number, h: number) {
+      strokes.push({
+        x,
+        y,
+        w,
+        h,
+        style: String(ctx.strokeStyle),
+        alpha: ctx.globalAlpha,
+        lineWidth: ctx.lineWidth,
+      })
     },
   } as unknown as CanvasRenderingContext2D
-  return { ctx, rects, calls }
+  return { ctx, rects, strokes, calls }
+}
+
+/**
+ * A `WaveformSource` reporting one decoded voice. `duration` × `cps` × pxPerCycle
+ * is the audio's width in px, so at the arms' 1000 pxPerCycle and cps 0.5 a
+ * 1-second sample is 500px — wider than `MIN_WAVEFORM_W`, so `waveformFit`
+ * accepts and the base canvas would be drawing a shape here.
+ */
+function waveformsFor(
+  voice: string,
+  duration: number,
+  cps: number | null = 0.5,
+): WaveformSource {
+  return {
+    cps,
+    peaksFor: (v: string) =>
+      v === voice ? { data: new Float32Array([-1, 1]), columns: 1, duration } : null,
+  }
 }
 
 const THEME: LiveOverlayTheme = { lit: '#fff', litGlow: '#88f' }
@@ -197,6 +234,120 @@ describe('drawLiveOverlay', () => {
     expect(core.y).toBeCloseTo(baseRect!.y, 5)
     expect(core.w).toBeCloseTo(baseRect!.w, 5)
     expect(core.h).toBeCloseTo(baseRect!.h, 5)
+  })
+})
+
+describe('a lit mark over a waveform is outlined, not covered (#1508)', () => {
+  const SIG = new Set(['saw|60'])
+  /** The base geometry of note0 — the rectangle both canvases share. */
+  function baseRectFor(scene: TimelineScene, layout: ReturnType<typeof layoutFor>) {
+    const band = laneMarkBands(scene.lanes[0], layout.boxes[0])[0]
+    const r = markRect(scene.lanes[0].notes[0], band, 1000, 4000, 0, 4, (c) => c * 1000)
+    expect(r).not.toBeNull()
+    return r!
+  }
+
+  it('paints NOTHING over the mark: two rings, zero fills', () => {
+    const scene = sceneFixture()
+    const { ctx, rects, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layoutFor(scene), 1.2, SIG, THEME, waveformsFor('saw', 1))
+    // The claim is about COVERAGE, so it is asserted as the absence of fill —
+    // a stroke count alone would pass just as well with the fills still there.
+    expect(rects.length).toBe(0)
+    expect(strokes.length).toBe(2)
+  })
+
+  it('CONTROL: with no waveform source the same mark still fills, exactly as before', () => {
+    const scene = sceneFixture()
+    const { ctx, rects, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layoutFor(scene), 1.2, SIG, THEME)
+    expect(rects.length).toBe(2)
+    expect(strokes.length).toBe(0)
+  })
+
+  it("the glow's ink stops at the mark's edge and never enters it", () => {
+    const scene = sceneFixture()
+    const layout = layoutFor(scene)
+    const base = baseRectFor(scene, layout)
+    const { ctx, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layout, 1.2, SIG, THEME, waveformsFor('saw', 1))
+    const glow = strokes[0]
+    expect(glow.style).toBe(THEME.litGlow)
+    // A stroke spreads lineWidth/2 either side of its path, so the ring's INNER
+    // edge is the path inset by half the width. That inner edge must land on the
+    // mark's own bounds — this is the arm that fails if the padded rect is
+    // stroked directly, which would push glowPad of ink across the waveform.
+    expect(glow.x + glow.lineWidth / 2).toBeCloseTo(base.x, 5)
+    expect(glow.y + glow.lineWidth / 2).toBeCloseTo(base.y, 5)
+    expect(glow.w - glow.lineWidth).toBeCloseTo(base.w, 5)
+    expect(glow.h - glow.lineWidth).toBeCloseTo(base.h, 5)
+  })
+
+  it('the core is a hairline on the mark\'s own border', () => {
+    const scene = sceneFixture()
+    const layout = layoutFor(scene)
+    const base = baseRectFor(scene, layout)
+    const { ctx, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layout, 1.2, SIG, THEME, waveformsFor('saw', 1))
+    const core = strokes[1]
+    expect(core.style).toBe(THEME.lit)
+    expect(core.lineWidth).toBe(1)
+    // Half-pixel offsets: the stroke lands ON a pixel row instead of straddling
+    // two at half coverage. So it covers the mark's outermost pixel ring only.
+    expect(core.x).toBeCloseTo(base.x + 0.5, 5)
+    expect(core.w).toBeCloseTo(base.w - 1, 5)
+  })
+
+  it('a sample that has not decoded yet lights the old way', () => {
+    const scene = sceneFixture()
+    const { ctx, rects, strokes } = mockCtx()
+    // A source that knows a DIFFERENT voice — `peaksFor` returns null here.
+    drawLiveOverlay(ctx, scene, WIDE, layoutFor(scene), 1.2, SIG, THEME, waveformsFor('other', 1))
+    expect(rects.length).toBe(2)
+    expect(strokes.length).toBe(0)
+  })
+
+  it('an unknown tempo lights the old way (no fit is computable before playback)', () => {
+    const scene = sceneFixture()
+    const { ctx, rects, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layoutFor(scene), 1.2, SIG, THEME, waveformsFor('saw', 1, null))
+    expect(rects.length).toBe(2)
+    expect(strokes.length).toBe(0)
+  })
+
+  it('a synth note has no sample to protect, so it still fills', () => {
+    const base = sceneFixture()
+    // The same mark, but `s`-less: a pitch and no file. Rebuilt rather than
+    // mutated — the scene's arrays are readonly, and a scene assembled the way
+    // the real one is keeps the arm honest about the shape under test.
+    const scene: TimelineScene = {
+      ...base,
+      lanes: [
+        {
+          ...base.lanes[0],
+          notes: [{ cycle: 1, end: 1.5, pitch: 60, gain: 1, voice: null }],
+          voices: [{ key: NO_VOICE, label: '', melodic: true, pitchMin: 60, pitchMax: 67 }],
+        },
+      ],
+    }
+    const { ctx, rects } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layoutFor(scene), 1.2, new Set(['|60']), THEME, waveformsFor('saw', 1))
+    expect(rects.length).toBeGreaterThan(0)
+  })
+
+  it('a mark too short for a waveform lights the old way', () => {
+    const scene = sceneFixture()
+    const layout = computeLaneLayout(scene.lanes, new Set(), 22, 96)
+    const band = laneMarkBands(scene.lanes[0], layout.boxes[0])[0]
+    const r = markRect(scene.lanes[0].notes[0], band, 1000, 4000, 0, 4, (c) => c * 1000)
+    // Precondition, asserted so this arm cannot pass for the wrong reason: the
+    // mark really is below the height gate at this row size.
+    expect(r).not.toBeNull()
+    expect(r!.h).toBeLessThan(MIN_WAVEFORM_H)
+    const { ctx, rects, strokes } = mockCtx()
+    drawLiveOverlay(ctx, scene, WIDE, layout, 1.2, SIG, THEME, waveformsFor('saw', 1))
+    expect(rects.length).toBe(2)
+    expect(strokes.length).toBe(0)
   })
 })
 
