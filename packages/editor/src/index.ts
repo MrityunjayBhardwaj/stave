@@ -427,6 +427,11 @@ export type {
   ImportAssetDeps,
   ImportAssetResult,
 } from './workspace/assetStore'
+// A sample's drawable shape, for the Song timeline's waveform tier (#1506).
+// Only the two the app calls: the draw path's lookup, and the warm-up that makes
+// a local take visible before it has been played.
+export { peaksForSample, warmSamplePeaks } from './workspace/samplePeaks'
+export type { SamplePeaks, SampleRef } from './workspace/samplePeaks'
 // Project commit store (file-history milestone, Phase F #196)
 export {
   initHistory,

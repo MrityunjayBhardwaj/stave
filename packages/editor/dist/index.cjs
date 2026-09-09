@@ -8087,7 +8087,7 @@ var _StrudelEngine = class _StrudelEngine {
     }
     installMiniStringParser({ core: coreMod, mini: miniMod });
     const { transpiler } = await required("@strudel/transpiler", () => import('@strudel/transpiler'));
-    const { initAudio, getAudioContext: getAudioContext3, webaudioOutput, webaudioRepl } = webaudioMod;
+    const { initAudio, getAudioContext: getAudioContext4, webaudioOutput, webaudioRepl } = webaudioMod;
     await required("initAudio", () => initAudio());
     webaudioMod.registerSynthSounds();
     webaudioMod.registerZZFXSounds();
@@ -8247,7 +8247,7 @@ var _StrudelEngine = class _StrudelEngine {
     console.log(`[StrudelEngine] aliasBank: soundMap keys ${preAliasCount} \u2192 ${postAliasCount} (\u0394 ${postAliasCount - preAliasCount}; expect non-negative)`);
     const soundMapData = webaudioMod.soundMap?.get() ?? {};
     this.loadedSoundNames = Object.keys(soundMapData).filter((k) => !k.startsWith("_"));
-    this.audioCtx = getAudioContext3();
+    this.audioCtx = getAudioContext4();
     const audioCtx = this.audioCtx;
     this.analyserNode = audioCtx.createAnalyser();
     this.analyserNode.fftSize = 2048;
@@ -43785,6 +43785,95 @@ function renameAssetRecord(id, name) {
   return unique;
 }
 __name(renameAssetRecord, "renameAssetRecord");
+var PEAK_COLUMNS = 1024;
+function computePeaks(channels, columns) {
+  if (columns <= 0) return new Float32Array(0);
+  const out = new Float32Array(columns * 2);
+  const length = channels.length > 0 ? channels[0].length : 0;
+  if (length === 0 || channels.length === 0) return out;
+  for (let col = 0; col < columns; col++) {
+    const start = Math.floor(col * length / columns);
+    const end = Math.floor((col + 1) * length / columns);
+    let min = Infinity;
+    let max = -Infinity;
+    if (end > start) {
+      for (const channel of channels) {
+        for (let i = start; i < end; i++) {
+          const v = channel[i];
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+      }
+    } else {
+      const at = Math.min(start, length - 1);
+      for (const channel of channels) {
+        const v = channel[at];
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    out[col * 2] = min;
+    out[col * 2 + 1] = max;
+  }
+  return out;
+}
+__name(computePeaks, "computePeaks");
+function channelsOf(buffer) {
+  const channels = [];
+  for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+  return channels;
+}
+__name(channelsOf, "channelsOf");
+var peakCache = /* @__PURE__ */ new Map();
+var liveDeps = { getSound: webaudio.getSound, getSampleInfo: webaudio.getSampleInfo, getCachedBuffer: webaudio.getCachedBuffer };
+function resolveSampleUrl(ref, deps = liveDeps) {
+  const sound = deps.getSound(ref.s);
+  const bank = sound?.data?.samples;
+  if (bank == null || typeof bank !== "object") return null;
+  try {
+    const hapValue = { s: ref.s };
+    if (ref.note != null) hapValue.note = ref.note;
+    if (ref.n != null) hapValue.n = ref.n;
+    const { url } = deps.getSampleInfo(hapValue, bank);
+    return typeof url === "string" && url.length > 0 ? url : null;
+  } catch {
+    return null;
+  }
+}
+__name(resolveSampleUrl, "resolveSampleUrl");
+function peaksForSample(ref, deps = liveDeps) {
+  const url = resolveSampleUrl(ref, deps);
+  if (url == null) return null;
+  const cached2 = peakCache.get(url);
+  if (cached2) return cached2;
+  const buffer = deps.getCachedBuffer(url);
+  if (buffer == null) return null;
+  const peaks = {
+    data: computePeaks(channelsOf(buffer), PEAK_COLUMNS),
+    columns: PEAK_COLUMNS,
+    duration: buffer.duration
+  };
+  peakCache.set(url, peaks);
+  return peaks;
+}
+__name(peaksForSample, "peaksForSample");
+var liveWarmDeps = { loadBuffer: webaudio.loadBuffer, getAudioContext: webaudio.getAudioContext };
+async function warmSamplePeaks(names, deps = liveDeps, io = liveWarmDeps) {
+  const warmed2 = [];
+  for (const name of names) {
+    try {
+      const url = resolveSampleUrl({ s: name }, deps);
+      if (url == null) continue;
+      if (deps.getCachedBuffer(url) == null) {
+        await io.loadBuffer(url, io.getAudioContext(), name);
+      }
+      if (peaksForSample({ s: name }, deps) != null) warmed2.push(name);
+    } catch {
+    }
+  }
+  return warmed2;
+}
+__name(warmSamplePeaks, "warmSamplePeaks");
 
 // src/workspace/history/historyDriver.ts
 var DEFAULT_IDLE_MS = 5e3;
@@ -46967,6 +47056,7 @@ exports.parseTopLevel = parseTopLevel;
 exports.patternFromJSON = patternFromJSON;
 exports.patternKind = patternKind;
 exports.patternToJSON = patternToJSON;
+exports.peaksForSample = peaksForSample;
 exports.peekAssetUrl = peekAssetUrl;
 exports.perf = perf;
 exports.pickCountSectionArms = countSectionArms;
@@ -47136,6 +47226,7 @@ exports.useTrackMetaMap = useTrackMetaMap;
 exports.useWorkspaceFile = useWorkspaceFile;
 exports.validatePersistedState = validatePersistedState;
 exports.warmMonaco = warmMonaco;
+exports.warmSamplePeaks = warmSamplePeaks;
 exports.wholeWalkWindow = wholeWalkWindow;
 exports.withStructBatch = withStructBatch;
 exports.workspaceAudioBus = workspaceAudioBus;

@@ -66,6 +66,56 @@ declare module '@strudel/webaudio' {
   ): Promise<void>
 
   /**
+   * A registered sound, or `undefined` for a name nothing has registered.
+   *
+   * `data.samples` is the BANK — the same object `registerSample` stored and the
+   * same one it hands to the trigger (`superdough/sampler.mjs:354-359`), so
+   * reading it asks exactly the question playback will ask. Synths and wavetables
+   * register with no bank, which is why `samples` is optional here rather than
+   * a promise that every sound is a sample (#1506).
+   */
+  export function getSound(name: string):
+    | { data?: { type?: string; samples?: Record<string, string[]> | string[] } }
+    | undefined
+
+  /**
+   * Which file (and at what playback rate) a hap value resolves to within a bank
+   * (`superdough/sampler.mjs:33`). The bank comes from `getSound(s).data.samples`.
+   *
+   * For a LIST bank the file is picked by `n`; for an OBJECT bank it is picked by
+   * nearest note (`superdough/util.mjs:97-107`), so the note matters to WHICH
+   * file, not only to its pitch.
+   */
+  export function getSampleInfo(
+    hapValue: Record<string, unknown>,
+    bank: Record<string, string[]> | string[]
+  ): { transpose: number; url: string; index: number; midi: number; label: string; playbackRate: number }
+
+  /**
+   * The DECODED buffer for an already-loaded URL, or `undefined` (`sampler.mjs:17`).
+   *
+   * Synchronous and non-fetching: it reads a map that `loadBuffer` fills only
+   * after a fetch AND a decode have both completed (`sampler.mjs:86-101`), so a
+   * miss means "not loaded yet", never "no such sample".
+   *
+   * ⚠ superdough's own comment calls this cache `string: Promise<ArrayBuffer>`
+   * (`sampler.mjs:14`). It is neither — `:100` stores the decoded `AudioBuffer`.
+   * Typed here from the code rather than from the comment.
+   */
+  export function getCachedBuffer(url: string): AudioBuffer | undefined
+
+  /**
+   * Fetch + decode a sample URL, resolving to the decoded buffer
+   * (`superdough/sampler.mjs:86`). Deduplicated internally by URL, and it is
+   * what populates the cache `getCachedBuffer` reads, so calling it is how a
+   * sample becomes drawable without waiting for it to be played (#1506).
+   *
+   * `label` only shapes the log line. Decoding does not require a RUNNING audio
+   * context — a suspended one decodes — so this does not need a user gesture.
+   */
+  export function loadBuffer(url: string, ac: BaseAudioContext, label?: string): Promise<AudioBuffer>
+
+  /**
    * Creates a full repl (scheduler + evaluate) wired to webaudio output.
    */
   export function webaudioRepl(options?: {
