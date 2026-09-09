@@ -412,7 +412,6 @@ export {
 // The project document's memory of its assets (#1502)
 export {
   listAssetRecords,
-  getAssetRecord,
   addAssetRecord,
   removeAssetRecord,
   renameAssetRecord,

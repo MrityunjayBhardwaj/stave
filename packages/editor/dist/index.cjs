@@ -43753,10 +43753,6 @@ function listAssetRecords() {
   return Array.from(getAssetsMap().values());
 }
 __name(listAssetRecords, "listAssetRecords");
-function getAssetRecord(id) {
-  return getAssetsMap().get(id) ?? null;
-}
-__name(getAssetRecord, "getAssetRecord");
 function addAssetRecord(record) {
   getAssetsMap().set(record.id, record);
 }
@@ -46802,7 +46798,6 @@ exports.getActiveHistoryFile = getActiveHistoryFile;
 exports.getActiveProjectId = getActiveProjectId;
 exports.getAdaptivePerfEnabled = getAdaptivePerfEnabled;
 exports.getAsset = getAsset;
-exports.getAssetRecord = getAssetRecord;
 exports.getBackdropOpacity = getBackdropOpacity;
 exports.getBackdropQuality = getBackdropQuality;
 exports.getBackdropVizSpan = getBackdropVizSpan;

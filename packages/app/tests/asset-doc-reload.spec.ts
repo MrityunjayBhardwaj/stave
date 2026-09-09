@@ -72,6 +72,9 @@ interface PageProbe {
   docAdd(record: DocRecord): Promise<void>
   docRemove(id: string): Promise<void>
   docRename(id: string, name: string): Promise<string | null>
+  docWatch(): Promise<void>
+  docNotifyCount(): Promise<number>
+  docUnwatch(): Promise<number>
   inSoundMap(name: string): boolean
   decode(url: string): Promise<{ duration: number; sampleRate: number }>
 }
@@ -232,6 +235,59 @@ test('a record whose bytes are gone is skipped while its sibling registers', asy
     [TAKE_A, TAKE_B],
   )
   expect(names).toEqual(['kept'])
+})
+
+// ---------------------------------------------------------------------------
+// The observer — and the 'add' vs 'update' trap specifically
+// ---------------------------------------------------------------------------
+
+test('adding a record notifies subscribers', async ({ page }) => {
+  const n = await page.evaluate(async (b64) => {
+    const p = window.__staveAssetProbe!
+    await p.docWatch()
+    const { record } = await p.import(b64, 'audio/wav', 'my_take.wav', [])
+    await p.docAdd(record)
+    return p.docUnwatch()
+  }, TAKE_A)
+  expect(n).toBe(1)
+})
+
+test('RENAMING a record notifies too — Y.Map calls that an update, not an add', async ({
+  page,
+}) => {
+  // The trap this arm exists for: a handler that switched on the change action
+  // and only answered 'add' would leave every consumer holding a stale name
+  // after a rename, with nothing failing. The count is measured from AFTER the
+  // add, so the add's own notification cannot be mistaken for this one.
+  const n = await page.evaluate(async (b64) => {
+    const p = window.__staveAssetProbe!
+    const { record } = await p.import(b64, 'audio/wav', 'my_take.wav', [])
+    await p.docAdd(record)
+    await p.docWatch()
+    await p.docRename(record.id, 'chorus')
+    return p.docUnwatch()
+  }, TAKE_A)
+  expect(n).toBe(1)
+})
+
+test('removing a record notifies, and an unsubscribed watcher hears nothing', async ({
+  page,
+}) => {
+  // Two readings in one run: the delete path fires, and the returned
+  // unsubscribe actually detaches. Without the second half, a subscription
+  // that never released would still satisfy the first.
+  const seen = await page.evaluate(async (b64) => {
+    const p = window.__staveAssetProbe!
+    const { record } = await p.import(b64, 'audio/wav', 'my_take.wav', [])
+    await p.docAdd(record)
+    await p.docWatch()
+    await p.docRemove(record.id)
+    const afterRemove = await p.docUnwatch()
+    // now unsubscribed — this write must not be counted
+    await p.docAdd(record)
+    return { afterRemove, afterUnsubscribe: await p.docNotifyCount() }
+  }, TAKE_A)
+  expect(seen).toEqual({ afterRemove: 1, afterUnsubscribe: 1 })
 })
 
 // ---------------------------------------------------------------------------

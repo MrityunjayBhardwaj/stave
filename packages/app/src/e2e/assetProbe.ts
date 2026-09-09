@@ -64,6 +64,15 @@ export interface AssetProbe {
   docRemove(id: string): Promise<void>;
   /** Rename a record; returns the name actually taken (uniqued), or null. */
   docRename(id: string, name: string): Promise<string | null>;
+  /**
+   * Subscribe to the document's assets and count notifications from here on.
+   * Returns a token to read the count with; call `docNotifyCount` to read it.
+   */
+  docWatch(): Promise<void>;
+  /** How many asset notifications have fired since `docWatch`. */
+  docNotifyCount(): Promise<number>;
+  /** Stop the watch started by `docWatch`. */
+  docUnwatch(): Promise<number>;
   /** Is this name present in superdough's live `soundMap`? */
   inSoundMap(name: string): boolean;
   /** What superdough recorded for a name: its type and the URLs it will fetch. */
@@ -130,6 +139,11 @@ export function installAssetProbe(): () => void {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editor = () => import("@stave/editor") as Promise<any>;
+
+  // Notification counter for the assets observer. Held here rather than in the
+  // spec because the subscription has to live in page scope across calls.
+  let docNotifies = 0;
+  let docUnsub: (() => void) | null = null;
 
   const blobOf = (base64: string, mime: string) =>
     new Blob([base64ToBuffer(base64)], { type: mime });
@@ -245,6 +259,25 @@ export function installAssetProbe(): () => void {
     async docRename(id, name) {
       const m = await editor();
       return m.renameAssetRecord(id, name);
+    },
+
+    async docWatch() {
+      const m = await editor();
+      docUnsub?.();
+      docNotifies = 0;
+      docUnsub = m.subscribeToAssets(() => {
+        docNotifies++;
+      });
+    },
+
+    async docNotifyCount() {
+      return docNotifies;
+    },
+
+    async docUnwatch() {
+      docUnsub?.();
+      docUnsub = null;
+      return docNotifies;
     },
 
     inSoundMap(name) {

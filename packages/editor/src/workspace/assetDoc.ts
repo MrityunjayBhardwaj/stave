@@ -106,11 +106,6 @@ export function listAssetRecords(): AssetRecord[] {
   return Array.from(getAssetsMap().values())
 }
 
-/** One record by id, or null. */
-export function getAssetRecord(id: string): AssetRecord | null {
-  return getAssetsMap().get(id) ?? null
-}
-
 /**
  * Add a reference to the project.
  *
