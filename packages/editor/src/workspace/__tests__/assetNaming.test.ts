@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   FALLBACK_ASSET_NAME,
+  nextTakeName,
   planAssetImport,
   soundNameFromFilename,
   uniqueSoundName,
@@ -80,6 +81,39 @@ describe('uniqueSoundName', () => {
 
   it('skips a run of taken suffixes', () => {
     expect(uniqueSoundName('vocal', ['vocal', 'vocal_2', 'vocal_3'])).toBe('vocal_4')
+  })
+})
+
+describe('nextTakeName', () => {
+  it('the first take is take_1, not take', () => {
+    // Positional from the start — a bare `take` would imply there is only ever
+    // one, and the number is the whole point of the friction.
+    expect(nextTakeName([])).toBe('take_1')
+  })
+
+  it('counts past the highest existing take', () => {
+    expect(nextTakeName(['take_1', 'take_2'])).toBe('take_3')
+  })
+
+  it('does NOT fill a gap left by a deleted take', () => {
+    // The user deleted take_2 because they did not want it. Handing that name
+    // to the next recording makes two different takes share one name across a
+    // session. An ever-increasing counter never does.
+    expect(nextTakeName(['take_1', 'take_3'])).toBe('take_4')
+  })
+
+  it('ignores names that merely start with take', () => {
+    expect(nextTakeName(['take_one', 'takeaway', 'my_take_9'])).toBe('take_1')
+  })
+
+  it('ignores a renamed take — the counter tracks names, not history', () => {
+    // A take renamed to `chorus` no longer defends its number, so the next
+    // recording may reuse it. That is the cost of a rename being a real rename.
+    expect(nextTakeName(['chorus'])).toBe('take_1')
+  })
+
+  it('is unaffected by imported assets that are not takes', () => {
+    expect(nextTakeName(['vocal', 'my_take_2', 'take_5'])).toBe('take_6')
   })
 })
 

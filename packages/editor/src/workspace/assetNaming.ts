@@ -92,6 +92,39 @@ export function uniqueSoundName(base: string, taken: Iterable<string>): string {
   return `${base}_${n}`
 }
 
+/** The prefix a recorded take is named with, before its number. */
+export const TAKE_NAME_PREFIX = 'take'
+
+/**
+ * The next positional name for a recorded take: `take_1`, `take_2`, …
+ *
+ * A recording has no filename, so something has to name it — and what it must
+ * NOT be is a descriptive name derived from anything. A name the tool invented
+ * and the user did not write is the tool deciding for them; the honest default
+ * is positional and opaque, and the friction of seeing `take_3` is exactly what
+ * prompts a deliberate rename. Same rule that makes an unnamed track `d1`
+ * rather than "Bass".
+ *
+ * Numbering continues past the highest existing take rather than filling gaps.
+ * Reusing a number a take used to hold would make two different recordings
+ * share one name across a session — the user deleted `take_2` because they did
+ * not want it, and handing that name to the next recording is confusing in a
+ * way an ever-increasing counter is not. (`uniqueSoundName` fills gaps because
+ * it is resolving a collision between names the user supplied; this is minting
+ * a fresh one, which is a different question.)
+ */
+export function nextTakeName(existing: Iterable<string>): string {
+  let highest = 0
+  const pattern = new RegExp(`^${TAKE_NAME_PREFIX}_(\\d+)$`)
+  for (const name of existing) {
+    const m = pattern.exec(name)
+    if (!m) continue
+    const n = Number(m[1])
+    if (Number.isFinite(n) && n > highest) highest = n
+  }
+  return `${TAKE_NAME_PREFIX}_${highest + 1}`
+}
+
 /** What an import is about to do, decided before anything is written. */
 export interface AssetImportPlan {
   /** The reference to add to the document. */

@@ -15,6 +15,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
+import { RecordTakeButton } from "./RecordTakeButton";
 import {
   listAssetProviders,
   subscribeToAssetProviders,
@@ -190,16 +191,20 @@ export function AssetLibraryPanel({ onClose }: { onClose?: () => void }) {
     <div style={styles.root} data-sidebar data-asset-library>
       <div style={styles.header}>
         <span>LIBRARY</span>
-        {onClose && (
-          <button
-            style={styles.headerClose}
-            title="Close"
-            aria-label="Close Library"
-            onClick={onClose}
-          >
-            <Icon name="chevron-left" size="14px" />
-          </button>
-        )}
+        <div style={styles.headerActions}>
+          {/* #1504 — the record control sits with the assets it produces. */}
+          <RecordTakeButton />
+          {onClose && (
+            <button
+              style={styles.headerClose}
+              title="Close"
+              aria-label="Close Library"
+              onClick={onClose}
+            >
+              <Icon name="chevron-left" size="14px" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={styles.controls}>
@@ -738,6 +743,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
   },
   headerClose: {
     background: "none",

@@ -43551,6 +43551,19 @@ function uniqueSoundName(base, taken) {
   return `${base}_${n}`;
 }
 __name(uniqueSoundName, "uniqueSoundName");
+var TAKE_NAME_PREFIX = "take";
+function nextTakeName(existing) {
+  let highest = 0;
+  const pattern = new RegExp(`^${TAKE_NAME_PREFIX}_(\\d+)$`);
+  for (const name of existing) {
+    const m = pattern.exec(name);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > highest) highest = n;
+  }
+  return `${TAKE_NAME_PREFIX}_${highest + 1}`;
+}
+__name(nextTakeName, "nextTakeName");
 function planAssetImport(input, existing, mintId) {
   const name = uniqueSoundName(
     soundNameFromFilename(input.filename),
@@ -46694,6 +46707,7 @@ exports.SonicPiEngine = SonicPiEngine;
 exports.SplitPane = SplitPane;
 exports.StrudelEditor = StrudelEditor;
 exports.StrudelEngine = StrudelEngine;
+exports.TAKE_NAME_PREFIX = TAKE_NAME_PREFIX;
 exports.UI_ICON_SIZE_VAR = UI_ICON_SIZE_VAR;
 exports.VISUAL_EDIT_TABS = VISUAL_EDIT_TABS;
 exports.VIZ_FLAG_KEYS = VIZ_FLAG_KEYS;
@@ -46918,6 +46932,7 @@ exports.merge = merge;
 exports.midiToPitch = midiToPitch;
 exports.mountVizPreview = mountVizPreview;
 exports.mountVizRenderer = mountVizRenderer;
+exports.nextTakeName = nextTakeName;
 exports.normalizeEdits = normalizeEdits;
 exports.normalizeStrudelHap = normalizeStrudelHap;
 exports.noteToMidi = noteToMidi;
