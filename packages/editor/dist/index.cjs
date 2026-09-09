@@ -17047,12 +17047,12 @@ function ensureUndoManager() {
   }, "filesObserver");
   files.observe(filesObserver);
   const listeners13 = /* @__PURE__ */ new Set();
-  const notify5 = /* @__PURE__ */ __name(() => {
+  const notify6 = /* @__PURE__ */ __name(() => {
     for (const l of listeners13) l();
   }, "notify");
-  const onStackItemAdded = /* @__PURE__ */ __name(() => notify5(), "onStackItemAdded");
-  const onStackItemPopped = /* @__PURE__ */ __name(() => notify5(), "onStackItemPopped");
-  const onStackCleared = /* @__PURE__ */ __name(() => notify5(), "onStackCleared");
+  const onStackItemAdded = /* @__PURE__ */ __name(() => notify6(), "onStackItemAdded");
+  const onStackItemPopped = /* @__PURE__ */ __name(() => notify6(), "onStackItemPopped");
+  const onStackCleared = /* @__PURE__ */ __name(() => notify6(), "onStackCleared");
   um.on("stack-item-added", onStackItemAdded);
   um.on("stack-item-popped", onStackItemPopped);
   um.on("stack-cleared", onStackCleared);
@@ -35768,7 +35768,7 @@ function createCatalogStore() {
     recompute();
     listeners13.forEach((l) => l());
   }, "setAccessor");
-  const notify5 = /* @__PURE__ */ __name(() => {
+  const notify6 = /* @__PURE__ */ __name(() => {
     recompute();
     listeners13.forEach((l) => l());
   }, "notify");
@@ -35778,7 +35778,7 @@ function createCatalogStore() {
     return () => listeners13.delete(listener);
   }, "subscribe");
   const useCatalog = /* @__PURE__ */ __name(() => React36__namespace.useSyncExternalStore(subscribe7, read5, () => null), "useCatalog");
-  return { setAccessor, notify: notify5, read: read5, useCatalog };
+  return { setAccessor, notify: notify6, read: read5, useCatalog };
 }
 __name(createCatalogStore, "createCatalogStore");
 var instrumentStore = createCatalogStore();
@@ -43722,6 +43722,61 @@ async function importAsset(blob, filename, existing = [], deps = {}) {
 }
 __name(importAsset, "importAsset");
 
+// src/workspace/assetDoc.ts
+var subscribers = /* @__PURE__ */ new Set();
+function notify5() {
+  for (const cb of Array.from(subscribers)) cb();
+}
+__name(notify5, "notify");
+function getAssetsMap() {
+  return ensureDoc().getMap("assets");
+}
+__name(getAssetsMap, "getAssetsMap");
+var wiredAssetsMap = null;
+function ensureAssetsObserver() {
+  const current4 = getAssetsMap();
+  if (wiredAssetsMap === current4) return;
+  current4.observe(() => notify5());
+  wiredAssetsMap = current4;
+}
+__name(ensureAssetsObserver, "ensureAssetsObserver");
+function subscribeToAssets(cb) {
+  ensureAssetsObserver();
+  subscribers.add(cb);
+  return () => {
+    subscribers.delete(cb);
+  };
+}
+__name(subscribeToAssets, "subscribeToAssets");
+function listAssetRecords() {
+  ensureAssetsObserver();
+  return Array.from(getAssetsMap().values());
+}
+__name(listAssetRecords, "listAssetRecords");
+function getAssetRecord(id) {
+  return getAssetsMap().get(id) ?? null;
+}
+__name(getAssetRecord, "getAssetRecord");
+function addAssetRecord(record) {
+  getAssetsMap().set(record.id, record);
+}
+__name(addAssetRecord, "addAssetRecord");
+function removeAssetRecord(id) {
+  getAssetsMap().delete(id);
+}
+__name(removeAssetRecord, "removeAssetRecord");
+function renameAssetRecord(id, name) {
+  const map = getAssetsMap();
+  const existing = map.get(id);
+  if (!existing) return null;
+  const taken = Array.from(map.values()).filter((r) => r.id !== id).map((r) => r.name);
+  const unique = uniqueSoundName(name, taken);
+  if (unique === existing.name) return unique;
+  map.set(id, { ...existing, name: unique });
+  return unique;
+}
+__name(renameAssetRecord, "renameAssetRecord");
+
 // src/workspace/history/historyDriver.ts
 var DEFAULT_IDLE_MS = 5e3;
 function resolveIdleMs() {
@@ -46662,6 +46717,7 @@ exports.Writeback = Writeback;
 exports.accumulateLanes = accumulateLanes;
 exports.accumulateLanesInWindow = accumulateLanesInWindow;
 exports.adaptMasterChunk = adaptMasterChunk;
+exports.addAssetRecord = addAssetRecord;
 exports.aggregateLaneItems = aggregateLaneItems;
 exports.analyzeEvents = analyzeEvents;
 exports.analyzeSong = analyzeSong;
@@ -46746,6 +46802,7 @@ exports.getActiveHistoryFile = getActiveHistoryFile;
 exports.getActiveProjectId = getActiveProjectId;
 exports.getAdaptivePerfEnabled = getAdaptivePerfEnabled;
 exports.getAsset = getAsset;
+exports.getAssetRecord = getAssetRecord;
 exports.getBackdropOpacity = getBackdropOpacity;
 exports.getBackdropQuality = getBackdropQuality;
 exports.getBackdropVizSpan = getBackdropVizSpan;
@@ -46842,6 +46899,7 @@ exports.knobRangeFor = knobRangeFor;
 exports.laneKeyOf = laneKeyOf;
 exports.languageForRenderer = languageForRenderer;
 exports.levenshtein = levenshtein;
+exports.listAssetRecords = listAssetRecords;
 exports.listAssets = listAssets;
 exports.listBottomPanelTabs = listBottomPanelTabs;
 exports.listBranches = listBranches;
@@ -46940,6 +46998,8 @@ exports.registerRuntimeProvider = registerRuntimeProvider;
 exports.releaseAllAssets = releaseAllAssets;
 exports.releaseAsset = releaseAsset;
 exports.removeArm = removeArm;
+exports.removeAssetRecord = removeAssetRecord;
+exports.renameAssetRecord = renameAssetRecord;
 exports.renameEdit = renameEdit;
 exports.renameProject = renameProject;
 exports.renameWorkspaceFile = renameWorkspaceFile;
@@ -47034,6 +47094,7 @@ exports.subscribeFixed = subscribeFixed;
 exports.subscribeIRSnapshot = subscribeIRSnapshot;
 exports.subscribeLog = subscribeLog;
 exports.subscribeNoteColorMode = subscribeNoteColorMode;
+exports.subscribeToAssets = subscribeToAssets;
 exports.subscribeToBottomPanelTabs = subscribeToBottomPanelTabs;
 exports.subscribeToDocUpdate = subscribeToDocUpdate;
 exports.subscribeToFileList = subscribeToFileList;

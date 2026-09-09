@@ -56,6 +56,14 @@ export interface AssetProbe {
   register(record: AssetRecord): Promise<boolean>;
   /** Register a whole project's records; returns the names that resolved. */
   registerAll(records: AssetRecord[]): Promise<string[]>;
+  /** #1502 — the records the PROJECT DOCUMENT holds, not the blob store. */
+  docList(): Promise<AssetRecord[]>;
+  /** Add a record to the project document. */
+  docAdd(record: AssetRecord): Promise<void>;
+  /** Drop a record from the project document. Bytes are untouched. */
+  docRemove(id: string): Promise<void>;
+  /** Rename a record; returns the name actually taken (uniqued), or null. */
+  docRename(id: string, name: string): Promise<string | null>;
   /** Is this name present in superdough's live `soundMap`? */
   inSoundMap(name: string): boolean;
   /** What superdough recorded for a name: its type and the URLs it will fetch. */
@@ -217,6 +225,26 @@ export function installAssetProbe(): () => void {
     async registerAll(records) {
       const m = await editor();
       return m.registerAssets(records);
+    },
+
+    async docList() {
+      const m = await editor();
+      return m.listAssetRecords();
+    },
+
+    async docAdd(record) {
+      const m = await editor();
+      m.addAssetRecord(record);
+    },
+
+    async docRemove(id) {
+      const m = await editor();
+      m.removeAssetRecord(id);
+    },
+
+    async docRename(id, name) {
+      const m = await editor();
+      return m.renameAssetRecord(id, name);
     },
 
     inSoundMap(name) {
