@@ -112,6 +112,11 @@ export interface SignalAutomation {
  *
  * Measured over the sweep corpus (`loadCorpus`, 150 documents, 200 drawable
  * automations): range spelled 180 (90%), rate spelled 128 (64%), NEITHER 16 (8%).
+ * ⚠ Those figures are OWNED BY A GATE, not transcribed here and left to rot:
+ * `packages/app/tests/parity-corpus/signal-span-census.test.ts` derives them
+ * from these spans and pins them, so the comment and the corpus cannot drift
+ * apart silently. Update both together or neither. The 8% is what makes
+ * `captionEdit`'s insert path real rather than defensive.
  */
 export interface SignalSpans {
   /** The signal identifier itself — `sine`, `perlin`. Replacing this text is the
