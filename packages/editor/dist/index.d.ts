@@ -823,6 +823,11 @@ interface SignalAutomation {
  *
  * Measured over the sweep corpus (`loadCorpus`, 150 documents, 200 drawable
  * automations): range spelled 180 (90%), rate spelled 128 (64%), NEITHER 16 (8%).
+ * ⚠ Those figures are OWNED BY A GATE, not transcribed here and left to rot:
+ * `packages/app/tests/parity-corpus/signal-span-census.test.ts` derives them
+ * from these spans and pins them, so the comment and the corpus cannot drift
+ * apart silently. Update both together or neither. The 8% is what makes
+ * `captionEdit`'s insert path real rather than defensive.
  */
 interface SignalSpans {
     /** The signal identifier itself — `sine`, `perlin`. Replacing this text is the
@@ -6667,6 +6672,305 @@ declare function deleteSnapshot(id: string): Promise<void>;
 declare function restoreSnapshot(id: string): Promise<void>;
 
 /**
+ * assetNaming — the PURE half of the binary asset store (#1500, decision #1499).
+ *
+ * Everything here is a function of plain values: no IndexedDB, no `crypto`, no
+ * `Date`. That split is not stylistic. `@stave/editor` does not install
+ * `fake-indexeddb` and the vitest env (jsdom) has no IndexedDB, so a module that
+ * touches storage cannot be unit-tested at all in this package — the established
+ * convention is pure logic in vitest, I/O observed in a browser (P80/P81; the
+ * `history/` modules were built this way in PR #205).
+ *
+ * The bugs in an import path live on this side anyway: what a file called
+ * `My Take (2).wav` is allowed to become, and what happens when two different
+ * files are both called `vocal.wav` — which is not hypothetical, it is what
+ * every browser names the file you just downloaded.
+ *
+ * ## Why names are lowercase
+ *
+ * Not cosmetic. Superdough resolves a sound by lowercasing the key it was asked
+ * for — `getSound` is `soundMap.get()[s.toLowerCase()]`
+ * (`superdough/superdough.mjs:165`). A name registered with any uppercase
+ * character is therefore registered at an address `s("...")` can never reach.
+ * The sanitiser lowercases so a registered name is a reachable one.
+ *
+ * ## Two identities, on purpose
+ *
+ * A record carries BOTH a `blobHash` (what the bytes are) and an `id` (which
+ * reference in the document this is). #1499 settled the pair: mutable documents
+ * get stable minted ids, immutable blobs get content hashes. The consequence
+ * that shows up here is that the same bytes imported twice are ONE blob and TWO
+ * records — dedup belongs to the bytes, not to the user's intent to reference
+ * them twice.
+ */
+/**
+ * A reference to stored bytes, as the project document will carry it.
+ *
+ * The document wiring itself is the next slice (#1500 scopes it out) — this is
+ * the shape that slice will persist, defined here so the naming and dedup
+ * decisions that produce it are testable now.
+ */
+interface AssetRecord {
+    /** Stable per-reference id. Minted, never derived from content — #1499. */
+    readonly id: string;
+    /** The `s("…")` address. Lowercase and unique within the project. */
+    readonly name: string;
+    /** Content hash of the bytes in the blob store. Shared by duplicates. */
+    readonly blobHash: string;
+    /** The blob's MIME type as the browser reported it, e.g. `audio/wav`. */
+    readonly mime: string;
+    /** Decoded length in seconds, when it could be measured. */
+    readonly duration?: number;
+}
+/** The fallback name for a filename with nothing usable left after sanitising. */
+declare const FALLBACK_ASSET_NAME = "asset";
+/**
+ * Strip a filename down to something `s("…")` can address.
+ *
+ * The extension goes (it is not part of the sound's identity), everything that
+ * is not `a-z0-9` collapses to a single `_`, and leading/trailing separators are
+ * trimmed. Mirrors `sanitizePresetName`'s shape rather than inventing a second
+ * slug dialect.
+ *
+ *   `My Take (2).wav`   → `my_take_2`
+ *   `vocal.wav`         → `vocal`
+ *   `.wav`              → `asset`   (nothing left)
+ *   `drums.take.1.aiff` → `drums_take_1`
+ */
+declare function soundNameFromFilename(filename: string): string;
+/**
+ * Make `base` unique against `taken` by suffixing the smallest free `_N`.
+ *
+ * The bare name is preferred, so the first `vocal.wav` is `vocal` and a second,
+ * DIFFERENT `vocal.wav` becomes `vocal_2`. Counting starts at 2 for that reason:
+ * `vocal_1` would imply a `vocal_0` that never exists.
+ */
+declare function uniqueSoundName(base: string, taken: Iterable<string>): string;
+/** What an import is about to do, decided before anything is written. */
+interface AssetImportPlan {
+    /** The reference to add to the document. */
+    readonly record: AssetRecord;
+    /**
+     * False when some record in `existing` already points at these bytes — i.e.
+     * this import adds a second name for one blob.
+     *
+     * ⚠ This is a statement about the RECORD LIST, not about the blob store.
+     * "Are these bytes already stored?" is a different question with a different
+     * owner: IndexedDB, answered by `putAsset`. The two can legitimately
+     * disagree (bytes present with no record left pointing at them), so neither
+     * is derived from the other and neither is a proxy for the other.
+     */
+    readonly isFirstReference: boolean;
+}
+/** The measured facts about an incoming file, before it becomes a record. */
+interface AssetImportInput {
+    /** Content hash of the bytes — the blob store's key. */
+    readonly blobHash: string;
+    /** The name the user's file had. */
+    readonly filename: string;
+    /** The blob's reported MIME type. */
+    readonly mime: string;
+    /** Decoded length in seconds, when it could be measured. */
+    readonly duration?: number;
+}
+/**
+ * Decide the record and the write for one incoming file.
+ *
+ * `existing` is every record the project already holds — it supplies both the
+ * taken names and the known hashes, which is why they are not two arguments.
+ * `mintId` is injected rather than calling `crypto.randomUUID()` inside, so the
+ * plan is deterministic under test; the production caller passes exactly that
+ * (matching `projectRegistry` and `snapshotStore`).
+ *
+ * Re-importing the SAME bytes under the SAME filename still yields a second
+ * record (`vocal`, then `vocal_2`) sharing one blob. A record is a reference the
+ * user asked for; collapsing it would silently discard an intentional second
+ * one. Only the bytes are deduplicated.
+ */
+declare function planAssetImport(input: AssetImportInput, existing: readonly AssetRecord[], mintId: () => string): AssetImportPlan;
+
+/**
+ * assetStore — where a user's bytes live (#1500, Phase 1 of #1352; decision #1499).
+ *
+ * Four features wanted somewhere to put binary data and none of them owned it
+ * (#1499). This is that place: content-addressed blobs in IndexedDB, with the
+ * document holding a reference rather than the bytes. Blobs cannot live in a
+ * CRDT — a `Y.Text` carrying megabytes of base64 would wreck sync, undo and
+ * document size — so the split is bytes here, `AssetRecord` in the doc.
+ *
+ * This module is the I/O half. Every decision that can be made from plain
+ * values lives in `assetNaming.ts` and is unit-tested there; this file is the
+ * thin part that cannot be, and is observed in a browser instead
+ * (`asset-store-roundtrip.spec.ts`).
+ *
+ * ## Why the store opens through `openIdbWithTimeout`
+ *
+ * A raw `indexedDB.open` can hang forever — blocked by another tab's older
+ * connection, rejected in private mode, corrupted — and that was the boot hang
+ * (#685/#687). Four stores already route through the shared bounded opener; a
+ * fifth that opened raw would reintroduce the exact failure the helper exists
+ * to bound. Callers of this module catch and degrade, they do not await
+ * indefinitely.
+ *
+ * ## Why object URLs are cached
+ *
+ * `URL.createObjectURL` mints a handle that pins the blob until it is revoked.
+ * The sampler asks for a URL on the path to every note, so minting per call
+ * leaks one blob handle per note — the leak grows with playback time, which is
+ * the worst shape to discover later. The cache is keyed by content hash, which
+ * is also what makes the dedup real: two records naming the same bytes share
+ * one URL, not two.
+ *
+ * ## Why registration goes through `samples()`
+ *
+ * `samples(sampleMap, baseUrl)` is superdough's documented public entry
+ * (`superdough/sampler.mjs:249`). It walks the map through `processSampleMap`
+ * (`sampler.mjs:146`) and lands on `registerSampleSource` → `registerSample` →
+ * `registerSound` (`sampler.mjs:361`, `:354`, `superdough.mjs:60`), which is a
+ * plain write into the `soundMap` store — no audio context required, so an
+ * asset can be registered before the engine has ever started.
+ *
+ * A blob URL survives that path intact: with an empty `baseUrl` the map value
+ * is concatenated onto `''` (`sampler.mjs:159`), and playback bottoms out in
+ * `loadBuffer` — `fetch(url) → arrayBuffer() → decodeAudioData`
+ * (`sampler.mjs:88-104`). Nothing in it parses the URL or infers a format from
+ * an extension, which is why a `blob:` URL with no extension decodes normally.
+ */
+
+/**
+ * The asset database's name, exported so nothing has to keep a second copy.
+ *
+ * A test harness that wipes the store by literal string is a second owner of
+ * this value: rename the database and the wipe silently stops wiping, while
+ * every test still passes — on state inherited from the previous one. Observed,
+ * not hypothetical — a break test that changed this name left the probe
+ * deleting a database that no longer existed.
+ */
+declare const ASSET_DB_NAME = "stave-assets";
+/** A stored blob and what we know about it without decoding. */
+interface StoredAsset {
+    /** Content hash — the object store's key. */
+    readonly hash: string;
+    /** The bytes. */
+    readonly blob: Blob;
+    /** The blob's reported MIME type. */
+    readonly mime: string;
+    /** `blob.size`, denormalised so `listAssets` need not carry the bytes. */
+    readonly size: number;
+    /** When these bytes first entered the store. */
+    readonly storedAt: number;
+}
+/** What `listAssets` returns: every stored blob, minus the bytes. */
+type StoredAssetMeta = Omit<StoredAsset, 'blob'>;
+/** Hashes bytes to a hex string. Injected so the import path is testable. */
+type AssetDigest = (bytes: ArrayBuffer) => Promise<string>;
+/**
+ * SHA-256, hex-encoded — the production digest.
+ *
+ * `crypto.subtle` needs a secure context, which localhost and https both are.
+ * It is async, which is fine here (unlike `ir/nodeIdentity`, which needs a
+ * synchronous hash and uses FNV-1a for that reason).
+ */
+declare const sha256Hex: AssetDigest;
+/** What a `putAsset` did. */
+interface PutAssetResult {
+    /** The content hash the bytes are stored under. */
+    readonly hash: string;
+    /**
+     * Whether the bytes were actually written. False means the store already
+     * held them and the write was skipped.
+     *
+     * This is the store's OWN answer, read from IndexedDB. It is deliberately
+     * not derived from — and does not derive — `AssetImportPlan.isFirstReference`,
+     * which answers the different question of whether the document already
+     * references these bytes.
+     */
+    readonly written: boolean;
+}
+/**
+ * Store a blob under the hash of its content, deduplicating identical bytes.
+ *
+ * A second `putAsset` of the same bytes is a no-op rather than a rewrite: the
+ * key is the content, so a rewrite could only ever replace the row with an
+ * identical one while resetting `storedAt` to a time the bytes did not arrive.
+ */
+declare function putAsset(blob: Blob, digest?: AssetDigest): Promise<PutAssetResult>;
+/** Read bytes back by content hash. `null` when the store has never held them. */
+declare function getAsset(hash: string): Promise<Blob | null>;
+/**
+ * Drop bytes from the store, and any object URL minted for them.
+ *
+ * Revoking is not optional here: a URL left alive after its row is gone points
+ * at bytes nothing can reach through the store, so it becomes the only handle
+ * keeping them in memory.
+ */
+declare function deleteAsset(hash: string): Promise<void>;
+/** Every stored blob's metadata, oldest first. The bytes are omitted. */
+declare function listAssets(): Promise<StoredAssetMeta[]>;
+/**
+ * Resolve stored bytes to a URL the audio path can fetch, or `null` if the
+ * store does not hold them.
+ *
+ * This is the seam #1499 asks for: IndexedDB is the first provider, and a
+ * cloud one is additive behind the same signature. It addresses bytes by
+ * **content hash** rather than by `AssetRecord.id`, for two reasons — the
+ * id→hash mapping lives in the project document, whose wiring is the next
+ * slice; and the URL cache has to be keyed by content or two records sharing
+ * one blob would mint two URLs, undoing the dedup one layer up. A caller
+ * holding a record already holds `record.blobHash`, so no lookup is lost.
+ */
+declare function resolveAsset(blobHash: string): Promise<string | null>;
+/** Revoke the object URL for one blob, if any was minted. */
+declare function releaseAsset(blobHash: string): void;
+/** Revoke every object URL this module minted — e.g. on project close. */
+declare function releaseAllAssets(): void;
+/** The URL currently cached for a blob, without minting one. For observation. */
+declare function peekAssetUrl(blobHash: string): string | null;
+/**
+ * Make one stored asset addressable as `s(name)`.
+ *
+ * Returns false when the store cannot produce a URL for the record's bytes,
+ * which is a real outcome rather than an error: storage can be evicted by the
+ * browser between the document being written and being opened.
+ */
+declare function registerAsset(record: AssetRecord): Promise<boolean>;
+/**
+ * Register every asset a project holds. Returns the names that resolved —
+ * a record whose bytes are gone is skipped rather than registered at a URL
+ * that will 404 on the first note.
+ */
+declare function registerAssets(records: readonly AssetRecord[]): Promise<string[]>;
+/** Injectable edges of {@link importAsset}, so the whole path is observable. */
+interface ImportAssetDeps {
+    /** Content hash. Defaults to SHA-256. */
+    readonly digest?: AssetDigest;
+    /** Record id minting. Defaults to `crypto.randomUUID()`, as elsewhere. */
+    readonly mintId?: () => string;
+    /**
+     * Decoded length in seconds, or undefined when it cannot be measured.
+     *
+     * Injected because decoding needs an `AudioContext`, which this module has
+     * no business owning — and because an import whose bytes are not decodable
+     * audio must still succeed as a stored blob rather than throw.
+     */
+    readonly measureDuration?: (blob: Blob) => Promise<number | undefined>;
+}
+/** What one import produced. */
+interface ImportAssetResult extends AssetImportPlan {
+    /** The store's own account of the blob write. */
+    readonly put: PutAssetResult;
+}
+/**
+ * Take one file all the way in: hash it, store the bytes, and decide the
+ * record the project document will carry.
+ *
+ * `existing` is the project's current records — the source of both the taken
+ * names and the known hashes. Persisting the returned record is the caller's
+ * job; the document wiring is #1500's next slice.
+ */
+declare function importAsset(blob: Blob, filename: string, existing?: readonly AssetRecord[], deps?: ImportAssetDeps): Promise<ImportAssetResult>;
+
+/**
  * historyGraph — PURE commit-graph logic for the project file-history store
  * (Phase F, #196).
  *
@@ -11356,4 +11660,4 @@ declare const SONICPI_DOCS_INDEX: DocsIndex;
 
 declare const STRUDEL_DOCS_INDEX: DocsIndex;
 
-export { ALIAS_MAP, AUDITION_DUR_S, AUDITION_ENVELOPE, AUTO_SNAPSHOT_PREFIX, type ActiveEventSummary, type AnalyserBytes, type AnalyzeSongOptions, type AnalyzeWindowOptions, type ArrangeArmRange, type ArrangeCall, type ArrangeMode, type AudioPayload, type AudioReading, type AudioSourceRef, type AuditionHandle, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUILTIN_ALIASES, BUNDLED_PREFIX, type BackdropQuality, type BackdropVizSpan, type BootStepFailure, BottomPanel, type BottomPanelTab, type BranchRef, type BreakpointMeta, BreakpointStore, BufferedScheduler, type BumpSummary, type BusAnalyser, type BusHapEvent, type CapabilityEnv, type ChainArg, type ChainCall, type ChromeContext, type ChromeForTab, type ChunkInfo, type ChunkType, type Commit, type CommitKind, type CropRegion, DARK_THEME_TOKENS, DEFAULT_VIZ_DESCRIPTORS, DEFAULT_VIZ_ENGINE, DemoEngine, type DisplaySpan, type DocKind, type DocsIndex, type DrumMachineManifest, EPHEMERAL_ID_PREFIX, type EditorTheme, EditorView, type EncodeOptions, type EngineAliasMap, type EngineAliasValue, EngineComponents, ErrorBoundary, type ErrorBoundaryProps, FSCOPE_P5_CODE, type FixedMarker, type FormatOptions, type FrameChannel, type FrameStats, type FriendlyErrorParts, type FuzzyMatch, GLSL_VIZ, GM_FAMILY_KEY_COUNT, GM_FAMILY_ORDER, type GmFamily, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapEvent, HapStream, HistoryPanel, type HistoryPanelProps, type HydraPatternFn, HydraVizRenderer, IDB_SYNC_TIMEOUT_MS, INLINE_VIZ_ACTION_SIZE_VAR, IREvent, IRPattern, type IRSnapshot, type InjectedGlobal, Knob, LIGHT_THEME_TOKENS, type LaneActivity, type LaneItem, type LaneSkeleton, LiveCodingEditor, type LiveCodingEditorProps, LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type LiveSpec, type LogEntry, type LogLevel, type LogSuggestion, MASTER_CENTRE_PAN, MASTER_KEY, MASTER_UNITY_GAIN, MIXER_CONSOLE_TAB_ID, MIXER_TAB_ID, MainSignalSampler, type MasterAll, type MasterArray, type MasterGainState, type MasterPanState, type MasterScalar, Mixer, type NormalizedHap, type NoteColorMode, OfflineRenderer, type OffsetEdit, type OpenHistoryTabRequest, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PATTERN_TAB_ID, PIANOROLL_P5_CODE, PIANO_ROLL_TAB_ID, PITCHWHEEL_P5_CODE, type ParseResult, type Pass, PatternIR, type PatternKind, PatternPanel, PatternScheduler, type PerfSnapshot, type PersistedEditorTab, type PersistedGroup, type PersistedShellState, PianoRollGrid, type PianoRollModel, type PickControl, type PickControlArm, type PickMethod, type PickSectionEntry, type PreviewContext, type PreviewProvider, PreviewView, type ProjectDocInitResult, type ProjectHistory, type ProjectMeta, type ResizeMode, type ResolvedTheme, type RollNote, type RuntimeDoc, type RuntimeId, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SCOPE_P5_CODE, SEQUENCER_TAB_ID, SHELL_STATE_KEY_PREFIX, SHELL_STATE_VERSION, SIGNALS_BACKDROP_P5_CODE, SIGNALS_SPECTRUM_P5_CODE, SILENCE_FLOOR, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, SOUND_ALIASES, SPECTRUM_P5_CODE, SPIRAL_P5_CODE, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, type SamplerInputs, type SectionStats, SequencerGrid, type ShellSnapshot, type SignalAliasMap, type SignalAutomation, SignalBus, type SignalDimensions, type SignalFrame, type SignalKind, type SignalReading, type SignalSpans, type SignalTransportReader, type SignalTransportWriter, SilentCaptureError, type SnapshotMeta, type SongAnalysis, type SongExtent, type SongSection, SonicPiEngine, type SoundMapDict, SourceLocation, SplitPane, type StepGridModel, type StepLane, type StoredSignalAliases, type StripEdit, StrudelEditor, type StrudelEditorProps, StrudelEngine, type StrudelTheme, type Surface, type TierFlags, type TierName, type TimelineCaptureEntry, type TrackMeta, UI_ICON_SIZE_VAR, type UseWorkspaceFileResult, VISUAL_EDIT_TABS, VIZ_FLAG_KEYS, VIZ_LANGUAGES, VisualEditStandby, type VisualEditStandbyProps, type VisualEditTabDef, VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, type VizEngine, type VizLanguage, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizPreviewSpec, VizQualityLevel, VizRenderer, type VizRendererKind, VizRendererSource, type VizTransport, type VizWorkerFactory, WORDFALL_P5_CODE, type WalkWindow, WavEncoder, type WindowAnalysis, WorkerBusFeed, type WorkerVizCapabilities, WorkerVizRenderer, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellHandle, type WorkspaceShellProps, type WorkspaceTab, type WriteOutcome, type WriteRefusal, type WriteSource, Writeback, accumulateLanes, accumulateLanesInWindow, adaptMasterChunk, aggregateLaneItems, analyzeEvents, analyzeSong, analyzeWindow, applyEdits, applyEvalSourceTransform, applyOffsetEditsToFile, applyPersistedAdaptivePerf, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedPerfEnabled, applyPersistedTheme, applyPersistedUiIconSize, applyPersistedVizQuality, applyTheme, auditionSound, backdropQualityFactor, banksFromDrumMachineManifest, buildAliasSuffix, buildDefaultSnapshot, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, chunkSurface, classifyChunk, classifyLiteralRhs, clearCapture, clearIRSnapshot, clearLog, clearShellState, commitWorkspace, compilePreset, computeSections, computeSectionsInWindow, createBranchAt, createPostMessageReader, createPostMessageWriter, createProject, createWorkspaceFile, cycleEditorTheme, cycleFingerprints, deleteProject, deleteSnapshot, deleteWorkspaceFile, detectAllArrangeCalls, detectAllChunks, detectAllPickControls, detectArrangeAt, detectBarePattern, detectChunk, detectMasterAll, detectMasterAudioAll, detectPeriod, detectPickControlAt, detectWorkerVizCapabilities, docParses, dropLegacyBackgroundCrop, duplicateProject, emitFixed, emitLog, emptyFrame, enterRuntimeView, exitRuntimeView, extractReferenceIdentifier, fileHistory, filter, flushToPreset, formatFriendlyError, formatNumber, formatStaveInputs, frameTransferables, fuzzyMatch, generateUniquePresetId, getActiveEditor, getActiveFileId, getActiveHistoryFile, getActiveProjectId, getAdaptivePerfEnabled, getBackdropOpacity, getBackdropQuality, getBackdropVizSpan, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getCommit, getCurrentBranch, getCurrentHistory, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFileContentAt, getFileHistoryTarget, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getInlineVizResolution, getInlineVizTeardownEnabled, getInlineVizTeardownMs, getLastOpenedProject, getLogHistory, getModifiedFileIdsSinceHead, getMusicalTimelineSubRowHeight, getNamedViz, getNoteColorMode, getPerfEnabled, getPlayVizOnHoverEnabled, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSignalAliases, getStoredSignalAliases, getSubfolderOrder, getTierFlags, getTrackColourBarsEnabled, getTrackMeta, getTrackMetaMapSnapshot, getViewedCommit, getViewedContent, getViewedFileIds, getVizInputsLiveValuesEnabled, getVizMaxDprOverride, getVizMaxFpsOverride, getVizQuality, getVizWorkerFactory, getVizWorkerOverride, getZoneCropOverride, getZoneHeightOverride, gmFamily, groupDrumKits, groupSoundCatalog, hydraKaleidoscope, hydraPianoroll, hydraScope, hydrateSnapshot, initHistory, initProjectDoc, initProjectDocSync, injectedGlobalByToken, injectedGlobals, insertArm$1 as insertArm, installEngineLogMarkers, installGlobalErrorCatch, isBlackKey, isBootStepFailure, isBundledPresetId, isChunkFresh, isDocReady, isEphemeralProjectId, isFileModifiedSinceHead, isP5DirectCanvasEnabled, isRollChunk, isSampleSoundPlaying, isStepChunk, isValidTrackLabel, isViewing, isVizGovernorEnabled, isVizLanguage, isVizPumpSharedCacheEnabled, isVizWorkerPoolEnabled, knobRangeFor, laneKeyOf, languageForRenderer, levenshtein, listBottomPanelTabs, listBranches, listCommits, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listTiers, listWorkspaceFiles, liveCodingRuntimeRegistry, loadShellState, makeFixedKey, masterGainEdit, masterMuteEdit, masterPanEdit, masterVizEdit, materializeBareDelete, materializeBareSplit, merge, midiToPitch, mountVizPreview, mountVizRenderer, normalizeEdits, normalizeStrudelHap, noteToMidi, notifyDrumKitChanged, notifySoundCatalogChanged, onActiveEditorChange, onAdaptivePerfChange, onBackdropOpacityChange, onBackdropQualityChange, onBackdropVizSpanChange, onInlineVizActionSizeChange, onInlineVizResolutionChange, onInlineVizTeardownChange, onMusicalTimelineSubRowHeightChange, onNamedVizChanged, onPerfEnabledChange, onPlayVizOnHoverChange, onSignalAliasesChange, onThemeChange, onTrackColourBarsChange, onUiIconSizeChange, onVizInputsLiveValuesChange, onVizQualityChange, otherTrackNames, parseMessageLocation, parseMini, parsePianoRoll, parseStackLocation, parseStepGrid, parseStrudel, parseTopLevel, patternFromJSON, patternKind, patternToJSON, perf, countSectionArms as pickCountSectionArms, duplicateArm as pickDuplicateArm, insertArm as pickInsertArm, removeArm as pickRemoveArm, renameSection as pickRenameSection, reorderArm as pickReorderArm, setWeight as pickSetWeight, silenceArm as pickSilenceArm, splitArm as pickSplitArm, pitchToMidi, placeNote, previewProviderRegistry, pruneEphemeralArtifacts, pruneTrackMetaForCode, pruneZoneOverrides, publishIRSnapshot, purgeLegacyMasterGain, readCurrentCycle, readMasterGain, readMasterMute, readMasterPan, readMasterViz, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerEvalSourceTransform, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerReevalHandler, registerRuntimeProvider, removeArm$1 as removeArm, renameEdit, renameProject, renameWorkspaceFile, rendererForLanguage, reorderArm$1 as reorderArm, requestReeval, resetFileStore, resetHistoryState, resetUndoManager, resizeGrid, resizeRoll, resolveAlias, resolveAliasesForEngine, resolveDescriptor, restoreFileToCommit, restoreProject, restoreSnapshot, revealLineInFile, revealOffsetInFile, revertFileToSeed, routeSurface, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveShellState, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, serializePianoRoll, serializeShellState, serializeStepGrid, setActiveHistoryFile, setAdaptivePerfEnabled, setBackdropOpacity, setBackdropQuality, setBackdropVizSpan, setCaptureCapacity, setChildOrder, setContent, setCurrentCycleAccessor, setDrumKitAccessor, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFileHistoryTarget, setFolderOrder, setInlineVizActionSize, setInlineVizResolution, setInlineVizTeardownEnabled, setMusicalTimelineSubRowHeight, setNoteColorMode, setPerfEnabled, setPlayVizOnHoverEnabled, setSignalAliases, setSoundCatalogAccessor, setSubfolderOrder, setTierFlag, setTrackColourBarsEnabled, setTrackMeta, setVizInputsLiveValuesEnabled, setVizQuality, setVizWorkerFactory, setWeight$1 as setWeight, setZoneCropOverride, setZoneHeightOverride, shellStateKeyFor, signalAutomations, signalCarryingParamKeys, signalDimensionsOf, silenceArm$1 as silenceArm, songExtent, soundfontGroupLabel, splitArm$1 as splitArm, startAudition, startHistoryDriver, startSampleSound, statementOffsetForSource, stopSampleSound, structuralWalk, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeNoteColorMode, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToHistory, subscribeToRuntimeView, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, switchToBranch, timestretch, toStrudel, toggleAdaptivePerfEnabled, toggleEditorMinimap, togglePerfEnabled, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useNoteColorMode, usePopoutPreview, useSilencedTrackNames, useTrackMetaMap, useWorkspaceFile, validatePersistedState, warmMonaco, wholeWalkWindow, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset, wrapBare };
+export { ALIAS_MAP, ASSET_DB_NAME, AUDITION_DUR_S, AUDITION_ENVELOPE, AUTO_SNAPSHOT_PREFIX, type ActiveEventSummary, type AnalyserBytes, type AnalyzeSongOptions, type AnalyzeWindowOptions, type ArrangeArmRange, type ArrangeCall, type ArrangeMode, type AssetDigest, type AssetImportInput, type AssetImportPlan, type AssetRecord, type AudioPayload, type AudioReading, type AudioSourceRef, type AuditionHandle, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUILTIN_ALIASES, BUNDLED_PREFIX, type BackdropQuality, type BackdropVizSpan, type BootStepFailure, BottomPanel, type BottomPanelTab, type BranchRef, type BreakpointMeta, BreakpointStore, BufferedScheduler, type BumpSummary, type BusAnalyser, type BusHapEvent, type CapabilityEnv, type ChainArg, type ChainCall, type ChromeContext, type ChromeForTab, type ChunkInfo, type ChunkType, type Commit, type CommitKind, type CropRegion, DARK_THEME_TOKENS, DEFAULT_VIZ_DESCRIPTORS, DEFAULT_VIZ_ENGINE, DemoEngine, type DisplaySpan, type DocKind, type DocsIndex, type DrumMachineManifest, EPHEMERAL_ID_PREFIX, type EditorTheme, EditorView, type EncodeOptions, type EngineAliasMap, type EngineAliasValue, EngineComponents, ErrorBoundary, type ErrorBoundaryProps, FALLBACK_ASSET_NAME, FSCOPE_P5_CODE, type FixedMarker, type FormatOptions, type FrameChannel, type FrameStats, type FriendlyErrorParts, type FuzzyMatch, GLSL_VIZ, GM_FAMILY_KEY_COUNT, GM_FAMILY_ORDER, type GmFamily, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapEvent, HapStream, HistoryPanel, type HistoryPanelProps, type HydraPatternFn, HydraVizRenderer, IDB_SYNC_TIMEOUT_MS, INLINE_VIZ_ACTION_SIZE_VAR, IREvent, IRPattern, type IRSnapshot, type ImportAssetDeps, type ImportAssetResult, type InjectedGlobal, Knob, LIGHT_THEME_TOKENS, type LaneActivity, type LaneItem, type LaneSkeleton, LiveCodingEditor, type LiveCodingEditorProps, LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type LiveSpec, type LogEntry, type LogLevel, type LogSuggestion, MASTER_CENTRE_PAN, MASTER_KEY, MASTER_UNITY_GAIN, MIXER_CONSOLE_TAB_ID, MIXER_TAB_ID, MainSignalSampler, type MasterAll, type MasterArray, type MasterGainState, type MasterPanState, type MasterScalar, Mixer, type NormalizedHap, type NoteColorMode, OfflineRenderer, type OffsetEdit, type OpenHistoryTabRequest, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PATTERN_TAB_ID, PIANOROLL_P5_CODE, PIANO_ROLL_TAB_ID, PITCHWHEEL_P5_CODE, type ParseResult, type Pass, PatternIR, type PatternKind, PatternPanel, PatternScheduler, type PerfSnapshot, type PersistedEditorTab, type PersistedGroup, type PersistedShellState, PianoRollGrid, type PianoRollModel, type PickControl, type PickControlArm, type PickMethod, type PickSectionEntry, type PreviewContext, type PreviewProvider, PreviewView, type ProjectDocInitResult, type ProjectHistory, type ProjectMeta, type PutAssetResult, type ResizeMode, type ResolvedTheme, type RollNote, type RuntimeDoc, type RuntimeId, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SCOPE_P5_CODE, SEQUENCER_TAB_ID, SHELL_STATE_KEY_PREFIX, SHELL_STATE_VERSION, SIGNALS_BACKDROP_P5_CODE, SIGNALS_SPECTRUM_P5_CODE, SILENCE_FLOOR, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, SOUND_ALIASES, SPECTRUM_P5_CODE, SPIRAL_P5_CODE, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, type SamplerInputs, type SectionStats, SequencerGrid, type ShellSnapshot, type SignalAliasMap, type SignalAutomation, SignalBus, type SignalDimensions, type SignalFrame, type SignalKind, type SignalReading, type SignalSpans, type SignalTransportReader, type SignalTransportWriter, SilentCaptureError, type SnapshotMeta, type SongAnalysis, type SongExtent, type SongSection, SonicPiEngine, type SoundMapDict, SourceLocation, SplitPane, type StepGridModel, type StepLane, type StoredAsset, type StoredAssetMeta, type StoredSignalAliases, type StripEdit, StrudelEditor, type StrudelEditorProps, StrudelEngine, type StrudelTheme, type Surface, type TierFlags, type TierName, type TimelineCaptureEntry, type TrackMeta, UI_ICON_SIZE_VAR, type UseWorkspaceFileResult, VISUAL_EDIT_TABS, VIZ_FLAG_KEYS, VIZ_LANGUAGES, VisualEditStandby, type VisualEditStandbyProps, type VisualEditTabDef, VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, type VizEngine, type VizLanguage, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizPreviewSpec, VizQualityLevel, VizRenderer, type VizRendererKind, VizRendererSource, type VizTransport, type VizWorkerFactory, WORDFALL_P5_CODE, type WalkWindow, WavEncoder, type WindowAnalysis, WorkerBusFeed, type WorkerVizCapabilities, WorkerVizRenderer, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellHandle, type WorkspaceShellProps, type WorkspaceTab, type WriteOutcome, type WriteRefusal, type WriteSource, Writeback, accumulateLanes, accumulateLanesInWindow, adaptMasterChunk, aggregateLaneItems, analyzeEvents, analyzeSong, analyzeWindow, applyEdits, applyEvalSourceTransform, applyOffsetEditsToFile, applyPersistedAdaptivePerf, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedPerfEnabled, applyPersistedTheme, applyPersistedUiIconSize, applyPersistedVizQuality, applyTheme, auditionSound, backdropQualityFactor, banksFromDrumMachineManifest, buildAliasSuffix, buildDefaultSnapshot, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, chunkSurface, classifyChunk, classifyLiteralRhs, clearCapture, clearIRSnapshot, clearLog, clearShellState, commitWorkspace, compilePreset, computeSections, computeSectionsInWindow, createBranchAt, createPostMessageReader, createPostMessageWriter, createProject, createWorkspaceFile, cycleEditorTheme, cycleFingerprints, deleteAsset, deleteProject, deleteSnapshot, deleteWorkspaceFile, detectAllArrangeCalls, detectAllChunks, detectAllPickControls, detectArrangeAt, detectBarePattern, detectChunk, detectMasterAll, detectMasterAudioAll, detectPeriod, detectPickControlAt, detectWorkerVizCapabilities, docParses, dropLegacyBackgroundCrop, duplicateProject, emitFixed, emitLog, emptyFrame, enterRuntimeView, exitRuntimeView, extractReferenceIdentifier, fileHistory, filter, flushToPreset, formatFriendlyError, formatNumber, formatStaveInputs, frameTransferables, fuzzyMatch, generateUniquePresetId, getActiveEditor, getActiveFileId, getActiveHistoryFile, getActiveProjectId, getAdaptivePerfEnabled, getAsset, getBackdropOpacity, getBackdropQuality, getBackdropVizSpan, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getCommit, getCurrentBranch, getCurrentHistory, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFileContentAt, getFileHistoryTarget, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getInlineVizResolution, getInlineVizTeardownEnabled, getInlineVizTeardownMs, getLastOpenedProject, getLogHistory, getModifiedFileIdsSinceHead, getMusicalTimelineSubRowHeight, getNamedViz, getNoteColorMode, getPerfEnabled, getPlayVizOnHoverEnabled, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSignalAliases, getStoredSignalAliases, getSubfolderOrder, getTierFlags, getTrackColourBarsEnabled, getTrackMeta, getTrackMetaMapSnapshot, getViewedCommit, getViewedContent, getViewedFileIds, getVizInputsLiveValuesEnabled, getVizMaxDprOverride, getVizMaxFpsOverride, getVizQuality, getVizWorkerFactory, getVizWorkerOverride, getZoneCropOverride, getZoneHeightOverride, gmFamily, groupDrumKits, groupSoundCatalog, hydraKaleidoscope, hydraPianoroll, hydraScope, hydrateSnapshot, importAsset, initHistory, initProjectDoc, initProjectDocSync, injectedGlobalByToken, injectedGlobals, insertArm$1 as insertArm, installEngineLogMarkers, installGlobalErrorCatch, isBlackKey, isBootStepFailure, isBundledPresetId, isChunkFresh, isDocReady, isEphemeralProjectId, isFileModifiedSinceHead, isP5DirectCanvasEnabled, isRollChunk, isSampleSoundPlaying, isStepChunk, isValidTrackLabel, isViewing, isVizGovernorEnabled, isVizLanguage, isVizPumpSharedCacheEnabled, isVizWorkerPoolEnabled, knobRangeFor, laneKeyOf, languageForRenderer, levenshtein, listAssets, listBottomPanelTabs, listBranches, listCommits, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listTiers, listWorkspaceFiles, liveCodingRuntimeRegistry, loadShellState, makeFixedKey, masterGainEdit, masterMuteEdit, masterPanEdit, masterVizEdit, materializeBareDelete, materializeBareSplit, merge, midiToPitch, mountVizPreview, mountVizRenderer, normalizeEdits, normalizeStrudelHap, noteToMidi, notifyDrumKitChanged, notifySoundCatalogChanged, onActiveEditorChange, onAdaptivePerfChange, onBackdropOpacityChange, onBackdropQualityChange, onBackdropVizSpanChange, onInlineVizActionSizeChange, onInlineVizResolutionChange, onInlineVizTeardownChange, onMusicalTimelineSubRowHeightChange, onNamedVizChanged, onPerfEnabledChange, onPlayVizOnHoverChange, onSignalAliasesChange, onThemeChange, onTrackColourBarsChange, onUiIconSizeChange, onVizInputsLiveValuesChange, onVizQualityChange, otherTrackNames, parseMessageLocation, parseMini, parsePianoRoll, parseStackLocation, parseStepGrid, parseStrudel, parseTopLevel, patternFromJSON, patternKind, patternToJSON, peekAssetUrl, perf, countSectionArms as pickCountSectionArms, duplicateArm as pickDuplicateArm, insertArm as pickInsertArm, removeArm as pickRemoveArm, renameSection as pickRenameSection, reorderArm as pickReorderArm, setWeight as pickSetWeight, silenceArm as pickSilenceArm, splitArm as pickSplitArm, pitchToMidi, placeNote, planAssetImport, previewProviderRegistry, pruneEphemeralArtifacts, pruneTrackMetaForCode, pruneZoneOverrides, publishIRSnapshot, purgeLegacyMasterGain, putAsset, readCurrentCycle, readMasterGain, readMasterMute, readMasterPan, readMasterViz, readPersistedActiveTabId, readPersistedOpen, redo, registerAsset, registerAssets, registerBottomPanelTab, registerEvalSourceTransform, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerReevalHandler, registerRuntimeProvider, releaseAllAssets, releaseAsset, removeArm$1 as removeArm, renameEdit, renameProject, renameWorkspaceFile, rendererForLanguage, reorderArm$1 as reorderArm, requestReeval, resetFileStore, resetHistoryState, resetUndoManager, resizeGrid, resizeRoll, resolveAlias, resolveAliasesForEngine, resolveAsset, resolveDescriptor, restoreFileToCommit, restoreProject, restoreSnapshot, revealLineInFile, revealOffsetInFile, revertFileToSeed, routeSurface, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveShellState, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, serializePianoRoll, serializeShellState, serializeStepGrid, setActiveHistoryFile, setAdaptivePerfEnabled, setBackdropOpacity, setBackdropQuality, setBackdropVizSpan, setCaptureCapacity, setChildOrder, setContent, setCurrentCycleAccessor, setDrumKitAccessor, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFileHistoryTarget, setFolderOrder, setInlineVizActionSize, setInlineVizResolution, setInlineVizTeardownEnabled, setMusicalTimelineSubRowHeight, setNoteColorMode, setPerfEnabled, setPlayVizOnHoverEnabled, setSignalAliases, setSoundCatalogAccessor, setSubfolderOrder, setTierFlag, setTrackColourBarsEnabled, setTrackMeta, setVizInputsLiveValuesEnabled, setVizQuality, setVizWorkerFactory, setWeight$1 as setWeight, setZoneCropOverride, setZoneHeightOverride, sha256Hex, shellStateKeyFor, signalAutomations, signalCarryingParamKeys, signalDimensionsOf, silenceArm$1 as silenceArm, songExtent, soundNameFromFilename, soundfontGroupLabel, splitArm$1 as splitArm, startAudition, startHistoryDriver, startSampleSound, statementOffsetForSource, stopSampleSound, structuralWalk, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeNoteColorMode, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToHistory, subscribeToRuntimeView, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, switchToBranch, timestretch, toStrudel, toggleAdaptivePerfEnabled, toggleEditorMinimap, togglePerfEnabled, touchProject, transpose, undo, uniqueSoundName, unregisterBottomPanelTab, unregisterNamedViz, useNoteColorMode, usePopoutPreview, useSilencedTrackNames, useTrackMetaMap, useWorkspaceFile, validatePersistedState, warmMonaco, wholeWalkWindow, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset, wrapBare };

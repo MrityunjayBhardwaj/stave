@@ -53,6 +53,19 @@ declare module '@strudel/webaudio' {
   export function connectToDestination(node: AudioNode, channels?: number[]): void
 
   /**
+   * Register sounds so `s("name")` can address them (re-exported from
+   * superdough — `sampler.mjs:249`). A map value may be one URL or a list of
+   * them; `baseUrl` is concatenated onto each, so pass `''` for absolute or
+   * `blob:` URLs. Resolves once the map is registered — the samples themselves
+   * are fetched lazily at playback (#1500).
+   */
+  export function samples(
+    sampleMap: Record<string, string | string[]>,
+    baseUrl?: string,
+    options?: { prebake?: boolean; tag?: string }
+  ): Promise<void>
+
+  /**
    * Creates a full repl (scheduler + evaluate) wired to webaudio output.
    */
   export function webaudioRepl(options?: {
