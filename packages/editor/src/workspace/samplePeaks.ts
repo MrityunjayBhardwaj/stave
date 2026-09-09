@@ -217,12 +217,20 @@ export function peaksForSample(ref: SampleRef, deps: SamplePeaksDeps = liveDeps)
 }
 
 /**
- * Drop memoised peaks.
+ * Drop memoised peaks. Reset state between tests.
  *
- * Exists for tests and for the case where an asset's bytes are replaced under a
- * name it already had. Without it a re-imported take would keep drawing the
- * shape of the recording it replaced, and the stale picture would outlive the
- * session that made it.
+ * It is worth being exact about what this does NOT protect against, because the
+ * obvious guess is wrong. Entries are keyed by the resolved URL, and that URL
+ * comes from the asset's CONTENT HASH — so two different recordings can never
+ * share an entry, and re-importing under a name that already exists mints a new
+ * name anyway (`uniqueSoundName`). The cache cannot go stale, and no production
+ * code needs to clear it.
+ *
+ * The one condition that would change that is object URLs being revoked and
+ * re-minted for the same bytes: entries keyed by the dead URL would accumulate.
+ * Nothing does that today — `releaseAsset` and `releaseAllAssets` have no
+ * production callers — so this stays a test affordance rather than a guard
+ * pretending to hold a line nobody is standing on.
  */
 export function clearSamplePeaksCache(): void {
   peakCache.clear()
