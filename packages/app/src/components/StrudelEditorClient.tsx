@@ -111,6 +111,7 @@ import {
 } from "./songTermination";
 import { PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
 import { installBounceProbe } from "../e2e/bounceProbe";
+import { installAssetProbe } from "../e2e/assetProbe";
 
 
 // Phase 19-07 (#79) — 4-stage parser pipeline. Each stage emits its own
@@ -1598,6 +1599,11 @@ export default function StrudelEditorClient({
   // Same dead-code-eliminated gate as the other `__stave*` hooks — both checks
   // live inside installBounceProbe, which returns its own teardown.
   useEffect(() => installBounceProbe(), []);
+
+  // E2E-only handle onto the binary asset store (#1500). Phase 1 ships no UI
+  // on purpose, so there is no gesture that could drive the store — this is
+  // the only instrument the "survives a reload and plays" claim has.
+  useEffect(() => installAssetProbe(), []);
 
   // editorExtrasForTab: play/stop keybindings + error squiggles
   const editorExtrasForTab = useCallback((tab: WorkspaceTab & { kind: "editor" }) => {

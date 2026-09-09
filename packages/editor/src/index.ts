@@ -382,6 +382,42 @@ export {
   AUTO_SNAPSHOT_PREFIX,
 } from './workspace/snapshotStore'
 export type { SnapshotMeta } from './workspace/snapshotStore'
+// Binary asset store — a user's own bytes become a playable sound (#1500/#1499)
+export {
+  soundNameFromFilename,
+  uniqueSoundName,
+  planAssetImport,
+  FALLBACK_ASSET_NAME,
+} from './workspace/assetNaming'
+export type {
+  AssetRecord,
+  AssetImportPlan,
+  AssetImportInput,
+} from './workspace/assetNaming'
+export {
+  ASSET_DB_NAME,
+  sha256Hex,
+  hasAsset,
+  putAsset,
+  getAsset,
+  deleteAsset,
+  listAssets,
+  resolveAsset,
+  releaseAsset,
+  releaseAllAssets,
+  peekAssetUrl,
+  registerAsset,
+  registerAssets,
+  importAsset,
+} from './workspace/assetStore'
+export type {
+  AssetDigest,
+  StoredAsset,
+  StoredAssetMeta,
+  PutAssetResult,
+  ImportAssetDeps,
+  ImportAssetResult,
+} from './workspace/assetStore'
 // Project commit store (file-history milestone, Phase F #196)
 export {
   initHistory,
