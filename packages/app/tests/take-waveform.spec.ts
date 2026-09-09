@@ -178,6 +178,85 @@ function firstMark(profile: InkProfile): number[] {
   return run
 }
 
+const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+/**
+ * How much of ONE lit mark's interior the overlay COVERS.
+ *
+ * ⚠ Reads `[data-full-song-overlay]` — the SECOND surface. The base canvas keeps
+ * the waveform intact under either behaviour, so measuring it answers a
+ * different question than this one; that mistake is what made the first attempt
+ * at this measurement read as reassuring (#1508).
+ *
+ * Isolates the FIRST contiguous run of painted columns rather than bounding the
+ * whole overlay. Two marks lighting at once would put the empty gap between them
+ * inside a global bounding box, and an interior that is mostly gap reads as
+ * "uncovered" no matter which way the mark is drawn — the arm would pass for a
+ * reason that has nothing to do with the fix.
+ */
+async function litMarkCoverage(
+  page: Page,
+): Promise<{ painted: number; cols: number; interior: number; covered: number }> {
+  return page.evaluate(() => {
+    const NONE = { painted: 0, cols: 0, interior: 0, covered: 0 }
+    const c = document.querySelector('[data-full-song-overlay]') as HTMLCanvasElement | null
+    if (!c) return NONE
+    const ctx = c.getContext('2d')
+    if (!ctx || c.width === 0) return NONE
+    const { width, height } = c
+    const d = ctx.getImageData(0, 0, width, height).data
+    const alphaAt = (x: number, y: number) => d[(y * width + x) * 4 + 3]
+
+    let painted = 0
+    const colPainted: number[] = []
+    for (let x = 0; x < width; x++) {
+      let n = 0
+      for (let y = 0; y < height; y++) if (alphaAt(x, y) > 10) n++
+      colPainted.push(n)
+      painted += n
+    }
+    // First contiguous run of inked columns = one mark.
+    let x0 = -1
+    let x1 = -1
+    for (let x = 0; x < width; x++) {
+      if (colPainted[x] > 0) {
+        if (x0 < 0) x0 = x
+        x1 = x
+      } else if (x0 >= 0) break
+    }
+    if (x0 < 0) return { painted, cols: 0, interior: 0, covered: 0 }
+
+    let y0 = height
+    let y1 = -1
+    for (let x = x0; x <= x1; x++) {
+      for (let y = 0; y < height; y++) {
+        if (alphaAt(x, y) > 10) {
+          if (y < y0) y0 = y
+          if (y > y1) y1 = y
+        }
+      }
+    }
+    // Inset past the glow ring AND the border, in BACKING-STORE px — the canvas
+    // is DPR-scaled, so a CSS-px pad is worth dpr times as much here.
+    const dpr = Math.max(1, Math.round(width / Math.max(1, c.clientWidth)))
+    const pad = 4 * dpr
+    const ix0 = x0 + pad
+    const ix1 = x1 - pad
+    const iy0 = y0 + pad
+    const iy1 = y1 - pad
+    if (ix1 <= ix0 || iy1 <= iy0) return { painted, cols: x1 - x0 + 1, interior: 0, covered: 0 }
+    let interior = 0
+    let covered = 0
+    for (let y = iy0; y <= iy1; y++) {
+      for (let x = ix0; x <= ix1; x++) {
+        interior++
+        if (alphaAt(x, y) > 178) covered++ // 0.7 x 255 — the lit CORE's own floor
+      }
+    }
+    return { painted, cols: x1 - x0 + 1, interior, covered }
+  })
+}
+
 async function bootWithTimeline(page: Page): Promise<void> {
   await bootApp(page, { e2eHooks: true, drawer: { tabId: 'musical-timeline' } })
   await page.waitForFunction(() => Boolean((window as ProbeWindow).__staveAssetProbe), { timeout: 30_000 })
@@ -255,6 +334,74 @@ test.describe('a take is visible on the Song timeline', () => {
     const quietestIndex = mark.indexOf(quietest)
     expect(quietestIndex).toBeLessThan(mark.length / 2)
 
+    expect(errors).toEqual([])
+  })
+
+  test('while it sounds, the lit mark outlines the shape instead of covering it', async ({ page }) => {
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+
+    await bootWithTimeline(page)
+    await page.evaluate(() => (window as ProbeWindow).__staveAssetProbe!.reset())
+
+    const wav = loudThenSilentWav()
+    await page.evaluate(async (base64) => {
+      const p = (window as ProbeWindow).__staveAssetProbe!
+      const res = await p.import(base64, 'audio/wav', 'take_1.wav', await p.docList())
+      await p.docAdd(res.record)
+    }, wav)
+
+    await seedCode(page, '$: s("take_1")')
+    await page.evaluate(() => {
+      try {
+        localStorage.setItem('stave:musicalTimeline.subRowHeight', '48')
+      } catch {
+        /* ignore */
+      }
+    })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => Boolean((window as ProbeWindow).__staveAssetProbe), { timeout: 30_000 })
+    await page.waitForFunction(() => (window as ProbeWindow).__staveAssetProbe!.inSoundMap('take_1'), undefined, {
+      timeout: 30_000,
+    })
+    await page.locator('[data-full-song-canvas]').waitFor({ timeout: 20_000 })
+
+    // PRECONDITION, asserted rather than assumed: the base canvas really is
+    // drawing a shape here. Without this the coverage reading below would be
+    // measuring a lit mark that has no waveform to hide, and would pass.
+    await expect
+      .poll(async () => firstMark(await readInk(page)).length, { timeout: 30_000 })
+      .toBeGreaterThan(20)
+
+    // Play. A CLICK first — a programmatic focus carries no user gesture and the
+    // transport then reports no position, so nothing ever lights (#885).
+    await page.locator('.monaco-editor').first().click()
+    await page.keyboard.press(`${MOD}+Enter`)
+    await page.locator('[data-full-song-overlay]').waitFor({ timeout: 20_000 })
+
+    // Wait until a mark is actually lit AND is wide enough to have an interior.
+    await expect
+      .poll(async () => (await litMarkCoverage(page)).cols, {
+        timeout: 20_000,
+        message: 'the overlay never lit a mark wide enough to measure',
+      })
+      .toBeGreaterThan(20)
+
+    const lit = await litMarkCoverage(page)
+    // eslint-disable-next-line no-console
+    console.log(
+      `[#1508] painted=${lit.painted} cols=${lit.cols} interior=${lit.interior} covered=${lit.covered} ` +
+        `coverage=${(lit.covered / Math.max(1, lit.interior)).toFixed(3)}`,
+    )
+
+    // The light is still THERE — this is the half that fails if the fix simply
+    // stopped drawing, which would "pass" a coverage test perfectly.
+    expect(lit.painted).toBeGreaterThan(0)
+    expect(lit.interior).toBeGreaterThan(0)
+    // …and it no longer covers the shape. A filled mark reads ~1 here.
+    expect(lit.covered / lit.interior).toBeLessThan(0.15)
+
+    await page.screenshot({ path: 'test-results/take-waveform-lit-outline.png' })
     expect(errors).toEqual([])
   })
 })
