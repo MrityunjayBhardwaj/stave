@@ -435,3 +435,79 @@ test('a bound retyped on the caption reaches the document (#1464 Stage 2)', asyn
   expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
 })
 
+
+/**
+ * THE GUARD ON THE BOUND EDITOR — that typing in it cannot destroy a clip.
+ *
+ * The bound input is mounted inside the grid element that carries
+ * `handleGridKeyDown`, and React's `onKeyDown` bubbles. Focus decides where a
+ * keystroke originates, not whether it travels, so the protection is the
+ * `e.stopPropagation()` on the input's own handler and nothing else. Removing
+ * that line makes BACKSPACE-while-retyping-a-bound delete the selected clip —
+ * a silent, destructive edit in the middle of an ordinary gesture.
+ *
+ * ⚠ THIS TEST IS VACUOUS UNLESS A CLIP IS ACTUALLY SELECTED. `handleGridKeyDown`
+ * opens with `if (!selected) return`, so an arm that types Backspace without a
+ * live selection passes whether the guard exists or not. The selection is
+ * therefore asserted through `[data-full-song="clip-selection"]` — which is only
+ * rendered when one is held — immediately before the keystroke, and again after,
+ * since a deleted clip takes its own selection marker with it.
+ */
+test('typing in a bound editor cannot delete the selected clip (#1464 Stage 2)', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+
+  await bootShell(page)
+  await typeSongAndEval(page, MELODIC_AUTOMATED_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+
+  const editor = page.locator('[data-full-song="automation-bound"]')
+  const selection = page.locator('[data-full-song="clip-selection"]')
+
+  // EXPAND first — the caption only exists on an expanded lane, and the expand
+  // gesture clears the selection, so selecting before it would prove nothing.
+  const box = await page.locator('[data-full-song-canvas]').boundingBox()
+  if (!box) throw new Error('no canvas')
+  await page.mouse.dblclick(box.x + 200, box.y + 8)
+  await page.waitForTimeout(800)
+
+  // SELECT A CLIP, well below the caption line so this is a clip press and not a
+  // caption press.
+  await clickCanvasAt(page, 200, 50)
+  await page.waitForTimeout(300)
+  expect(await selection.count(), 'no clip is selected, so the guard is untested').toBe(1)
+
+  // OPEN A BOUND. The caption wins the press by precedence, so the selection
+  // must survive it — that is the state the guard exists for.
+  let opened = false
+  for (let x = 6; x <= 140 && !opened; x += 3) {
+    await clickCanvasAt(page, x, 8)
+    await page.waitForTimeout(90)
+    if (await editor.count()) opened = true
+  }
+  expect(opened, 'no bound field opened, so nothing was typed into').toBe(true)
+  expect(await selection.count(), 'opening the caption dropped the selection — the dangerous state is gone').toBe(1)
+
+  const before = await readDoc(page)
+
+  // THE KEYSTROKE. In the input this deletes one character of the number; if it
+  // reaches the grid it deletes the clip.
+  await page.keyboard.press('Backspace')
+  await page.waitForTimeout(400)
+
+  expect(await selection.count(), 'the selected clip was deleted by a keystroke meant for a text field').toBe(1)
+  expect(await readDoc(page), 'Backspace in the bound editor changed the document').toBe(before)
+
+  // Delete is the same branch of the same handler, and a separate key.
+  await page.keyboard.press('Delete')
+  await page.waitForTimeout(400)
+  expect(await selection.count(), 'Delete in the bound editor reached the clip handler').toBe(1)
+  expect(await readDoc(page), 'Delete in the bound editor changed the document').toBe(before)
+
+  await page.keyboard.press('Escape')
+  expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
+})

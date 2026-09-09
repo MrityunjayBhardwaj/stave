@@ -1227,8 +1227,17 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // convenient. The grid takes keyboard focus on every press so its clip
   // shortcuts work — S splits, ⌘D duplicates, Delete/Backspace deletes. Typing a
   // number into a canvas-drawn field would leave those live, and BACKSPACE while
-  // retyping a bound would silence a clip. An input takes focus off the grid, so
-  // `handleGridKeyDown` cannot fire at all.
+  // retyping a bound would delete the selected clip.
+  //
+  // ⚠ A REAL INPUT IS NECESSARY BUT NOT SUFFICIENT, and the earlier version of
+  // this note got that wrong. It said focus alone meant `handleGridKeyDown`
+  // "cannot fire at all". It can: the input is mounted INSIDE the grid element
+  // that carries the handler, and React's `onKeyDown` bubbles, so focus governs
+  // where a keystroke starts and not whether it travels. What actually stops it
+  // is the `e.stopPropagation()` on the input's own handler. The input still
+  // earns its place — it gives real text editing, caret and selection — but the
+  // guard is that one line, and it is pinned by a browser arm rather than left
+  // to be re-reasoned.
   const { onEditAutomation } = props
   const [editingCaption, setEditingCaption] = useState<CaptionHit | null>(null)
 
@@ -2249,9 +2258,16 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                   onPointerDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => {
-                    // The grid's clip shortcuts are out of reach anyway (focus is
-                    // here, not on the grid) — this stops the keystrokes reaching
-                    // any ANCESTOR handler as well, which is a different path.
+                    // ⚠ THIS LINE IS THE GUARD, not a belt over a brace. This
+                    // input is a DOM DESCENDANT of the element carrying
+                    // `handleGridKeyDown`, and React's `onKeyDown` bubbles —
+                    // focus decides where a keystroke ORIGINATES, not whether it
+                    // travels. So without this, BACKSPACE typed into a bound
+                    // would reach the clip-delete branch and destroy the
+                    // selected clip while the user was editing a number.
+                    // An earlier comment here credited focus for the protection;
+                    // it does not provide it. Pinned by the browser arm named
+                    // "typing in a bound editor cannot delete the selected clip".
                     e.stopPropagation()
                     if (e.key === 'Escape') {
                       // Disarm as well as close: abandoning is a decision, and a
