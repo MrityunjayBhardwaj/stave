@@ -2195,6 +2195,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                 viewportWidth={areaWidth}
                 playheadCycle={playheadVisible ? wrappedPos : null}
                 getHapStream={props.getHapStream}
+                waveforms={props.waveforms}
               />
             )}
             {/* Marks overlay (#506): playhead, trim edge, clip selection and move

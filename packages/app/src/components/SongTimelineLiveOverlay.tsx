@@ -31,6 +31,7 @@ import {
   markSig,
   type LiveOverlayTheme,
 } from './musicalTimeline/drawLiveOverlay'
+import type { WaveformSource } from './musicalTimeline/drawTimeline'
 
 export interface SongTimelineLiveOverlayProps {
   readonly scene: TimelineScene
@@ -46,6 +47,11 @@ export interface SongTimelineLiveOverlayProps {
   readonly playheadCycle: number | null
   /** Live hap stream accessor (closure-stable through a ref at StaveApp). */
   readonly getHapStream: () => HapStream | null
+  /** The same decoded-audio lookup the base canvas draws waveforms from (#1506).
+   *  Used here only to ask WHETHER a mark is showing a shape, so a lit mark can
+   *  outline instead of cover it (#1508) — never for the envelope itself.
+   *  Optional: without it every mark lights exactly as it did before. */
+  readonly waveforms?: WaveformSource
 }
 
 /** Cap the backing-store DPR — matches the base canvas + the viz `maxDpr`. */
@@ -64,8 +70,16 @@ const EMPTY_SIGS: ReadonlySet<string> = new Set()
 export function SongTimelineLiveOverlay(
   props: SongTimelineLiveOverlayProps,
 ): React.ReactElement {
-  const { scene, layout, scrollLeft, contentWidth, viewportWidth, playheadCycle, getHapStream } =
-    props
+  const {
+    scene,
+    layout,
+    scrollLeft,
+    contentWidth,
+    viewportWidth,
+    playheadCycle,
+    getHapStream,
+    waveforms,
+  } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const height = layout.totalHeight
 
@@ -156,10 +170,15 @@ export function SongTimelineLiveOverlay(
         playheadCycle,
         activeSigsRef.current,
         THEME,
+        waveforms,
       )
     })
     return () => cancelAnimationFrame(raf)
-  }, [scene, layout, scrollLeft, contentWidth, viewportWidth, playheadCycle, height])
+    // `waveforms` needs no epoch dependency the way the base canvas does: this
+    // effect already reruns on every `playheadCycle` tick, and the overlay draws
+    // nothing unless something is sounding — so a decode that lands mid-playback
+    // is picked up on the very next frame.
+  }, [scene, layout, scrollLeft, contentWidth, viewportWidth, playheadCycle, height, waveforms])
 
   return (
     <canvas
