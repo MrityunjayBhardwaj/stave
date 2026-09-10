@@ -9,3 +9,4 @@
 export { detectArrangeAt, detectAllArrangeCalls, detectBarePattern } from './parse'
 export type { ArrangeCall, ArrangeArmRange, ArrangeMode } from './parse'
 export { setWeight, reorderArm, insertArm, insertSilenceArm, removeArm, silenceArm, wrapBare, materializeBareDelete, materializeBareSplit, splitArm, patternText } from './serialize'
+export { renameSection, countSectionArms } from './rename'

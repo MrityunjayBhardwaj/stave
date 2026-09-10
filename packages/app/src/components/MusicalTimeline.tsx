@@ -60,6 +60,8 @@ import {
   reorderArm,
   insertArm,
   insertSilenceArm,
+  renameArrangeSection,
+  countArrangeSectionArms,
   splitArm,
   materializeBareDelete,
   materializeBareSplit,
@@ -68,6 +70,8 @@ import {
   pickSilenceArm,
   pickRemoveArm,
   pickInsertSilenceArm,
+  pickRenameSection,
+  pickCountSectionArms,
   pickReorderArm,
   pickDuplicateArm,
   pickSplitArm,
@@ -848,6 +852,56 @@ export function MusicalTimeline(
     [snapshot],
   )
 
+  // RENAME a section (#1417 Stage 3) — the gesture that makes the two rename
+  // primitives reachable at all. Stage 1 shipped the pick rename with ZERO
+  // callers, so a musician could not rename anything; building the second
+  // primitive without a gesture would only have doubled the unreachable code.
+  //
+  // ⚠ THE TWO SPELLINGS RENAME OPPOSITE THINGS, and routing is the whole job
+  // here. In `arrange(...)` the section name IS a top-level binding, so the
+  // rename moves its declaration and every reference across the document. In the
+  // pick family it is an object KEY and no binding is touched — renaming the
+  // section leaves the pattern's own name exactly where the user put it. One
+  // gesture, two edits, and a shared implementation with a flag would have had
+  // to be wrong about one of them.
+  //
+  // Both primitives decline rather than half-rewrite: a built-in with no
+  // declaration, an inline expression with no name, a collision, a shadowed
+  // name. A decline reaches the user through the same write seam every other
+  // gesture reports through, because zero edits is `no-edits` there.
+  const handleRenameSection = React.useCallback(
+    (req: { sourceOffset: number | null; armIndex: number; newName: string }) => {
+      if (!snapshot?.source || req.sourceOffset == null || req.armIndex < 0) return
+      const call = detectArrangeAt(snapshot.code, req.sourceOffset)
+      if (call) {
+        const edits = renameArrangeSection(snapshot.code, call, req.armIndex, req.newName)
+        writeArrange(edits, 'rename', 'rename section')
+        return
+      }
+      const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
+      if (!ctl) return
+      const edits = pickRenameSection(snapshot.code, ctl, req.armIndex, req.newName)
+      writeArrange(edits, 'rename', 'rename section')
+    },
+    [snapshot],
+  )
+
+  // How many sections a rename would move, asked BEFORE the write so the editor
+  // can say "renames 2 sections" while the user can still change their mind.
+  // Returns 0 whenever the rename would decline, so the hint and the write can
+  // never tell the user different things.
+  const sectionArmCount = React.useCallback(
+    (req: { sourceOffset: number | null; armIndex: number }): number => {
+      if (!snapshot?.source || req.sourceOffset == null || req.armIndex < 0) return 0
+      const call = detectArrangeAt(snapshot.code, req.sourceOffset)
+      if (call) return countArrangeSectionArms(snapshot.code, call, req.armIndex)
+      const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
+      if (!ctl) return 0
+      return pickCountSectionArms(snapshot.code, ctl, req.armIndex)
+    },
+    [snapshot],
+  )
+
   // Move a clip on the Song canvas (Phase 5c, #386): `reorder` only — the dragged
   // clip is a real arm, swapped to a new slot in the combinator (reorderArm
   // fromIndex→toIndex). Clip time-order = arm order. A bare track's implicit clip
@@ -964,6 +1018,8 @@ export function MusicalTimeline(
           onDeleteClip={handleDeleteClip}
           onRippleDeleteClip={handleRippleDeleteClip}
           onInsertSilenceClip={handleInsertSilenceClip}
+          onRenameSection={handleRenameSection}
+          sectionArmCount={sectionArmCount}
           onMoveClip={handleMoveClip}
           onDuplicateClip={handleDuplicateClip}
           onSplitClip={handleSplitClip}
