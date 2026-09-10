@@ -59,6 +59,7 @@ import {
   removeArm,
   reorderArm,
   insertArm,
+  insertSilenceArm,
   splitArm,
   materializeBareDelete,
   materializeBareSplit,
@@ -66,6 +67,7 @@ import {
   pickSetWeight,
   pickSilenceArm,
   pickRemoveArm,
+  pickInsertSilenceArm,
   pickReorderArm,
   pickDuplicateArm,
   pickSplitArm,
@@ -812,6 +814,40 @@ export function MusicalTimeline(
     [snapshot],
   )
 
+  // INSERT SILENCE after a clip (#1461): a new, EMPTY section directly after the
+  // selected one, exactly as wide.
+  //
+  // ⚠ WHY EMPTY, WHEN DUPLICATE ALREADY HANDS YOU SOMETHING THAT PLAYS. The
+  // objection was raised while measuring #1347 — a section you must then go and
+  // type into is worse than a clone. It answers a different question than this
+  // gesture asks. Duplicate writes CONTENT; this writes TIME. You reach for it
+  // when the song needs room, not when you know what goes in the room, which is
+  // exactly why the DAW command it mirrors is called Insert Silence and sits on
+  // this chord. They are complements.
+  //
+  // The spelling of "empty" belongs to the serializers, not here: `silence` for
+  // an arrange arm and `~` for a pick arm, each matching what its own delete
+  // already writes for a gap. Both copy the selected arm's weight as TEXT, so a
+  // section written `[M*8, …]` yields another `M*8` rather than a pinned number.
+  const handleInsertSilenceClip = React.useCallback(
+    (req: { sourceOffset: number | null; armIndex: number }) => {
+      if (!snapshot?.source || req.sourceOffset == null || req.armIndex < 0) return
+      const call = detectArrangeAt(snapshot.code, req.sourceOffset)
+      if (call) {
+        if (req.armIndex >= call.arms.length) return
+        const edits = insertSilenceArm(snapshot.code, call, req.armIndex)
+        writeArrange(edits, 'arrange.structure', 'insert silence')
+        return
+      }
+      const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
+      if (!ctl) return
+      if (req.armIndex >= ctl.arms.length) return
+      const edits = pickInsertSilenceArm(snapshot.code, ctl, req.armIndex)
+      writeArrange(edits, 'arrange.structure', 'insert silence')
+    },
+    [snapshot],
+  )
+
   // Move a clip on the Song canvas (Phase 5c, #386): `reorder` only — the dragged
   // clip is a real arm, swapped to a new slot in the combinator (reorderArm
   // fromIndex→toIndex). Clip time-order = arm order. A bare track's implicit clip
@@ -927,6 +963,7 @@ export function MusicalTimeline(
           onTrimClip={handleTrimClip}
           onDeleteClip={handleDeleteClip}
           onRippleDeleteClip={handleRippleDeleteClip}
+          onInsertSilenceClip={handleInsertSilenceClip}
           onMoveClip={handleMoveClip}
           onDuplicateClip={handleDuplicateClip}
           onSplitClip={handleSplitClip}

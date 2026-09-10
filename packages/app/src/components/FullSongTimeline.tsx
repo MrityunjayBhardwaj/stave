@@ -329,6 +329,20 @@ export interface FullSongTimelineProps {
     sourceOffset: number | null
     armIndex: number
   }) => void
+  /** INSERT SILENCE after a clip (#1461). Fired on Cmd/Ctrl+I with a clip
+   *  selected: add a new, EMPTY section directly after it, exactly as wide.
+   *
+   *  ⚠ THIS WRITES TIME, NOT CONTENT, which is what makes it a different gesture
+   *  from duplicate rather than a worse one. Duplicate hands you a copy of
+   *  something that plays; this makes room in the song for something that does
+   *  not exist yet. The DAW command it mirrors is called Insert Silence for the
+   *  same reason, and sits on this same chord.
+   *
+   *  Real arms only — a bare track has no arm to take a width from. Optional. */
+  readonly onInsertSilenceClip?: (req: {
+    sourceOffset: number | null
+    armIndex: number
+  }) => void
 }
 
 /** A bare loop's single implicit clip spans the SONG, not just its one-cycle
@@ -1142,7 +1156,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // (`armIndex ≥ 0`) are selectable; a bare track's implicit clip has no arm to
   // remove. Selection is keyed by lane + arm; the highlight rect is re-derived
   // in render from the live scene/layout so it tracks zoom, scroll, and re-eval.
-  const { onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip } = props
+  const { onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip } = props
   const [selected, setSelected] = useState<{
     laneKey: string
     armIndex: number
@@ -1759,6 +1773,19 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       // Returning when the handler is absent is deliberate rather than lazy:
       // falling through would leave the chord quietly bound to the other
       // gesture, which is exactly the undocumented binding #1421 was about.
+      // Cmd/Ctrl+I inserts an empty section after the selection (#1461) — the
+      // chord Ableton gives Insert Silence. Nothing else on this grid claims it:
+      // the worry recorded on the duplicate branch, that an add gesture would
+      // want ⌘D's chord, was retired by reading the manuals rather than guessing.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+        if (!onInsertSilenceClip || bareClip) return
+        e.preventDefault()
+        onInsertSilenceClip({ sourceOffset: selected.sourceOffset, armIndex: selected.armIndex })
+        // A new arm lands after the selection and shifts every later index — the
+        // held armIndex would address the wrong clip on the next keystroke.
+        setSelected(null)
+        return
+      }
       if (
         (e.metaKey || e.ctrlKey) &&
         e.shiftKey &&
@@ -1818,7 +1845,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setSelected(null)
       }
     },
-    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip],
+    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip],
   )
 
   // The selection highlight rect, derived from the LIVE scene + layout so it

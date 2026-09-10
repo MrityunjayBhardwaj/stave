@@ -97,6 +97,50 @@ export function insertArm(doc: string, call: ArrangeCall, at: number, armSource:
   return [{ range: [start, start], text: `${armSource}, ` }]
 }
 
+
+/**
+ * #1461 — INSERT SILENCE: a new, empty section after arm `i`, as wide as it is.
+ *
+ * ## Why an EMPTY section is the right thing to add
+ *
+ * The obvious objection, and it was raised on #1347: a section you must then go
+ * and type into is worse than duplicate, which at least hands you something that
+ * plays. That objection answers a question this gesture is not asking. Duplicate
+ * writes CONTENT; this writes TIME. The DAW command it mirrors is called Insert
+ * Silence for that reason — you reach for it when the song needs room, not when
+ * you know what goes in the room. They are complements, and the arrangement is
+ * the one place in Stave where making space is a move in its own right.
+ *
+ * `silence` rather than a copy of anything, because it is the same vocabulary
+ * `silenceArm` already writes for a gap, and a document that spells its holes
+ * one way everywhere is one a reader can trust.
+ *
+ * ## The weight is copied as TEXT, never as a number
+ *
+ * A real document writes `[M*8, stack(…)]`, and the weight is an expression the
+ * parser reports a range for and no numeric value. Reading it as a number would
+ * turn `M*8` into `8` — silently pinning a section that was meant to follow a
+ * tempo variable. So the new arm carries the same BYTES the old one did, and a
+ * `cat`/`slowcat` arm (whose weight is an implicit 1 with no literal at all)
+ * gets a bare pattern, matching what its siblings look like.
+ *
+ * Returns no edits when `i` names no arm — there is nothing to take a width from.
+ */
+export function insertSilenceArm(doc: string, call: ArrangeCall, i: number): OffsetEdit[] {
+  const arm = call.arms[i]
+  if (!arm) return []
+  if (call.mode !== 'arrange') {
+    // A `cat`/`slowcat` arm is a bare pattern of implicit width 1.
+    return insertArm(doc, call, i + 1, 'silence')
+  }
+  // ⚠ `weightRange` is null for an arm this parser could not find a weight
+  // literal in. Inventing `1` there would make the new section a DIFFERENT
+  // length from the one it was asked to match, so decline instead.
+  if (!arm.weightRange) return []
+  const weightText = doc.slice(arm.weightRange[0], arm.weightRange[1])
+  return insertArm(doc, call, i + 1, `[${weightText}, silence]`)
+}
+
 /**
  * Remove arm `i`, taking one adjacent `, ` separator with it. Refuses to empty
  * the combinator — a lane must keep ≥ 1 clip (PV122 #5); removing a sole arm is

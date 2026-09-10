@@ -46047,6 +46047,17 @@ function insertArm(doc, call, at, armSource) {
   return [{ range: [start, start], text: `${armSource}, ` }];
 }
 __name(insertArm, "insertArm");
+function insertSilenceArm(doc, call, i) {
+  const arm = call.arms[i];
+  if (!arm) return [];
+  if (call.mode !== "arrange") {
+    return insertArm(doc, call, i + 1, "silence");
+  }
+  if (!arm.weightRange) return [];
+  const weightText = doc.slice(arm.weightRange[0], arm.weightRange[1]);
+  return insertArm(doc, call, i + 1, `[${weightText}, silence]`);
+}
+__name(insertSilenceArm, "insertSilenceArm");
 function removeArm(doc, call, i) {
   const n = call.arms.length;
   if (i < 0 || i >= n || n <= 1) return [];
@@ -46297,6 +46308,13 @@ function silenceArm2(doc, control, i) {
   return [{ range: arm.headRange, text: "~" }];
 }
 __name(silenceArm2, "silenceArm");
+function insertSilenceArm2(doc, control, i) {
+  const arm = control.arms[i];
+  if (!arm) return [];
+  const armSource = arm.weightRange ? `~@${doc.slice(arm.weightRange[0], arm.weightRange[1])}` : "~";
+  return insertArm2(doc, control, i + 1, armSource);
+}
+__name(insertSilenceArm2, "insertSilenceArm");
 function removeArm2(doc, control, i) {
   const n = control.arms.length;
   if (i < 0 || i >= n || n <= 1) return [];
@@ -46974,6 +46992,7 @@ exports.initProjectDocSync = initProjectDocSync;
 exports.injectedGlobalByToken = injectedGlobalByToken;
 exports.injectedGlobals = injectedGlobals;
 exports.insertArm = insertArm;
+exports.insertSilenceArm = insertSilenceArm;
 exports.installEngineLogMarkers = installEngineLogMarkers;
 exports.installGlobalErrorCatch = installGlobalErrorCatch;
 exports.isBlackKey = isBlackKey;
@@ -47062,6 +47081,7 @@ exports.perf = perf;
 exports.pickCountSectionArms = countSectionArms;
 exports.pickDuplicateArm = duplicateArm;
 exports.pickInsertArm = insertArm2;
+exports.pickInsertSilenceArm = insertSilenceArm2;
 exports.pickRemoveArm = removeArm2;
 exports.pickRenameSection = renameSection;
 exports.pickReorderArm = reorderArm2;

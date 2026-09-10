@@ -16,6 +16,7 @@ import {
   setWeight,
   reorderArm,
   insertArm,
+  insertSilenceArm,
   removeArm,
   silenceArm,
   wrapBare,
@@ -386,5 +387,56 @@ describe('arrange parity — edit text → re-parse → IR changed (PV122 #1–#
     const after = asArrange(out)
     expect(after.mode).toBe('arrange')
     expect(after.arms.map((a) => a.weight)).toEqual([1, 3])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #1461 — INSERT SILENCE: an empty section as wide as the one it follows.
+// ---------------------------------------------------------------------------
+describe('insertSilenceArm (#1461)', () => {
+  const doc = 'arrange([2, s("bd")], [4, s("hh")])'
+  const call = () => detectArrangeAt(doc, 0)!
+
+  it('adds an empty section AFTER the selected one, at its width', () => {
+    expect(applyEdits(doc, insertSilenceArm(doc, call(), 0))).toBe(
+      'arrange([2, s("bd")], [2, silence], [4, s("hh")])',
+    )
+  })
+
+  it('adds at the END when the last section is selected', () => {
+    expect(applyEdits(doc, insertSilenceArm(doc, call(), 1))).toBe(
+      'arrange([2, s("bd")], [4, s("hh")], [4, silence])',
+    )
+  })
+
+  it('copies the weight as TEXT, so an expression survives', () => {
+    // Real documents write `[M*8, …]`. Reading that as a number would pin the new
+    // section to 8 and quietly decouple it from the variable.
+    const expr = 'arrange([M*8, s("bd")], [2, s("hh")])'
+    expect(applyEdits(expr, insertSilenceArm(expr, detectArrangeAt(expr, 0)!, 0))).toBe(
+      'arrange([M*8, s("bd")], [M*8, silence], [2, s("hh")])',
+    )
+  })
+
+  it('writes a BARE pattern into a cat, matching its siblings', () => {
+    // `cat` arms carry no weight literal at all — an implicit 1 each.
+    const cat = 'cat(s("bd"), s("hh"))'
+    expect(applyEdits(cat, insertSilenceArm(cat, detectArrangeAt(cat, 0)!, 0))).toBe(
+      'cat(s("bd"), silence, s("hh"))',
+    )
+  })
+
+  it('declines for an arm that names nothing', () => {
+    expect(insertSilenceArm(doc, call(), 9)).toEqual([])
+    expect(insertSilenceArm(doc, call(), -1)).toEqual([])
+  })
+
+  it('leaves a document that still reads back as an arrangement', () => {
+    // The whole point of copying bytes: the result has to re-parse, with one
+    // more arm and the original arms untouched.
+    const out = applyEdits(doc, insertSilenceArm(doc, call(), 0))
+    const reparsed = detectArrangeAt(out, 0)
+    expect(reparsed).not.toBeNull()
+    expect(reparsed!.arms).toHaveLength(3)
   })
 })

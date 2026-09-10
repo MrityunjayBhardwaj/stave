@@ -16,6 +16,7 @@ import {
   silenceArm,
   reorderArm,
   duplicateArm,
+  insertSilenceArm,
   renameSection,
   countSectionArms,
 } from '../serialize'
@@ -331,5 +332,53 @@ describe('#1417 Stage 1 — the name must be uniquely and completely addressable
   it('DECLINES `__proto__` — it sets a prototype, it does not make a key', () => {
     const ctl = detectPickControlAt(SONG, CTRL_POS)!
     expect(renameSection(SONG, ctl, 1, '__proto__')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #1461 — INSERT SILENCE, the pick spelling. Must stay equivalent to the
+// arrange one: a keypress means one thing whichever way the song is written.
+// ---------------------------------------------------------------------------
+describe('insertSilenceArm (#1461)', () => {
+  const ctl = () => detectPickControlAt(SONG, CTRL_POS)!
+
+  it('adds an empty section AFTER the selected one, at its width', () => {
+    expect(apply(SONG, insertSilenceArm(SONG, ctl(), 1))).toBe(
+      '"<~@2 verse@2 ~@2 chorus@2>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+  })
+
+  it('adds at the END when the last section is selected', () => {
+    expect(apply(SONG, insertSilenceArm(SONG, ctl(), 2))).toBe(
+      '"<~@2 verse@2 chorus@2 ~@2>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+  })
+
+  it('writes a BARE rest when the section carries no explicit width', () => {
+    // No `@` means an implicit 1, and there is no literal to copy — so the new
+    // arm looks like its siblings rather than carrying an invented `@1`.
+    const bare = '"<verse chorus>".pickRestart({verse: s("bd"), chorus: s("hh")})'
+    expect(apply(bare, insertSilenceArm(bare, detectPickControlAt(bare, 5)!, 0))).toBe(
+      '"<verse ~ chorus>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+  })
+
+  it('adds NO object entry — a rest is grammar, not a name to resolve', () => {
+    // The section object must come back exactly as the user wrote it; inventing
+    // a key would put a pattern in the document that nobody asked for.
+    const out = apply(SONG, insertSilenceArm(SONG, ctl(), 1))
+    expect(out).toContain('{verse: s("bd"), chorus: s("hh")}')
+  })
+
+  it('declines for an arm that names nothing', () => {
+    expect(insertSilenceArm(SONG, ctl(), 9)).toEqual([])
+    expect(insertSilenceArm(SONG, ctl(), -1)).toEqual([])
+  })
+
+  it('leaves a control that still reads back, one section longer', () => {
+    const out = apply(SONG, insertSilenceArm(SONG, ctl(), 1))
+    const reparsed = detectPickControlAt(out, CTRL_POS)
+    expect(reparsed).not.toBeNull()
+    expect(reparsed!.arms).toHaveLength(4)
   })
 })
