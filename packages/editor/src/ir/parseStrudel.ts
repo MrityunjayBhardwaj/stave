@@ -452,6 +452,49 @@ export function stripParserPrelude(code: string): { body: string; offset: number
       continue
     }
 
+    // 2b. BLOCK comment (#1533) — the third walker in this file to need this,
+    // and the invariant is worth stating where it is finally true: for every
+    // comment form the language has, every top-level walker here handles it or
+    // none does. `splitTopLevelStatements` got its `/* … */` branch in #152,
+    // `lexStateAt` in #1532, and this scan had none — so a `/*` licence header
+    // was not recognised as prelude, the scan stopped on line 1, and the body
+    // handed onward was the ENTIRE source. `parseExpression` then met a comment
+    // as its root and gave up: `/* h */\ns("bd")` drew nothing at all.
+    //
+    // ⚠ WHY THAT WAS INVISIBLE FOR SO LONG — the ≥2-statement path repairs it
+    // downstream. `splitTopLevelStatements` does model block comments, so a
+    // TWO-pattern document with the same header splits correctly and plays.
+    // Only the single-statement fallback, which hands `stripped.body` to
+    // `parseExpression` whole, was left holding an unstripped source. The
+    // simplest possible document was the broken one.
+    //
+    // ⚠ THIS IS A LINE SCANNER, so the skip is line-based to stay in step with
+    // the rest of the function. A block comment that opens and closes on ONE
+    // line leaves the rest of that line to be re-read as its own line, so
+    // `/* h */ samples("x")` still has its boot call recognised by rule 3 —
+    // decided, not accidental, and it has an arm.
+    if (trimmed.startsWith('/*')) {
+      const close = code.indexOf('*/', i)
+      if (close === -1) {
+        // Unterminated: everything after this is a comment, so there is no
+        // musical body left to strip toward. Stop and let the caller see the
+        // remainder — the same verdict `lexStateAt`'s `inComment` reaches.
+        break
+      }
+      const afterClose = close + 2
+      const rest = code.slice(afterClose, code.indexOf('\n', afterClose) === -1 ? code.length : code.indexOf('\n', afterClose))
+      if (rest.trim() === '') {
+        // Comment occupies the rest of its line — advance past the newline.
+        const nl = code.indexOf('\n', afterClose)
+        i = nl === -1 ? code.length : nl + 1
+      } else {
+        // Code follows `*/` on the same line — resume scanning AT that code so
+        // rule 3 still sees it.
+        i = afterClose
+      }
+      continue
+    }
+
     // 3. Top-level recognised prelude call — possibly multi-line.
     //    Either a direct boot call (PRELUDE_CALL_RE) OR the #143
     //    guarded-boot idiom `typeof X !== 'undefined' && X(...)`
@@ -1200,7 +1243,16 @@ function lexStateAt(
 ): { depth: number; inString: boolean; inComment: boolean } {
   let depth = 0
   let inString = false
-  // #1532 — set when `idx` falls inside a block comment that never closes.
+  // #1532 — set when `idx` falls inside a `/* … */` block comment.
+  //
+  // ⚠ NOT ONLY AN UNTERMINATED ONE, which is what this comment said first and
+  // is narrower than the mechanism. The walk STOPS AT `idx`, so a candidate
+  // inside a comment that closes later in the document is indistinguishable
+  // from one after a `/*` that never closes — the closing `*/` is simply past
+  // the end of the scan. Both are commented-out text and both must be rejected,
+  // so the bounded case needs its own verdict rather than falling through to
+  // `depth === 0`, which would ADMIT it.
+  //
   // A `//` comment cannot need this: it ends at the newline, and every label
   // candidate matches from `^`, so no label is ever mid-line-comment.
   let inComment = false

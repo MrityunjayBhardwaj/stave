@@ -18,14 +18,19 @@
  * after it was rejected as "inside brackets", and a six-track tune reached the
  * IR as one opaque `Code` node — no rows, no marks, no gestures, no error.
  *
- * ⚠ THE CONTROLS ARE HALF THE POINT. Five of the arms below pass with this
- * change reverted; they are here to say that the fix moved the one thing it
- * claims to and nothing else. Break-tested: with the `/*` branch removed the
- * five REJECTED-cases-now-admitted arms flip and all five controls stay green.
+ * ⚠ THE CONTROLS ARE HALF THE POINT — they are here to say the fix moved the one
+ * thing it claims to and nothing else. Without them "labels are admitted" would
+ * also be satisfied by a walker that had stopped counting brackets altogether,
+ * which is a worse bug than the one being fixed.
+ *
+ * Break-tested, and the numbers are read off the run rather than guessed: with
+ * the `lexStateAt` branch removed 6 arms flip and 4 controls stay green. With the
+ * #1533 branch below removed, 3 arms flip, its 3 controls stay green, and this
+ * whole describe stays green — the two fixes are independent.
  */
 
 import { describe, it, expect } from 'vitest'
-import { extractTracks, parseStrudel } from '../parseStrudel'
+import { extractTracks, parseStrudel, stripParserPrelude } from '../parseStrudel'
 
 /** Is a known-good label still admitted after this prefix? */
 function labelAdmittedAfter(prefix: string): boolean {
@@ -141,5 +146,105 @@ describe('#1532 — lexStateAt must not count brackets inside a block comment', 
 
   it('CONTROL — a bracket inside a STRING is still not counted', () => {
     expect(labelAdmittedAfter('const s = "("')).toBe(true)
+  })
+
+  it('does not open a comment for a `/*` inside a STRING', () => {
+    // The `inString` branch runs before the new one, and this says so. Without
+    // this arm the fix could have been written to scan for `/*` anywhere.
+    expect(extractTracks('const s = "/*"\nfoo: s("bd")').map((t) => t.label)).toEqual(['foo'])
+    expect(extractTracks("const s = '/*'\nfoo: s(\"bd\")").map((t) => t.label)).toEqual(['foo'])
+  })
+
+  it('a label inside a TERMINATED block comment is not a track', () => {
+    // ⚠ THIS BEHAVIOUR CHANGED AND WAS UNPINNED. Before the fix a `name:` inside
+    // a block comment was admitted as a LIVE track; now it is rejected. The
+    // mechanism is the bounded scan: `lexStateAt` stops at the candidate, so a
+    // label inside a comment that closes LATER is indistinguishable from one
+    // after a `/*` that never closes — and rejecting both is right.
+    //
+    // ⚠ Note the deliberate asymmetry with `//`: a line-commented track is kept
+    // as an empty-body placeholder so d{N} numbering survives comment toggling
+    // (#1178 / 20-12.1). A block-commented one is dropped outright. Making it a
+    // placeholder too would be a further improvement, not this change.
+    const code = '/*\nfoo: s("bd")\n*/\n$: s("hh")'
+    expect(extractTracks(code).map((t) => t.label)).toEqual(['$'])
+  })
+})
+
+/**
+ * #1533 — the THIRD walker, and the one that made the simplest document break.
+ *
+ * `stripParserPrelude` removes the leading run of comments, blank lines and boot
+ * calls before the bare branch parses. Its only comment rule was
+ * `trimmed.startsWith('//')`, so a `/* … *​/` licence header was not prelude: the
+ * scan stopped on line 1 and the body handed onward was the ENTIRE source, comment
+ * included. `parseExpression` met a comment as its root and gave up.
+ *
+ * ⚠ WHY IT HID — the ≥2-statement path repairs it downstream, because
+ * `splitTopLevelStatements` DOES model block comments. So a two-pattern document
+ * with the same header plays, and only the single-statement fallback broke. The
+ * simplest document was the broken one, which is the opposite of where anyone
+ * looks.
+ */
+describe('#1533 — a block-comment header is prelude, like a `//` one', () => {
+  const censusOf = (code: string): Record<string, number> => {
+    const c: Record<string, number> = {}
+    const walk = (n: unknown): void => {
+      if (n === null || typeof n !== 'object') return
+      if (Array.isArray(n)) return void n.forEach(walk)
+      const r = n as Record<string, unknown>
+      if (typeof r.tag === 'string') c[r.tag] = (c[r.tag] ?? 0) + 1
+      for (const [k, v] of Object.entries(r)) if (k !== 'loc' && k !== 'tag') walk(v)
+    }
+    walk(parseStrudel(code))
+    return c
+  }
+
+  // ── The rows this change moves ──────────────────────────────────────────────
+  it('a ONE-pattern document with a block header plays', () => {
+    expect(censusOf('/* h */\ns("bd")').Play).toBe(1)
+    expect(censusOf('/* h */\ns("bd")').Code ?? 0).toBe(0)
+    expect(censusOf('/* h */\nsamples("x")\ns("bd")').Play).toBe(1)
+    expect(censusOf('/* a\nb\n*/\nsamples("x")\ns("bd")').Play).toBe(1)
+  })
+
+  it('strips a block header the way it strips a line header', () => {
+    expect(stripParserPrelude('/* h */\nsamples("x")\ns("bd")').body.trim()).toBe('s("bd")')
+    expect(stripParserPrelude('/* a\nb\n*/\ns("bd")').body.trim()).toBe('s("bd")')
+  })
+
+  it('code after `*/` ON THE SAME LINE is still recognised as prelude', () => {
+    // Decided, not accidental: the line scanner resumes AT the code following
+    // `*/`, so rule 3 still sees the boot call.
+    expect(stripParserPrelude('/* h */ samples("x")\ns("bd")').body.trim()).toBe('s("bd")')
+  })
+
+  it('CONTROL — an UNTERMINATED block header leaves the body alone', () => {
+    // ⚠ RELABELLED AFTER THE BREAK TEST: this arm does NOT flip when the #1533
+    // branch is removed, because without the branch the scan stops on line 1 and
+    // the body is the whole source either way. It passes for a different reason
+    // in each arm, which makes it a control on unchanged behaviour rather than a
+    // claim about the fix. Worth keeping — everything after an unclosed `/*` is a
+    // comment, so there is no musical body to strip toward, the same verdict
+    // `lexStateAt`'s `inComment` reaches — but not worth counting as evidence.
+    const code = '/* h\ns("bd")'
+    expect(stripParserPrelude(code).body).toContain('/* h')
+  })
+
+  // ── Controls: these pass with the change reverted ───────────────────────────
+  it('CONTROL — a `//` header is unchanged, one pattern and two', () => {
+    expect(censusOf('// h\nsamples("x")\ns("bd")').Play).toBe(1)
+    expect(censusOf('// h\nsamples("x")\ns("bd")\ns("hh")').Play).toBe(2)
+  })
+
+  it('CONTROL — a block header with TWO patterns already worked', () => {
+    // This is the row that hid the defect: it passes either way, because the
+    // statement splitter repairs it downstream.
+    expect(censusOf('/* h */\nsamples("x")\ns("bd")\ns("hh")').Play).toBe(2)
+  })
+
+  it('CONTROL — a document with no header at all is untouched', () => {
+    expect(stripParserPrelude('samples("x")\ns("bd")').body.trim()).toBe('s("bd")')
+    expect(censusOf('s("bd")').Play).toBe(1)
   })
 })

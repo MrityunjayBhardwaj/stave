@@ -2175,6 +2175,21 @@ function stripParserPrelude(code) {
       i = lineEnd + 1;
       continue;
     }
+    if (trimmed.startsWith("/*")) {
+      const close = code.indexOf("*/", i);
+      if (close === -1) {
+        break;
+      }
+      const afterClose = close + 2;
+      const rest = code.slice(afterClose, code.indexOf("\n", afterClose) === -1 ? code.length : code.indexOf("\n", afterClose));
+      if (rest.trim() === "") {
+        const nl = code.indexOf("\n", afterClose);
+        i = nl === -1 ? code.length : nl + 1;
+      } else {
+        i = afterClose;
+      }
+      continue;
+    }
     if (PRELUDE_CALL_RE.test(line) || GUARDED_BOOT_RE.test(line)) {
       let j = i;
       let depth = 0;
