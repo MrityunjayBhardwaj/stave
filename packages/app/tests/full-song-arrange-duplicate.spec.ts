@@ -86,3 +86,113 @@ test('selecting arm 0 and pressing ⌘-D inserts a verbatim clone after it', asy
   await page.screenshot({ path: 'test-results/arrange-duplicate.png' })
   expect(errors, `unexpected console/page errors:\n${errors.join('\n')}`).toEqual([])
 })
+
+test('⌘-I inserts an EMPTY section, where ⌘-D inserts a copy of one that plays', async ({ page }) => {
+  // #1461. The claim is the DIFFERENCE, so both gestures run on the same song in
+  // one session: duplicate writes CONTENT, insert writes TIME. An arm that only
+  // showed insert working would leave "is this just duplicate?" unanswered, and
+  // that question is the whole reason the objection on #1347 was raised.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+
+  await bootShell(page)
+
+  const selectArm0 = async (): Promise<ReturnType<Page['locator']>> => {
+    const grid = page.locator('[data-full-song="grid"]')
+    const box = await grid.boundingBox()
+    if (!box) throw new Error('no grid box')
+    await page.mouse.click(box.x + box.width * 0.25, box.y + 8)
+    await expect(page.locator('[data-full-song="clip-selection"]')).toBeVisible({ timeout: 5_000 })
+    return grid
+  }
+
+  // ── INSERT ───────────────────────────────────────────────────────────────
+  await typeSongAndEval(page, 'arrange([2, s("bd")], [4, s("hh")])')
+  await page.locator('[data-full-song="root"]').waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-lane]').first().waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(400)
+  // ⚠ Scoped to the gesture: the harness types into a LIVE editor, so the runtime
+  // genuinely evaluates `arra` on the way to `arrange` and says so. That is a
+  // live-coding editor working as designed, and it is harness noise.
+  errors.length = 0
+
+  await (await selectArm0()).press(`${MOD}+i`)
+
+  // A new section, EMPTY, and exactly as wide as the one it follows — the song
+  // grew from 6 cycles to 8 and nothing new plays.
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    'arrange([2, s("bd")], [2, silence], [4, s("hh")])',
+  )
+  const inserted = await strudelSource(page)
+  // eslint-disable-next-line no-console
+  console.log(`[#1461] after insert: ${inserted}`)
+  // Not a clone: a second `s("bd")` here would mean the duplicate path ran.
+  expect(inserted.match(/s\("bd"\)/g) ?? []).toHaveLength(1)
+
+  // ── DUPLICATE, the control, same song and same session ───────────────────
+  await typeSongAndEval(page, 'arrange([2, s("bd")], [4, s("hh")])')
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(400)
+  errors.length = 0
+
+  await (await selectArm0()).press(`${MOD}+d`)
+
+  // The same selection, one chord apart, produces a section that PLAYS. This is
+  // what makes the reading above mean "empty" rather than "inserted, observed".
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    'arrange([2, s("bd")], [2, s("bd")], [4, s("hh")])',
+  )
+  // eslint-disable-next-line no-console
+  console.log(`[#1461] after duplicate: ${await strudelSource(page)}`)
+
+  expect(errors, `unexpected console/page errors:\n${errors.join('\n')}`).toEqual([])
+})
+
+test('the other spelling inserts the same empty section, in its own vocabulary', async ({ page }) => {
+  // #1461 + #1462. A keypress has to mean one thing whichever way the user
+  // happened to write their song, so the gesture is only finished when BOTH
+  // spellings answer it — and each has to answer in its own grammar: `silence`
+  // for an arrange arm, `~` for a pick arm, exactly as their deletes already do.
+  //
+  // ⚠ The arrange half of this claim is the test above, on a different document.
+  // Two spellings cannot be compared inside one document, so this is the one
+  // place a pair is split across arms deliberately rather than by omission.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+
+  await bootShell(page)
+  await typeSongAndEval(page, '"<verse@2 chorus@2>".pickRestart({verse: s("bd"), chorus: s("hh")})')
+  await page.locator('[data-full-song="root"]').waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(400)
+  errors.length = 0 // typing noise — the claim is about the gesture
+
+  const grid = page.locator('[data-full-song="grid"]')
+  const box = await grid.boundingBox()
+  if (!box) throw new Error('no grid box')
+  await page.mouse.click(box.x + box.width * 0.25, box.y + 8)
+  await expect(page.locator('[data-full-song="clip-selection"]')).toBeVisible({ timeout: 5_000 })
+  await grid.press(`${MOD}+i`)
+
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toContain(
+    '<verse@2 ~@2 chorus@2>',
+  )
+  const after = await strudelSource(page)
+  // eslint-disable-next-line no-console
+  console.log(`[#1461] pick spelling: ${after}`)
+
+  // ⚠ THE SECTION OBJECT IS UNTOUCHED, and that is the half worth asserting.
+  // `~` is a rest in the selector's own grammar rather than a name that has to
+  // resolve, so adding a key would put a pattern in the document nobody asked
+  // for — a rename of the song's meaning disguised as an insert.
+  expect(after).toContain('.pickRestart({verse: s("bd"), chorus: s("hh")})')
+
+  expect(errors, `unexpected console/page errors:\n${errors.join('\n')}`).toEqual([])
+})

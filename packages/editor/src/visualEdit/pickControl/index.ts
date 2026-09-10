@@ -18,6 +18,7 @@ export {
   silenceArm,
   reorderArm,
   insertArm,
+  insertSilenceArm,
   duplicateArm,
   renameSection,
   countSectionArms,

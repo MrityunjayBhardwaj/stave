@@ -93,6 +93,34 @@ export function silenceArm(doc: string, control: PickControl, i: number): Offset
   return [{ range: arm.headRange, text: '~' }]
 }
 
+
+/**
+ * #1461 — INSERT SILENCE: a new, empty section after arm `i`, as wide as it is.
+ *
+ * The pick spelling of `arrange/insertSilenceArm`, and the two must stay
+ * equivalent — a keypress means one thing whichever way the song is written
+ * (#1462). Here an empty section is `~`, the rest this control family already
+ * uses, exactly as `silenceArm` writes `~@8` for a gap.
+ *
+ * The weight is copied as TEXT for the same reason as the arrange side: an arm
+ * with no `@` has an implicit width of 1 and no literal to copy, so the new arm
+ * is a bare `~` rather than an invented `~@1`, which keeps it looking like its
+ * siblings and round-trips to the same music.
+ *
+ * ⚠ NO OBJECT ENTRY IS ADDED, and that is not an omission. `~` is a rest in the
+ * selector's own grammar rather than a name that has to resolve, so the section
+ * object stays exactly as the user wrote it. Adding a key would invent a pattern
+ * nobody asked for and change what the document means.
+ */
+export function insertSilenceArm(doc: string, control: PickControl, i: number): OffsetEdit[] {
+  const arm = control.arms[i]
+  if (!arm) return []
+  const armSource = arm.weightRange
+    ? `~@${doc.slice(arm.weightRange[0], arm.weightRange[1])}`
+    : '~'
+  return insertArm(doc, control, i + 1, armSource)
+}
+
 /**
  * Remove arm `i`, taking one adjacent space with it. Refuses to empty the
  * control — a lane keeps ≥ 1 section (mirrors arrange/removeArm).
