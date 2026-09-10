@@ -467,6 +467,22 @@ export const CORPUS_RESTORE_HINT =
  * `loadCorpus` actually reads: a directory that exists but is missing one input
  * still ENOENTs, and a predicate coarser than the read it guards would let that
  * through.
+ *
+ * ⚠ COUPLING, DELIBERATE (#1524). `loadEveryCorpusDocument` reads ~112 more
+ * files than these three and guards on this same predicate, so the predicate is
+ * NARROWER than that read — the opposite of the relationship described above.
+ * That is on purpose, and what makes it safe is NOT this predicate:
+ *   - these three missing → both loaders skip. Correct for both.
+ *   - these three present, others missing → the wide loader returns FEWER
+ *     documents and does not throw (its per-file `try/catch` absorbs it). A
+ *     silent narrowing is exactly the failure #1524 was filed about, so the
+ *     gate that consumes it pins `corpus.length` against its own `CORPUS_SIZE`
+ *     and fails loudly with the restore hint. **The count pin is the guard
+ *     here; widening this predicate would only move the same check earlier.**
+ * What it must NOT become is a per-loader predicate: five copies drifting is
+ * the failure this function was extracted to prevent (#1307). If the wide
+ * loader ever needs a file it cannot do without, name that file in
+ * `CORPUS_FILES` so ONE predicate still covers both reads.
  */
 export function hasCorpusArchive(): boolean {
   return CORPUS_FILES.every((f) => existsSync(corpusFilePath(f)))
@@ -539,7 +555,10 @@ export async function loadEveryCorpusDocument(): Promise<{ name: string; code: s
     f.startsWith('result-') || f.startsWith('edit-result-') || f.startsWith('ir-support-result')
   const rest = fs
     .readdirSync(CORPUS_DIR)
-    .filter((f) => f.endsWith('.json') && !isOutput(f) && !CORPUS_FILES.includes(f as never))
+    .filter(
+      (f) =>
+        f.endsWith('.json') && !isOutput(f) && !(CORPUS_FILES as readonly string[]).includes(f),
+    )
     .sort()
   const seen = new Set<string>()
   const out: { name: string; code: string }[] = []
