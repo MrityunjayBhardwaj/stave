@@ -308,6 +308,27 @@ export interface FullSongTimelineProps {
     firstWeight: number
     span: number
   }) => void
+  /** RIPPLE-delete a clip (#1460). Fired on Cmd/Ctrl+Shift+Delete with a clip
+   *  selected: remove the arm outright and close the gap after it, so the song
+   *  gets SHORTER. The second of two delete gestures, and the distinction is the
+   *  whole feature — plain Delete clears a clip and leaves the hole, because an
+   *  arrangement timeline is absolute and later clips are pinned to their own
+   *  positions in time. Every DAW checked separates the two the same way and
+   *  gives the ripple its own name and its own chord; none of them puts it on
+   *  the bare Delete key.
+   *
+   *  Real arms only. A bare track's implicit clip (`armIndex < 0`) has no arm to
+   *  remove and rippling it out would empty the track, so the gesture is not
+   *  offered there. A combinator's SOLE remaining arm is likewise refused by the
+   *  serializer — a lane keeps at least one clip.
+   *
+   *  Optional. Without it the chord does nothing at all, which is deliberate:
+   *  falling through to plain Delete would make an unbound chord silently edit
+   *  the arrangement, which is the defect the duplicate binding already had. */
+  readonly onRippleDeleteClip?: (req: {
+    sourceOffset: number | null
+    armIndex: number
+  }) => void
 }
 
 /** A bare loop's single implicit clip spans the SONG, not just its one-cycle
@@ -1121,7 +1142,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // (`armIndex ≥ 0`) are selectable; a bare track's implicit clip has no arm to
   // remove. Selection is keyed by lane + arm; the highlight rect is re-derived
   // in render from the live scene/layout so it tracks zoom, scroll, and re-eval.
-  const { onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip } = props
+  const { onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip } = props
   const [selected, setSelected] = useState<{
     laneKey: string
     armIndex: number
@@ -1728,6 +1749,30 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setSelected(null)
         return
       }
+      // ⚠ RIPPLE MUST BE TESTED BEFORE PLAIN DELETE, AND THIS ORDERING IS THE
+      // GUARD (#1460). The branch below matches `Delete`/`Backspace` with no
+      // modifier check at all, so Cmd+Shift+Delete would reach it and clear the
+      // clip in place — the same shape as the ⌘⇧D fall-through that duplicated
+      // silently (#1421), and worse here, because the two gestures differ in
+      // whether the SONG GETS SHORTER.
+      //
+      // Returning when the handler is absent is deliberate rather than lazy:
+      // falling through would leave the chord quietly bound to the other
+      // gesture, which is exactly the undocumented binding #1421 was about.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === 'Delete' || e.key === 'Backspace')
+      ) {
+        if (!onRippleDeleteClip || bareClip) return
+        e.preventDefault()
+        onRippleDeleteClip({ sourceOffset: selected.sourceOffset, armIndex: selected.armIndex })
+        // The arm is gone and every later index shifts down by one — the held
+        // armIndex now addresses a different clip, so a follow-up keystroke must
+        // not reach it. Same reason duplicate and split clear it.
+        setSelected(null)
+        return
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (!onDeleteClip) return
         e.preventDefault()
@@ -1773,7 +1818,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setSelected(null)
       }
     },
-    [selected, onDeleteClip, onDuplicateClip, onSplitClip],
+    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip],
   )
 
   // The selection highlight rect, derived from the LIVE scene + layout so it
