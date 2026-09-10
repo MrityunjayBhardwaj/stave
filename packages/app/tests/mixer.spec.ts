@@ -207,6 +207,36 @@ test.describe('Mixer (#381)', () => {
     await expect(drawer.locator('[data-knob="crush"]')).toHaveCount(1)
   })
 
+  /**
+   * The take controls, end to end in the real app (#1530).
+   *
+   * The catalog entry and the range live in the editor's unit tests, which
+   * render the menu component directly — that says the DATA is right, not that
+   * the running Mixer reaches it. This arm drives the real button.
+   *
+   * ⚠ `aria-valuemin` is the assertion that matters. `.stretch` is a pitch
+   * shift whose identity value is 0 and whose downward shifts are NEGATIVE;
+   * before it had a range-table entry the dial fell through to 0..1, so unison
+   * read as the minimum and every downward shift was unreachable. A `toHaveCount`
+   * on the knob would have passed the whole time.
+   */
+  test('＋More adds a Pitch shift whose dial reaches BELOW unison (#1530)', async ({ page }) => {
+    await boot(page)
+    await setStrudelCode(page, '$: s("bd")')
+    const drawer = await openMixer(page)
+    await enlargeDrawer(page)
+    await drawer.locator('[data-mixer-add-effect]').click()
+    const menu = page.locator('[data-mixer-add-effect-menu]')
+    await expect(menu).toBeVisible()
+    await menu.locator('[data-mixer-add-effect-search]').fill('pitch')
+    await menu.locator('[data-mixer-add-effect-item="stretch"]').click()
+    await page.waitForTimeout(80)
+    expect(await strudelValue(page)).toBe('$: s("bd").stretch(1)')
+    const slider = drawer.locator('[data-knob="stretch"] [role="slider"]').first()
+    await expect(slider).toHaveAttribute('aria-valuemin', '-2')
+    await expect(slider).toHaveAttribute('aria-valuemax', '1')
+  })
+
   test('scrolling the ＋More list keeps the menu open (does not self-dismiss)', async ({
     page,
   }) => {

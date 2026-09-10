@@ -510,12 +510,18 @@ test('what `.speed` and `.stretch` each do to a take, measured', async ({ page }
   }
 
   const read: Record<string, Record<string, Reading>> = {}
-  let sr = 0
+  const rates: number[] = []
   for (const s of SUBJECTS) {
     const m = await measureArms(page, s.name)
     read[s.name] = m.read
-    sr = m.sr
+    rates.push(m.sr)
   }
+  // ⚠ Every prediction below is computed from ONE rate. It is read per subject
+  // rather than assumed, so if the device ever changed rate between subjects the
+  // predictions would be evaluated against the wrong bin width and quietly pass
+  // or fail for the wrong reason. Cheaper to refuse than to reason about.
+  expect(new Set(rates).size, `subjects rendered at different rates: ${rates}`).toBe(1)
+  const sr = rates[0]
   for (const s of SUBJECTS) report(s.name, s.hz, sr, read[s.name])
   const sine = read['sinetone']
   const saw = read['sawtone']
@@ -577,6 +583,27 @@ test('what `.speed` and `.stretch` each do to a take, measured', async ({ page }
       ).toBeLessThan(20)
     }
   }
+
+  // ── `.speed` IS ACCURATE, and that is half the gate's answer ──────────────
+  // "pitch correction is blocked but time-align is reachable" rests on `.speed`
+  // being exact, because it is resampling rather than a spectral operation. That
+  // claim had no arm until this one: without it, `.speed` could drift and the
+  // recommendation would still read as verified.
+  const speedCents = 1200 * Math.log2(sine['.speed(2)'].f0 / (220 * 2))
+  console.log(`[G-V3] .speed(2) pitch error: ${speedCents.toFixed(0)} cents (resampling, no FFT)`)
+  expect(
+    Math.abs(speedCents),
+    '.speed is no longer exact — the time-align half of the gate needs re-answering',
+  ).toBeLessThan(10)
+
+  // ── the artefact figures the gate quotes, pinned ──────────────────────────
+  // On a voice-like source the shift puts a large fraction of the output on no
+  // harmonic at all. Quoted in the gate as 11-28% against a 0.4% identity floor;
+  // asserted as a RATIO to that floor so it cannot drift into meaninglessness.
+  const floor = 1 - saw['.stretch(0)'].tonal
+  const shifted = 1 - saw['.stretch(1)'].tonal
+  console.log(`[G-V3] saw artefacts: identity ${floor.toFixed(4)} -> shifted ${shifted.toFixed(4)}`)
+  expect(shifted / floor, 'the shift no longer dirties a harmonically rich take').toBeGreaterThan(10)
 
   // And the gate's own finding: against the pitch actually ASKED for, the miss
   // is far outside anything correction could use. Asserting the CURRENT
