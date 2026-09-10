@@ -54,6 +54,9 @@ import {
   useTrackMetaMap,
   detectArrangeAt,
   detectBarePattern,
+  detectChunk,
+  readRegionControl,
+  regionTrimEdit,
   setWeight,
   silenceArm,
   removeArm,
@@ -85,7 +88,8 @@ import { FullSongTimeline } from './FullSongTimeline'
 import { createSongCollector } from './musicalTimeline/songCollector'
 import { createWaveformSource } from '../audio/waveformSource'
 import { subscribeWaveformsReady } from '../audio/waveformWarm'
-import { reportWriteRefusal } from '../lib/writeRefusal'
+import { reportRegionRefusal, reportWriteRefusal } from '../lib/writeRefusal'
+import { regionAnchorAgrees, type RegionSide } from './musicalTimeline/regionEdge'
 
 export interface MusicalTimelineProps {
   /** Current cycle (post-collect coords) from the active runtime, or
@@ -678,6 +682,77 @@ export function MusicalTimeline(
     [snapshot],
   )
 
+  // Trim the SLICE a sample mark plays, from the Song canvas (#1527).
+  //
+  // The timeline hands up the lane's anchors, the side of the mark that was
+  // dragged, the new 0..1 value, and — the part that makes this safe — what the
+  // ENGINE resolved this mark to be playing.
+  //
+  // ⚠ THE ANCHOR IS TRIED, NOT TRUSTED. Measured over every spelling a take can
+  // be written in, no single lane anchor lands on the expression that owns the
+  // region in all of them: the statement anchor is right for
+  // `const vox = s("take")` / `$: vox.begin(0.1)`, where the content anchor lands
+  // on the const; the content anchor is the only one that exists for an
+  // unlabelled bare expression. So both are tried in order and each candidate has
+  // to AGREE with what the mark plays before it is written through. Without that,
+  // the const case appends a second `.begin` to a shared binding which the outer
+  // call then overrides — the document changes, other tracks using that binding
+  // change, and the sound does not move.
+  //
+  // Both ends are checked, not just the dragged one: the clamp inside
+  // `regionTrimEdit` reads the partner, so agreeing about `begin` while
+  // disagreeing about `end` would clamp against a number this mark never played.
+  const handleTrimRegion = React.useCallback(
+    (req: {
+      anchors: readonly number[]
+      side: RegionSide
+      value: number
+      playing: { begin: number; end: number }
+    }) => {
+      const fileId = snapshot?.source
+      if (!fileId) return
+      const gesture = `Timeline: trim ${req.side}`
+      if (req.anchors.length === 0) {
+        reportRegionRefusal(fileId, gesture, 'no-anchor')
+        return
+      }
+      // ⚠ "PATTERNED" IS A DEFINITE ANSWER, NOT A REASON TO TRY THE NEXT ANCHOR,
+      // and telling them apart is the difference between a message that helps
+      // and one that misleads. A `.begin("<0 .5>")` makes every anchor disagree
+      // — there is no single number for the mark's resolved value to match — so
+      // without this the user is told the code "does not set the slice", when in
+      // fact it sets it in a way a drag must not overwrite. Recorded and carried
+      // past the loop, because a LATER anchor might still be writable.
+      let known: string | null = null
+      for (const anchor of req.anchors) {
+        const chunk = detectChunk(snapshot.code, anchor)
+        if (!chunk) continue
+        const doc = { begin: readRegionControl(chunk, 'begin'), end: readRegionControl(chunk, 'end') }
+        if (doc.begin === null || doc.end === null) {
+          known ??= 'not-a-number'
+          continue
+        }
+        const agrees = (['begin', 'end'] as const).every((s) =>
+          regionAnchorAgrees(req.playing[s], s, doc[s]),
+        )
+        if (!agrees) continue
+        const result = regionTrimEdit(chunk, req.side, req.value)
+        if (!result.edit) {
+          reportRegionRefusal(fileId, gesture, result.refusal ?? 'anchor-mismatch')
+          return
+        }
+        writeArrange([result.edit], 'region.trim', `trim ${req.side}`)
+        return
+      }
+      // Every anchor resolved to nothing, to a patterned control, or to an
+      // expression that disagreed. Reported rather than dropped: the mark snaps
+      // back on its own, so a silent decline is indistinguishable from a drag
+      // that never took.
+      reportRegionRefusal(fileId, gesture, known ?? 'anchor-mismatch')
+    },
+    [snapshot, writeArrange],
+  )
+
   // Rename a track from the Song Timeline (#580, Phase C). The lane hands up its
   // STATEMENT offset (`labelOffset` = `dollarPos`); we detect the chunk anchored
   // there in the SAME snapshot text, write the `name:` label via `renameEdit`
@@ -1015,6 +1090,7 @@ export function MusicalTimeline(
           getActiveTabId={props.getActiveTabId}
           onEditAutomation={handleEditAutomation}
           onTrimClip={handleTrimClip}
+          onTrimRegion={handleTrimRegion}
           onDeleteClip={handleDeleteClip}
           onRippleDeleteClip={handleRippleDeleteClip}
           onInsertSilenceClip={handleInsertSilenceClip}

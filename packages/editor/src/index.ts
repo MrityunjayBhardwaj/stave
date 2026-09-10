@@ -725,6 +725,23 @@ export { statementOffsetForSource } from './visualEdit/mixer/stripModel'
 // validator, so the app's Song Timeline can rename a lane (the Mixer uses them
 // internally). `StripEdit` is the surgical {range,text} the caller applies.
 export { renameEdit, isValidTrackLabel, type StripEdit } from './visualEdit/mixer/writeStrip'
+// Region trim (#1527) — the pure write decisions for the slice of a sample file
+// a mark plays, so the app's Song Timeline can turn a dragged mark edge into
+// `.begin(0.25)`. `readRegionControl` is exported alongside because the caller
+// has to check the chunk it resolved really owns the region before writing:
+// a lane's source anchor is not right for every spelling (see the module head).
+export {
+  readRegion,
+  readRegionControl,
+  regionControlEdit,
+  regionTrimEdit,
+  MIN_REGION_SPAN,
+  MULTI_VOICE_HEADS,
+  type RegionControl,
+  type RegionEdit,
+  type RegionTrimRefusal,
+  type RegionTrimResult,
+} from './visualEdit/regionTrim'
 // Master-strip code counterpart (#792) — the pure `all(x=>…)` write path the app
 // wires to the "set backdrop" UI (viz) and the Mixer uses internally (gain).
 export {

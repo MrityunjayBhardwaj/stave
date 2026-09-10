@@ -51,3 +51,44 @@ export function reportWriteRefusal(
     message: `${what} was not applied — ${REFUSAL_CAUSE[refusal]}.`,
   })
 }
+
+/**
+ * Why a region trim declined (#1527), in the same voice as the table above.
+ *
+ * ⚠ THESE REFUSALS FIRE BEFORE THE WRITER IS EVER CALLED, which is why they need
+ * their own table rather than a sixth `WriteRefusal`. A region trim can be
+ * perfectly writable as text and still be the wrong thing to write — the value
+ * is patterned, the expression stacks several voices, or the lane anchor
+ * resolved to an expression that does not own the region the mark is playing.
+ * `applyOffsetEditsToFile` would apply every one of those happily.
+ *
+ * And they matter more than the writer's own do, because the gesture leaves no
+ * trace when it declines: the mark snaps back to where it was and the document
+ * is untouched, which looks exactly like a drag that did not take. P787's shape
+ * — a refusal correct for its input is indistinguishable from a feature that
+ * does not apply — unless it says so.
+ */
+export const REGION_REFUSAL_CAUSE: Record<string, string> = {
+  'not-a-number':
+    'this track writes its region as a pattern or an expression rather than a plain number, so dragging it would overwrite something you wrote on purpose',
+  'not-one-voice':
+    'this expression combines several sounds, so trimming it would trim all of them — trim the take on its own track instead',
+  'no-change': 'the drag landed on the value the document already has',
+  'no-anchor': 'this lane has no source position, so there is nothing to write to',
+  'anchor-mismatch':
+    'the code at this lane does not set the slice this mark is playing — it is probably set somewhere else, such as on a shared binding',
+}
+
+/** Report a region trim that declined before any write was attempted (#1527). */
+export function reportRegionRefusal(
+  fileId: string | undefined,
+  what: string,
+  refusal: string,
+): void {
+  emitLog({
+    level: 'warn',
+    runtime: 'stave',
+    source: fileId,
+    message: `${what} was not applied — ${REGION_REFUSAL_CAUSE[refusal] ?? refusal}.`,
+  })
+}
