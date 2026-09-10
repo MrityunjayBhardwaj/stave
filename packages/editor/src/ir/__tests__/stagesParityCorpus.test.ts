@@ -101,14 +101,29 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hasCorpusArchive, loadCorpus, CORPUS_RESTORE_HINT } from '../../visualEdit/miniSource/__tests__/evalHarness'
+import {
+  hasCorpusArchive,
+  loadEveryCorpusDocument,
+  CORPUS_RESTORE_HINT,
+} from '../../visualEdit/miniSource/__tests__/evalHarness'
 import { parityRow, type ParityRow } from './helpers/stagesParity'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BASELINE = path.join(HERE, 'STAGES-PARITY-BASELINE.json')
 
-/** The corpus is 3 offsets × 50 tunes. Pinned so a short read fails loudly. */
-const CORPUS_SIZE = 150
+/**
+ * Every document in the archive, deduped by sha256 of its `code` field.
+ * Pinned so a short read fails loudly (#1524).
+ *
+ * ⚠ WAS 150 — which was 3 of the archive's input files, and 142 distinct
+ * documents once six repeated groups are collapsed. The gate it fed missed the
+ * fourth-through-seventh bug of the very class it exists to catch, not because
+ * it was weak but because the document that exhibited it was never in its
+ * slice: expression arm weights appeared 0 times in those 3 files and once in
+ * the archive. **State a gate's population with its denominator; a gate whose
+ * population is a frozen slice is a fixture list with more rows.**
+ */
+const CORPUS_SIZE = 558
 
 /**
  * TWO headline numbers, because the contract and the damage are different
@@ -121,9 +136,15 @@ const CORPUS_SIZE = 150
  * 3 now. All three are pinned so none can drift, and so that a fix which
  * improves one while worsening another cannot report success.
  */
-const DEEP_DIVERGENCE = 3
-const SHAPE_DIVERGENCE = 3
-const TAG_DIVERGENCE = 2
+// #1524 — 3 / 3 / 2 over 150 rows became 9 / 9 / 6 over 558 documents when the
+// population was widened from 3 archive files to all of them. ⚠ READ THAT AS A
+// RATE, NOT A REGRESSION: 2.0% of 150 rows diverged before, 1.6% of 558 now,
+// and every one of the 6 newly-visible documents is the SAME class as the 3
+// that were already pinned. Nothing changed its verdict — the diff is purely
+// additive apart from 8 rows that were the same document under a second name.
+const DEEP_DIVERGENCE = 9
+const SHAPE_DIVERGENCE = 9
+const TAG_DIVERGENCE = 6
 
 /**
  * The measured mechanisms behind what remains — see `classifyDivergence`.
@@ -143,7 +164,13 @@ const TAG_DIVERGENCE = 2
 const BY_CLASS: Record<string, number> = {
   'A-opaque-collapse': 0,
   'C-via-vs-blob': 0,
-  'B-track-count': 3,
+  // #1524 — 3 → 9 purely by looking at 416 documents the gate had never read.
+  // ⚠ The label was not taken on trust: every one of the 9 was checked against
+  // the MECHANISM rather than the classifier, by its shape signature
+  // (`parseStrudel` keeps one `Track→…`, the staged path lifts each comma arm
+  // to its own `Stack→[Track→…]`). Control: 364 documents carry a comma inside
+  // a string and match anyway, so the signature is not just "has a comma".
+  'B-track-count': 9,
   'D-metadata': 0,
 }
 
@@ -154,7 +181,7 @@ describe('staged pipeline vs parseStrudel — corpus parity baseline (#1375)', (
   it.skipIf(!hasCorpusArchive())(
     'every document reports the parity verdict it reported when this was pinned',
     async () => {
-      const corpus = await loadCorpus()
+      const corpus = await loadEveryCorpusDocument()
       expect(
         corpus.length,
         `corpus is ${corpus.length}, expected ${CORPUS_SIZE}. ${CORPUS_RESTORE_HINT}`,

@@ -472,7 +472,13 @@ export function hasCorpusArchive(): boolean {
   return CORPUS_FILES.every((f) => existsSync(corpusFilePath(f)))
 }
 
-/** The 150 saved #986-P3 tunes (3 offsets × 50). */
+/**
+ * The 150 saved #986-P3 tunes (3 offsets × 50) — the NARROW population.
+ *
+ * ⚠ 150 ROWS, 142 DISTINCT DOCUMENTS: six groups repeat under two or three
+ * `offset/hash` names. And this is 3 of the archive's input files — see
+ * `loadEveryCorpusDocument` below for the whole of it (#1524).
+ */
 export async function loadCorpus(): Promise<{ name: string; code: string }[]> {
   const fs = await import('node:fs')
   // The gated tests skip via `hasCorpusArchive()` and never reach this. The
@@ -485,6 +491,75 @@ export async function loadCorpus(): Promise<{ name: string; code: string }[]> {
   for (const f of CORPUS_FILES) {
     const j = JSON.parse(fs.readFileSync(corpusFilePath(f), 'utf8'))
     for (const s of j.samples) out.push({ name: `${j.offset}/${s.hash}`, code: s.code })
+  }
+  return out
+}
+
+/**
+ * EVERY document in the archive, deduped — the WIDE population (#1524).
+ *
+ * ── WHY THIS IS A SECOND LOADER AND NOT A WIDER `loadCorpus` ─────────────────
+ * `loadCorpus` has 24 consumers, including the census pins and the two slowest
+ * files in the app suite (976 s and 393 s on their own). Widening it would
+ * multiply those populations ~4x and move every pinned census at the same time
+ * — one change, two unrelated effects, and no way to read which caused what.
+ *
+ * The population a gate sweeps belongs to that gate. The staged-parity
+ * invariant spans exactly one test, so its corpus is defined here for it and
+ * `loadCorpus` is left alone.
+ *
+ * ── WHAT IT READS ───────────────────────────────────────────────────────────
+ * Every sample-bearing INPUT file. `result-*` / `edit-result-*` /
+ * `ir-support-result*` are OUTPUTS of past runs, not documents anyone wrote,
+ * and are excluded.
+ *
+ * **558 documents** by sha256 of the `code` field, against `loadCorpus`'s 150
+ * rows / 142 documents — the narrow set is a strict subset.
+ *
+ * ⚠ DEDUP IS BY CONTENT, AND THE KEY IS NOT THE SAMPLE'S OWN `hash` FIELD.
+ * Those are different questions and give different numbers: across this archive
+ * there are 1300 distinct `offset/hash` keys for 558 distinct documents, and
+ * `loadCorpus`'s own 150 rows are 142 documents — six groups appear two or
+ * three times under different names. Quote the key with the number.
+ *
+ * ⚠ ORDERING IS LOAD-BEARING, NOT TIDINESS. `CORPUS_FILES` is read FIRST so
+ * every document the narrow gate already pinned keeps the exact name it had.
+ * That is what makes the baseline diff READABLE: purely additive, no renames,
+ * so "we widened the population" cannot be confused with "an existing verdict
+ * changed". Verified: 0 of the 142 are renamed under this order; 3 would be
+ * under plain alphabetical.
+ */
+export async function loadEveryCorpusDocument(): Promise<{ name: string; code: string }[]> {
+  const fs = await import('node:fs')
+  const crypto = await import('node:crypto')
+  if (!hasCorpusArchive()) {
+    throw new Error(`the Bakery corpus archive is not on this machine.\n${CORPUS_RESTORE_HINT}`)
+  }
+  const isOutput = (f: string): boolean =>
+    f.startsWith('result-') || f.startsWith('edit-result-') || f.startsWith('ir-support-result')
+  const rest = fs
+    .readdirSync(CORPUS_DIR)
+    .filter((f) => f.endsWith('.json') && !isOutput(f) && !CORPUS_FILES.includes(f as never))
+    .sort()
+  const seen = new Set<string>()
+  const out: { name: string; code: string }[] = []
+  for (const f of [...CORPUS_FILES, ...rest]) {
+    let j: { offset?: unknown; samples?: { hash?: string; code?: unknown }[] }
+    try {
+      j = JSON.parse(fs.readFileSync(corpusFilePath(f), 'utf8'))
+    } catch {
+      // A file that is not a sample archive is not an error here — the
+      // directory is a working area, and the filter above is a convention
+      // rather than a contract.
+      continue
+    }
+    for (const s of j.samples ?? []) {
+      if (typeof s.code !== 'string') continue
+      const sha = crypto.createHash('sha256').update(s.code).digest('hex')
+      if (seen.has(sha)) continue
+      seen.add(sha)
+      out.push({ name: `${j.offset}/${s.hash}`, code: s.code })
+    }
   }
   return out
 }
