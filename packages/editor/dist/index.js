@@ -2361,6 +2361,7 @@ function stripSideEffectStatements(stmts) {
 }
 __name(stripSideEffectStatements, "stripSideEffectStatements");
 var BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/;
+var DECLARATION_RE = /^(?:let|const|var)\b/;
 function collectTopLevelBindings(body, baseOffset) {
   const stmts = stripSideEffectStatements(
     splitTopLevelStatements(body, baseOffset)
@@ -2447,9 +2448,10 @@ function parseStrudel(code, _opts) {
       const declaresBinding = bareStmts.some((s) => BINDING_RE.test(s.text));
       const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
       const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
-      if (trackStmts.length > 1) {
+      const playable = trackStmts.filter((s) => !DECLARATION_RE.test(s.text));
+      if (playable.length > 1) {
         return IR.stack(
-          ...trackStmts.map(
+          ...playable.map(
             (s, i) => (
               // Each statement carries its OWN source range, so the timeline can
               // anchor a hap to the statement that produced it by containment —
@@ -2468,6 +2470,15 @@ function parseStrudel(code, _opts) {
               )
             )
           )
+        );
+      }
+      if (trackStmts.length > 1 && playable.length === 1) {
+        const only = playable[0];
+        return IR.track(
+          "d1",
+          // `collected?.bindings` — undefined where there is no map, exactly
+          // what the multi-statement split above passes.
+          parseExpression(only.text, only.offset, void 0, collected?.bindings, opts, numbers)
         );
       }
       const inner = parseExpression(stripped.body.trim(), innerOffset, void 0, void 0, opts, numbers);
@@ -3749,10 +3760,11 @@ function runRawStage(input) {
     const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text));
     const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
     const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
-    if (trackStmts.length > 1) {
+    const playable = trackStmts.filter((st) => !DECLARATION_RE.test(st.text));
+    if (playable.length > 1) {
       return {
         tag: "Stack",
-        tracks: trackStmts.map((st) => ({
+        tracks: playable.map((st) => ({
           tag: "Code",
           code: st.text,
           lang: "strudel",
@@ -3780,6 +3792,17 @@ function runRawStage(input) {
         loc: [{ start: 0, end: code.length }]
         // userMethod intentionally undefined — synthetic-from-RAW wrapper,
         // same as the multi-`$:` return below.
+      };
+    }
+    if (trackStmts.length > 1 && playable.length === 1) {
+      const only = playable[0];
+      return {
+        tag: "Code",
+        code: only.text,
+        lang: "strudel",
+        loc: [{ start: only.offset, end: only.offset + only.text.length }],
+        ...collected ? { trackBindings: collected.bindings } : {},
+        ...numberMeta
       };
     }
     const bodyTrimStart = stripped.body.search(/\S/);

@@ -1,7 +1,7 @@
 # Predicate audit — `ir/parseStrudel.ts`
 
 Every regular expression in `parseStrudel.ts`, the question it answers, and the system that
-owns the right answer. 36 are anchored predicates (categories A and B); 7 are unanchored
+owns the right answer. 37 are anchored predicates (categories A and B); 7 are unanchored
 (category D), two of which are predicates as well.
 
 This file is a **census, not a plan**. It exists so that "find the next parser bug" becomes
@@ -26,9 +26,9 @@ the parse path asks somebody who already knows:
 | `ir/parseStrudelStages.ts` | — | **0** | 377 |
 | `visualEdit/chunkDetect.ts` | acorn | **0** | 496 |
 | `visualEdit/arrange/parse.ts` | acorn | **0** | 223 |
-| **`ir/parseStrudel.ts`** | **nobody** | **36** | **3398** |
+| **`ir/parseStrudel.ts`** | **nobody** | **37** | **4214** |
 
-Every module that delegates has zero. The one that does not has thirty-six (was 42 before #965 delegated the pattern-source grid, and 36 before #1178 moved the side-effect head list to `statementHeads.ts`). `parseMini.ts` is
+Every module that delegates has zero. The one that does not has thirty-seven (was 42 before #965 delegated the pattern-source grid, and 36 before #1178 moved the side-effect head list to `statementHeads.ts`). `parseMini.ts` is
 the controlled before/after: 512 lines with a hand-rolled tokenizer, 397 lines and no anchored
 regexes after it was rebuilt on krill.
 
@@ -68,7 +68,7 @@ the regex alone without saying so.
 
 ## Category A — JavaScript syntax · owner: **acorn**
 
-28 of the 36. `acorn` is already a dependency and is already used to parse this same source
+29 of the 37. `acorn` is already a dependency and is already used to parse this same source
 text, three times, in `visualEdit/`. The package parses one document two different ways.
 
 ### A1 · "is this token a bare identifier?" — 4 sites
@@ -110,6 +110,30 @@ the rest of the line as its initialiser), no destructuring, no `=` inside a prec
 
 ```regex
 1x  /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/
+```
+
+### A3b · "does this statement DECLARE, rather than play?" — 1 site
+
+`DECLARATION_RE:798`
+
+Owner: acorn (`VariableDeclaration`). **Transcribed.**
+
+⚠ A SEPARATE ENTRY FROM A3 ON PURPOSE, and the separation is the finding. A3 asks a
+question whose answer feeds a substitution map, so it needs a name and an initialiser and
+declines a destructuring pattern. This one asks only whether a top-level statement can ever
+be a musical part — and `const {movement} = createParams('movement')` answers no just as
+firmly while matching A3 not at all. Written with A3, the #1534 row filter left that exact
+line drawing a silent row in the one archive document it was measured on.
+
+Known-incomplete: **observed** — `function` and `class` declarations are declarations too and
+are deliberately outside it (they still take a silent row, #1096's rule; see 1536). The word
+boundary rather than whitespace is a deliberate choice between two spellings that differ on
+exactly four inputs: it accepts `const{m}=x` and `let[a,b]=x`, declarations written without a
+space, and the only thing it additionally admits — a call spelled `var(…)` — cannot appear at
+statement start, because those are reserved words.
+
+```regex
+1x  /^(?:let|const|var)\b/
 ```
 
 ### A4 · "is this a `param => bodyvar.chain` arrow, and what is the chain?" — 1 site
@@ -425,13 +449,13 @@ observation — `const n = .5` and `const n = 4` now produce the same IR shape.
 
 | category | owner | sites |
 |---|---|---|
-| A — JavaScript syntax | acorn | 28 |
+| A — JavaScript syntax | acorn | 29 |
 | B — Strudel vocabulary | `controls.mjs` / `signal.mjs` / krill | 7 |
-| **total anchored regexes** | | **36** |
+| **total anchored regexes** | | **37** |
 | D — unanchored (2 predicates + 5 scans) | acorn / — | 7 |
-| **total regex literals** | | **43** |
+| **total regex literals** | | **44** |
 | distinct sources | | 32 |
 
-Of the 36 anchored predicates, **zero** currently delegate (the pattern-source extraction that #965 removed DID delegate — to acorn — which is why it is no longer a regex). Eleven of the incompleteness claims
+Of the 37 anchored predicates, **zero** currently delegate (the pattern-source extraction that #965 removed DID delegate — to acorn — which is why it is no longer a regex). Eleven of the incompleteness claims
 above are observed against a control arm; the rest are reasoned from the expression and marked
 as such.

@@ -29,6 +29,7 @@ import {
   splitTopLevelStatements,
   stripSideEffectStatements,
   BINDING_RE,
+  DECLARATION_RE,
   buildBindingMap,
   collectTopLevelBindings,
   collectNumericBindings,
@@ -142,10 +143,19 @@ export function runRawStage(input: PatternIR): PatternIR {
       ? collectTopLevelBindings(stripped.body, stripped.offset)
       : null
     const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
-    if (trackStmts.length > 1) {
+    // #1534 — the mirror of parseStrudel.ts's declaration filter. A `let` in
+    // the tail is not a part and must not take a row.
+    //
+    // ⚠ The reason this one is mirrorable at all, when the filter #1523
+    // rejected was not, is that it is TEXTUAL. That one asked "did this
+    // statement parse musically?", which this stage cannot answer — it splits
+    // at RAW, before anything is parsed. `DECLARATION_RE` reads the
+    // statement's text, which is all RAW has and all it needs.
+    const playable = trackStmts.filter((st) => !DECLARATION_RE.test(st.text))
+    if (playable.length > 1) {
       return {
         tag: 'Stack' as const,
-        tracks: trackStmts.map((st) => ({
+        tracks: playable.map((st) => ({
           tag: 'Code' as const,
           code: st.text,
           lang: 'strudel' as const,
@@ -174,6 +184,33 @@ export function runRawStage(input: PatternIR): PatternIR {
         // userMethod intentionally undefined — synthetic-from-RAW wrapper,
         // same as the multi-`$:` return below.
       }
+    }
+    // #1534 — the mirror of the single-survivor arm. When the filter drops the
+    // tail below the `> 1` fence, the one surviving expression is lifted ALONE,
+    // with the document's bindings, rather than falling to the whole-body Code
+    // the fence would otherwise reach.
+    //
+    // Lifted as a lone Code with the statement's own `loc` — so MINI-EXPANDED
+    // parses that text at that offset with `trackBindings`, and CHAIN-APPLIED's
+    // single-track wrap gives `Track('d1', …)`. ⚠ NO `dollarStart`: this row is
+    // deliberately the same shape a declaration-free document gets, and
+    // `withTrackMeta` would drop the range anyway (it only re-attaches it
+    // alongside a `trackLabel`), so setting it would read as a loc that never
+    // arrives.
+    //
+    // ⚠ NOT fenced on `collected` — see the counterpart's note: a document with
+    // no binding map at all reaches the split through `bareStmts` and can be
+    // dropped below the fence by a filter that reads declarations.
+    if (trackStmts.length > 1 && playable.length === 1) {
+      const only = playable[0]
+      return {
+        tag: 'Code' as const,
+        code: only.text,
+        lang: 'strudel' as const,
+        loc: [{ start: only.offset, end: only.offset + only.text.length }],
+        ...(collected ? { trackBindings: collected.bindings } : {}),
+        ...numberMeta,
+      } as unknown as PatternIR
     }
     const bodyTrimStart = stripped.body.search(/\S/)
     const start = stripped.offset + (bodyTrimStart >= 0 ? bodyTrimStart : 0)

@@ -773,6 +773,38 @@ export function stripSideEffectStatements(
 export const BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/
 
 /**
+ * #1534 — DOES THIS STATEMENT DECLARE, rather than play?
+ *
+ * ⚠ A DIFFERENT QUESTION FROM `BINDING_RE`'s, AND CONFLATING THEM IS A DEFECT
+ * THIS COMMENT EXISTS BECAUSE OF. That one asks "can I RESOLVE this as
+ * `name = value`?" and needs a plain identifier and an RHS, because its answer
+ * feeds a substitution map. This one asks only "can this ever be a part?" — and
+ * a destructuring `const {movement} = createParams('movement')` answers no just
+ * as firmly as `let cps = 0.5` does, while matching `BINDING_RE` not at all.
+ *
+ * Written with `BINDING_RE`, the row filter left that exact line drawing a
+ * silent row in the one archive document the change was measured on — a fix
+ * that did not fix its own subject. Observed by printing the ROWS; the census
+ * that used `BINDING_RE` for both jobs reported one declaration where there
+ * are two.
+ *
+ * ⚠ A WORD BOUNDARY, NOT WHITESPACE, and the first draft had it the other way
+ * round with a justification no arm could support. The two forms differ on
+ * exactly four spellings: `const{m}=x` and `let[a,b]=x`, declarations written
+ * without a space, which whitespace MISSES; and `var(…)` / `let(…)`, calls
+ * named with a reserved word, which cannot appear at statement start for
+ * JavaScript's own reasons. `letters`, `constant` and `variation` are refused
+ * by both — there is no word boundary inside a longer identifier — so the
+ * control arm written to justify the whitespace could not have failed either
+ * way. It was vacuous, and swapping the predicate is what said so.
+ *
+ * Deliberately NOT a general grammar for declarations: `function` and `class`
+ * are declarations too and still take a silent row (#1096's rule, and its own
+ * arm) — widening to them reverses a decision this issue did not ask about.
+ */
+export const DECLARATION_RE = /^(?:let|const|var)\b/
+
+/**
  * The leading run of top-level bindings, resolved — the ENGINE half of
  * `buildBindingMap`, with the "and exactly one expression follows" fence lifted
  * off it (#1392).
@@ -1134,9 +1166,36 @@ export function parseStrudel(
       // a duplicate name, no leading binding at all) keeps the existing
       // whole-body shape rather than being split on a map that does not exist.
       const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
-      if (trackStmts.length > 1) {
+      // #1534 — A DECLARATION IN THE TAIL IS NOT A PART, AND MUST NOT TAKE A ROW.
+      //
+      // The tail is "everything from the first non-binding statement onward",
+      // so a `let cps = 0.5` written after the first expression lands in it and
+      // drew a silent row named after itself. It declares no sound and cannot;
+      // there is nothing on that row to click.
+      //
+      // ⚠ THIS IS THE OPPOSITE ANSWER TO #1523's, DELIBERATELY, AND THE TWO DO
+      // NOT CONFLICT. That rule is show-don't-drop: a statement the parser
+      // cannot READ still draws a row, so the row count matches what the user
+      // wrote. It is about opacity — an EXPRESSION we failed to understand. A
+      // declaration is not an expression at all, and no amount of parser
+      // improvement would ever give it a sound. Dropping it is not hiding a
+      // failure; keeping it was miscounting the parts.
+      //
+      // ⚠ NOT by widening `stripSideEffectStatements`, which is the obvious
+      // move and breaks binding resolution outright: `collectTopLevelBindings`
+      // calls it to find the LEADING binding run, so teaching it about `let`
+      // would remove the very statements the engine is looking for.
+      //
+      // ⚠ `DECLARATION_RE`, NOT `BINDING_RE`. The two ask different questions
+      // and the narrower one leaves `const {movement} = …` drawing a row —
+      // see its comment. `playable.length === 0` (a tail that is ALL
+      // declarations) needs no arm of its own: it misses both fences below and
+      // reaches the whole-document shape, which is the honest answer for a
+      // document that declares no parts.
+      const playable = trackStmts.filter((s) => !DECLARATION_RE.test(s.text))
+      if (playable.length > 1) {
         return IR.stack(
-          ...trackStmts.map((s, i) =>
+          ...playable.map((s, i) =>
             // Each statement carries its OWN source range, so the timeline can
             // anchor a hap to the statement that produced it by containment —
             // the same mechanism a `$:` document uses, not a parallel path.
@@ -1153,6 +1212,49 @@ export function parseStrudel(
               },
             ),
           ),
+        )
+      }
+      // #1534 — …AND THE FILTER CANNOT BE A DELETION, BECAUSE IT MOVES THE
+      // FENCE IT IS FILTERED BEHIND.
+      //
+      //   let a = 1        the tail is TWO statements, so the split branch is
+      //   s("bd*4")        taken — and after the filter ONE survives, which
+      //   let b = 2        misses `> 1` and lands on the whole-body parse.
+      //
+      // That parse is wholly opaque for a multi-statement body (observed, not
+      // assumed: `parseExpression` on this body returns bare `Code`), so the
+      // naive filter trades one meaningless row for a document with NOTHING in
+      // it — strictly worse than the wart it removes.
+      //
+      // The surviving expression gets the shape it would have had if the
+      // trailing declaration had never been written: exactly what
+      // `buildBindingMap` returns for `let a = 1 / s("bd*4")` above, same text,
+      // same offset, same map — so the two documents produce byte-identical IR.
+      // That is the whole claim of this fix stated as one identity, and it is
+      // what the arms assert.
+      //
+      // ⚠ GUARDED ON `trackStmts.length > 1`, so this arm fires ONLY where the
+      // filter actually moved something. A tail that was already one statement
+      // is the P67 fall-through above (`buildBindingMap` succeeded and its
+      // expression still parsed opaque) and keeps the whole-document shape it
+      // was deliberately pinned to.
+      //
+      // ⚠ NOT FENCED ON `collected`. A document with NO resolvable binding
+      // reaches the split through `bareStmts`, and once the filter reads
+      // declarations rather than bindings it can drop THAT list below the fence
+      // too: `const {m} = createParams("x")` + one pattern is a real document
+      // with no binding map at all. Fenced on the map, it fell straight to the
+      // whole-body parse and came back wholly opaque — the very regression this
+      // arm exists to prevent, re-entered by the other door. Found by diffing
+      // the archive BY NAME: a second document moved that the census, which
+      // asked about bindings, never listed.
+      if (trackStmts.length > 1 && playable.length === 1) {
+        const only = playable[0]
+        return IR.track(
+          'd1',
+          // `collected?.bindings` — undefined where there is no map, exactly
+          // what the multi-statement split above passes.
+          parseExpression(only.text, only.offset, undefined, collected?.bindings, opts, numbers),
         )
       }
       const inner = parseExpression(stripped.body.trim(), innerOffset, undefined, undefined, opts, numbers)
