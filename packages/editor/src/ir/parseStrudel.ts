@@ -1147,9 +1147,16 @@ export function parseStrudel(
  * MULTI-LINE forms where the colon-bearing token sits at a physical line
  * start (matrix in 20-15-OBSERVATIONS.md).
  */
-function lexStateAt(code: string, idx: number): { depth: number; inString: boolean } {
+function lexStateAt(
+  code: string,
+  idx: number,
+): { depth: number; inString: boolean; inComment: boolean } {
   let depth = 0
   let inString = false
+  // #1532 — set when `idx` falls inside a block comment that never closes.
+  // A `//` comment cannot need this: it ends at the newline, and every label
+  // candidate matches from `^`, so no label is ever mid-line-comment.
+  let inComment = false
   let stringChar = ''
   let escaped = false
   let i = 0
@@ -1172,6 +1179,36 @@ function lexStateAt(code: string, idx: number): { depth: number; inString: boole
       while (i < idx && code[i] !== '\n') i++
       continue
     }
+    // `/* … */` block comment — consume to the closing `*/`, counting nothing
+    // in between. THE MIRROR OF `splitTopLevelStatements`' #152 branch, which
+    // this walker was not given at the same time (#1532).
+    //
+    // Without it a bracket written inside a comment is counted as though it
+    // were code. That is usually harmless because a comment's brackets are
+    // normally balanced — and the pairing that is NOT harmless is ordinary:
+    //
+    //   /* @license  CC BY-NC-SA (https://creativecommons.org/licenses/…/4.0/)
+    //   */
+    //
+    // The `(` is counted; then the `//` in `https://` opens a line comment as
+    // far as the branch above is concerned and swallows the `)`. Depth is stuck
+    // at 1 for the REST OF THE DOCUMENT, so `extractTracks` rejects every
+    // `$:`/`name:` label after it as "inside brackets" and a six-track tune
+    // reaches the IR as one opaque `Code` node — no rows, no marks, no
+    // gestures, and nothing said.
+    //
+    // ⚠ AN UNTERMINATED `/*` NEEDS ITS OWN ANSWER, and consuming to `idx` is
+    // not it: that reports depth 0, which ADMITS the label. Everything after an
+    // unclosed `/*` really is inside a comment, so `inComment` says so and the
+    // caller's guard rejects it — the same verdict `splitTopLevelStatements`
+    // reaches by emitting no statements for the swallowed remainder.
+    if (ch === '/' && code[i + 1] === '*') {
+      i += 2
+      while (i < idx && !(code[i] === '*' && code[i + 1] === '/')) i++
+      if (i < idx) i += 2 // consume the closing `*/`
+      else inComment = true // ran out of input before `*/` — still commented
+      continue
+    }
     if (ch === '"' || ch === "'" || ch === '`') {
       inString = true
       stringChar = ch
@@ -1190,7 +1227,7 @@ function lexStateAt(code: string, idx: number): { depth: number; inString: boole
     }
     i++
   }
-  return { depth, inString }
+  return { depth, inString, inComment }
 }
 
 // 20-15 G5 (#138) — reserved identifiers that the generalized `name:`
@@ -1465,7 +1502,9 @@ export function extractTracks(
     // captured by group 1 (not consumed by the lexState `//` rule because
     // we scan UP TO m.index, which is the line start BEFORE the `//`).
     const st = lexStateAt(code, m.index)
-    if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+    // `inComment` (#1532) — the candidate sits after an unclosed `/*`, so it is
+    // commented-out text rather than a track label.
+    if (st.depth > 0 || st.inString || st.inComment || RESERVED_LABEL_IDENTS.has(label)) {
       continue
     }
     // #1475 — a `//` comment that merely READS like `word:` is prose, not a
