@@ -14,7 +14,7 @@
  * own, because the canvas re-derives its extents from the IR. What was missing
  * was never the visual: it was knowing WHICH refusal fired.
  */
-import { emitLog, type WriteRefusal } from '@stave/editor'
+import { emitLog, type RegionTrimRefusal, type WriteRefusal } from '@stave/editor'
 
 /**
  * Human-readable cause for each refusal. A `Record` over the union rather than a
@@ -68,7 +68,13 @@ export function reportWriteRefusal(
  * — a refusal correct for its input is indistinguishable from a feature that
  * does not apply — unless it says so.
  */
-export const REGION_REFUSAL_CAUSE: Record<string, string> = {
+/**
+ * Every way a region trim can decline: the editor's own three, plus the two the
+ * app resolves for itself before the editor is ever asked.
+ */
+export type RegionRefusal = RegionTrimRefusal | 'no-anchor' | 'anchor-mismatch'
+
+export const REGION_REFUSAL_CAUSE: Record<RegionRefusal, string> = {
   'not-a-number':
     'this track writes its region as a pattern or an expression rather than a plain number, so dragging it would overwrite something you wrote on purpose',
   'not-one-voice':
@@ -83,12 +89,12 @@ export const REGION_REFUSAL_CAUSE: Record<string, string> = {
 export function reportRegionRefusal(
   fileId: string | undefined,
   what: string,
-  refusal: string,
+  refusal: RegionRefusal,
 ): void {
   emitLog({
     level: 'warn',
     runtime: 'stave',
     source: fileId,
-    message: `${what} was not applied — ${REGION_REFUSAL_CAUSE[refusal] ?? refusal}.`,
+    message: `${what} was not applied — ${REGION_REFUSAL_CAUSE[refusal]}.`,
   })
 }

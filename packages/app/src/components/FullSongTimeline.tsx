@@ -91,6 +91,7 @@ import { computeLaneLayout, laneAtY, type LaneLayout } from './musicalTimeline/l
 import {
   markRegionValue,
   regionEdgeAt,
+  regionValueAtDrag,
   type RegionEdgeHit,
   type RegionSide,
 } from './musicalTimeline/regionEdge'
@@ -1553,7 +1554,14 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     const drag = regionDragRef.current
     const el = areaRef.current
     if (!drag || !el) return
-    const raw = drag.startValue + (clientX - drag.startClientX) * drag.fractionPerPx
+    // ⚠ THE ONE OWNER of this sum, not the same arithmetic written again here.
+    // It carries the rule that the scale is fixed at pointer-down; a second
+    // copy is how that rule comes to be true in one place and not the other.
+    const raw = regionValueAtDrag(
+      drag.startValue,
+      clientX - drag.startClientX,
+      drag.fractionPerPx,
+    )
     // Clamped only to 0..1 here. The real clamp is against the OTHER edge and
     // lives in the editor's `regionTrimEdit`, which reads the document rather
     // than the drawn mark — the ghost is a preview, not the decision.

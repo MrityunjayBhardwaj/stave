@@ -13,6 +13,7 @@ import {
   markRegionValue,
   regionAnchorAgrees,
   regionEdgeAt,
+  regionValueAtDrag,
   type RegionEdgeQuery,
 } from '../regionEdge'
 import { computeLaneLayout } from '../laneLayout'
@@ -264,5 +265,24 @@ describe('regionAnchorAgrees — the guard against a wrong anchor', () => {
   it('tolerates float drift, but not a value a user could have meant', () => {
     expect(regionAnchorAgrees(markRegionValue(trimmed, 'begin'), 'begin', 0.1 + 1e-9)).toBe(true)
     expect(regionAnchorAgrees(markRegionValue(trimmed, 'begin'), 'begin', 0.11)).toBe(false)
+  })
+})
+
+describe('regionValueAtDrag — the scale is the caller`s, fixed at pointer-down', () => {
+  it('is linear in the travel', () => {
+    expect(regionValueAtDrag(0.2, 10, 0.01)).toBeCloseTo(0.3, 10)
+    expect(regionValueAtDrag(0.2, -10, 0.01)).toBeCloseTo(0.1, 10)
+    // Twice the travel is twice the change — the property that fails if a
+    // caller re-derives the scale against a shrinking slice each move.
+    expect(regionValueAtDrag(0.2, 20, 0.01) - 0.2).toBeCloseTo(
+      2 * (regionValueAtDrag(0.2, 10, 0.01) - 0.2),
+      10,
+    )
+  })
+
+  it('returns the start value unchanged for a scale that cannot be used', () => {
+    expect(regionValueAtDrag(0.2, 10, 0)).toBe(0.2)
+    expect(regionValueAtDrag(0.2, 10, Number.NaN)).toBe(0.2)
+    expect(regionValueAtDrag(0.2, Number.NaN, 0.01)).toBe(0.2)
   })
 })

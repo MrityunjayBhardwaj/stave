@@ -15,7 +15,6 @@ import {
   readRegionControl,
   regionControlEdit,
   regionTrimEdit,
-  regionValueAtDrag,
 } from '../regionTrim'
 
 function chunkOf(code: string): ChunkInfo {
@@ -217,25 +216,6 @@ describe('regionTrimEdit — clamped against the OTHER edge', () => {
     // begin absent → 0; asking for 0 is no change, asking for 0.2 appends.
     expect(regionTrimEdit(chunkOf('$: s("t")'), 'begin', 0).refusal).toBe('no-change')
     expect(regionTrimEdit(chunkOf('$: s("t")'), 'begin', 0.2).edit).not.toBeNull()
-  })
-})
-
-describe('regionValueAtDrag — the scale is the caller`s, fixed at pointer-down', () => {
-  it('is linear in the travel', () => {
-    expect(regionValueAtDrag(0.2, 10, 0.01)).toBeCloseTo(0.3, 10)
-    expect(regionValueAtDrag(0.2, -10, 0.01)).toBeCloseTo(0.1, 10)
-    // Twice the travel is twice the change — the property that fails if a
-    // caller re-derives the scale against a shrinking slice each move.
-    expect(regionValueAtDrag(0.2, 20, 0.01) - 0.2).toBeCloseTo(
-      2 * (regionValueAtDrag(0.2, 10, 0.01) - 0.2),
-      10,
-    )
-  })
-
-  it('returns the start value unchanged for a scale that cannot be used', () => {
-    expect(regionValueAtDrag(0.2, 10, 0)).toBe(0.2)
-    expect(regionValueAtDrag(0.2, 10, Number.NaN)).toBe(0.2)
-    expect(regionValueAtDrag(0.2, Number.NaN, 0.01)).toBe(0.2)
   })
 })
 

@@ -221,23 +221,3 @@ export function regionTrimEdit(
   if (!edit) return { edit: null, refusal: 'not-a-number', value: clamped }
   return { edit, refusal: null, value: clamped }
 }
-
-/**
- * Map a pointer travel in pixels to a new value for one region edge.
- *
- * ⚠ THE SCALE IS THE CALLER'S, FIXED AT POINTER-DOWN. `fractionPerPx` must be
- * derived once from the region as it was when the drag started, never re-derived
- * per move: re-deriving it against the shrinking slice makes the edge accelerate
- * away from the cursor, and the same physical drag then means different amounts
- * depending on how it was paced. This is the same reason `applyTrim` on the song
- * canvas captures `origWeight` at pointer-down.
- */
-export function regionValueAtDrag(
-  startValue: number,
-  deltaPx: number,
-  fractionPerPx: number,
-): number {
-  if (!Number.isFinite(startValue) || !Number.isFinite(deltaPx)) return startValue
-  if (!Number.isFinite(fractionPerPx) || fractionPerPx <= 0) return startValue
-  return startValue + deltaPx * fractionPerPx
-}

@@ -88,7 +88,11 @@ import { FullSongTimeline } from './FullSongTimeline'
 import { createSongCollector } from './musicalTimeline/songCollector'
 import { createWaveformSource } from '../audio/waveformSource'
 import { subscribeWaveformsReady } from '../audio/waveformWarm'
-import { reportRegionRefusal, reportWriteRefusal } from '../lib/writeRefusal'
+import {
+  reportRegionRefusal,
+  reportWriteRefusal,
+  type RegionRefusal,
+} from '../lib/writeRefusal'
 import { regionAnchorAgrees, type RegionSide } from './musicalTimeline/regionEdge'
 
 export interface MusicalTimelineProps {
@@ -723,7 +727,7 @@ export function MusicalTimeline(
       // without this the user is told the code "does not set the slice", when in
       // fact it sets it in a way a drag must not overwrite. Recorded and carried
       // past the loop, because a LATER anchor might still be writable.
-      let known: string | null = null
+      let known: RegionRefusal | null = null
       for (const anchor of req.anchors) {
         const chunk = detectChunk(snapshot.code, anchor)
         if (!chunk) continue

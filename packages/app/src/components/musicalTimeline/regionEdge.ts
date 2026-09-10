@@ -207,3 +207,31 @@ export function regionAnchorAgrees(
   // widest that still cannot confuse two values a user could mean.
   return Math.abs(played - written) < 0.005
 }
+
+/**
+ * Map a pointer travel in pixels to a new value for one region edge.
+ *
+ * ⚠ THE SCALE IS THE CALLER'S, FIXED AT POINTER-DOWN. `fractionPerPx` must come
+ * from the `RegionEdgeHit` captured when the drag started, never be re-derived
+ * per move: re-deriving it against the shrinking slice makes the edge
+ * accelerate away from the cursor, and the same physical drag then means
+ * different amounts depending on how it was paced. Same reason the song
+ * canvas's clip trim captures `origWeight` at pointer-down.
+ *
+ * ⚠ IT LIVES HERE, NOT WITH THE WRITE DECISION IN `@stave/editor`. It was
+ * written there first, next to `regionTrimEdit`, which forced `FullSongTimeline`
+ * to import a new symbol from the editor barrel — and every test that mocks
+ * that barrel then handed the call site `undefined`, invisibly to tsc because a
+ * `vi.mock` factory is untyped. Four arms went red. The fix is not to widen the
+ * mock: this is drag GEOMETRY, and it belongs beside the hit test that produces
+ * its scale. The editor owns what to write; this file owns where the pointer is.
+ */
+export function regionValueAtDrag(
+  startValue: number,
+  deltaPx: number,
+  fractionPerPx: number,
+): number {
+  if (!Number.isFinite(startValue) || !Number.isFinite(deltaPx)) return startValue
+  if (!Number.isFinite(fractionPerPx) || fractionPerPx <= 0) return startValue
+  return startValue + deltaPx * fractionPerPx
+}
