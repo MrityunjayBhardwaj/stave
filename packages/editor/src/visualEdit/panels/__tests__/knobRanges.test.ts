@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { knobRangeFor } from '../knobRanges'
+import { EFFECTS } from '../effectCatalog'
 
 describe('knobRangeFor', () => {
   it('uses sensible ranges for known methods (S4)', () => {
@@ -52,4 +53,25 @@ describe('knobRangeFor', () => {
     const r = knobRangeFor('wobble', -10)
     expect(r.min).toBeLessThanOrEqual(-10)
   })
+})
+
+/**
+ * A catalog-wide invariant, added after the `stretch` entry broke it (#1530).
+ *
+ * The ＋More convention is that adding an effect gives you a dial you can
+ * immediately move in either direction. A first draft defaulted `stretch` to an
+ * octave, which is `1` — exactly the top of its own range — so the new knob
+ * arrived on its rail with half its travel dead. Measured at the time: 22 of the
+ * 23 entries landed strictly inside their range and only the new one did not.
+ *
+ * Named so the failure message says what is wrong rather than which index.
+ */
+describe('assertDefaultsInsideTheirRange', () => {
+  for (const e of EFFECTS) {
+    it(`${e.method} adds at a value the knob can move both ways from`, () => {
+      const r = knobRangeFor(e.method, e.def)
+      expect(e.def, `${e.method} adds on its range FLOOR (${r.min})`).toBeGreaterThan(r.min)
+      expect(e.def, `${e.method} adds on its range CEILING (${r.max})`).toBeLessThan(r.max)
+    })
+  }
 })

@@ -231,7 +231,7 @@ test.describe('Mixer (#381)', () => {
     await menu.locator('[data-mixer-add-effect-search]').fill('pitch')
     await menu.locator('[data-mixer-add-effect-item="stretch"]').click()
     await page.waitForTimeout(80)
-    expect(await strudelValue(page)).toBe('$: s("bd").stretch(1)')
+    expect(await strudelValue(page)).toBe('$: s("bd").stretch(0.5)')
     const slider = drawer.locator('[data-knob="stretch"] [role="slider"]').first()
     await expect(slider).toHaveAttribute('aria-valuemin', '-2')
     await expect(slider).toHaveAttribute('aria-valuemax', '1')

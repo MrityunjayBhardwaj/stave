@@ -64,13 +64,13 @@ describe('the catalog reaches the take controls (#1530)', () => {
     expect(screen.getByText('Pitch shift')).toBeTruthy()
   })
 
-  it('adds it as `.stretch(1)` — an octave, because unison here is 0 not 1', () => {
+  it('adds it a FIFTH up — audible, and not on the knob rail an octave would be', () => {
     const onToggle = vi.fn()
     render(<AddEffectMenu present={new Set()} onToggle={onToggle} />)
     fireEvent.click(screen.getAllByRole('button', { name: /More/ })[0])
     fireEvent.click(screen.getAllByText('Pitch shift')[0])
     expect(onToggle).toHaveBeenCalledWith(
-      expect.objectContaining({ method: 'stretch', def: 1 }),
+      expect.objectContaining({ method: 'stretch', def: 0.5 }),
     )
   })
 

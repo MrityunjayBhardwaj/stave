@@ -34970,10 +34970,15 @@ var EFFECTS = [
    * same phrase in different directions. So: "Pitch shift", never "Tune",
    * "Correct" or "Align" — `take-pitch-and-time.spec.ts` holds the numbers.
    *
-   * An octave is the default because it is the least ambiguous demonstration of
-   * what the control does. ⚠ Unison here is `0`, not `1`.
+   * ⚠ Unison here is `0`, not `1`, and the default is a FIFTH rather than the
+   * octave a first draft used. An octave is `1`, which is exactly the top of
+   * this method's knob range — so adding the effect would have handed the user a
+   * dial already on its rail with half its travel dead. Measured across the
+   * catalog, every one of the other 22 entries lands strictly inside its own
+   * range; `assertDefaultsInsideTheirRange` in `knobRanges.test.ts` now holds
+   * that for all of them.
    */
-  { method: "stretch", label: "Pitch shift", group: "Playback", def: 1 },
+  { method: "stretch", label: "Pitch shift", group: "Playback", def: 0.5 },
   { method: "accelerate", label: "Accelerate", group: "Playback", def: 0.5 },
   // Time
   { method: "slow", label: "Slow", group: "Time", def: 2 },
