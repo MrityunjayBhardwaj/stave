@@ -56,6 +56,7 @@ import {
   detectBarePattern,
   setWeight,
   silenceArm,
+  removeArm,
   reorderArm,
   insertArm,
   splitArm,
@@ -64,6 +65,7 @@ import {
   detectPickControlAt,
   pickSetWeight,
   pickSilenceArm,
+  pickRemoveArm,
   pickReorderArm,
   pickDuplicateArm,
   pickSplitArm,
@@ -726,8 +728,11 @@ export function MusicalTimeline(
   // writes `~` in the arm's head, and a bare loop materializes an arrange around
   // the silenced bar; all three keep the song's length. Ripple delete — the
   // gesture that DOES shorten a song — is a separate, second gesture that does
-  // not exist yet on either spelling (#1460); `removeArm`/`pickRemoveArm` are its
-  // waiting substrate, which is why both stay exported with no caller.)
+  // ⚠ SUPERSEDED IN PART (#1460): ripple delete now EXISTS, as a second gesture
+  // on Cmd/Ctrl+Shift+Delete — see `handleRippleDeleteClip` below. What is said
+  // above about plain Delete is unchanged and is the reason the two are separate:
+  // a gap is the right answer for the bare key, and shortening the song is a
+  // different request that has to be asked for differently.)
   const handleDeleteClip = React.useCallback(
     (req: { sourceOffset: number | null; armIndex: number; barIndex?: number; span?: number }) => {
       if (!snapshot?.source || req.sourceOffset == null) return
@@ -762,6 +767,47 @@ export function MusicalTimeline(
       if (!bare) return
       const edits = materializeBareDelete(snapshot.code, bare.patternRange, req.barIndex, req.span)
       writeArrange(edits, 'arrange.structure', 'delete clip')
+    },
+    [snapshot],
+  )
+
+  // RIPPLE-delete a clip (#1460): remove the arm and close the gap after it, so
+  // the song gets SHORTER. The SECOND delete gesture, and the counterpart of the
+  // one above rather than a replacement for it.
+  //
+  // ⚠ WHY TWO GESTURES AND NOT A BETTER ONE. Plain Delete leaving a gap is
+  // correct and stays correct: an arrangement timeline is absolute, so clearing
+  // a clip must not drag everything after it leftwards. Every DAW manual checked
+  // separates the two the same way and gives ripple its own name and its own
+  // chord — Ableton calls it Delete Time on Cmd+Shift+Delete, Logic calls it
+  // Snip, and none of them puts it on the bare Delete key. Reaper is the real
+  // alternative design and makes ripple a MODE rather than a command; that is a
+  // different product decision, not this one.
+  //
+  // Both spellings ripple, because #1462 settled that a keypress means one thing
+  // whichever way the user happened to write their song. `removeArm` and
+  // `pickRemoveArm` have been written, exported and callerless since #491 was
+  // built, waiting for exactly this.
+  //
+  // Refusals, and each is the serializer's rather than a check invented here: a
+  // sole remaining arm is not removable (a lane keeps at least one clip), and a
+  // bare loop has no arm at all — the gesture layer already declines that one
+  // before this is called, so a bare clip cannot reach here.
+  const handleRippleDeleteClip = React.useCallback(
+    (req: { sourceOffset: number | null; armIndex: number }) => {
+      if (!snapshot?.source || req.sourceOffset == null || req.armIndex < 0) return
+      const call = detectArrangeAt(snapshot.code, req.sourceOffset)
+      if (call) {
+        if (req.armIndex >= call.arms.length) return
+        const edits = removeArm(snapshot.code, call, req.armIndex)
+        writeArrange(edits, 'arrange.structure', 'ripple delete clip')
+        return
+      }
+      const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
+      if (!ctl) return
+      if (req.armIndex >= ctl.arms.length) return
+      const edits = pickRemoveArm(snapshot.code, ctl, req.armIndex)
+      writeArrange(edits, 'arrange.structure', 'ripple delete clip')
     },
     [snapshot],
   )
@@ -880,6 +926,7 @@ export function MusicalTimeline(
           onEditAutomation={handleEditAutomation}
           onTrimClip={handleTrimClip}
           onDeleteClip={handleDeleteClip}
+          onRippleDeleteClip={handleRippleDeleteClip}
           onMoveClip={handleMoveClip}
           onDuplicateClip={handleDuplicateClip}
           onSplitClip={handleSplitClip}
