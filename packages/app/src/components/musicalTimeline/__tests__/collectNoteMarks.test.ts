@@ -140,3 +140,79 @@ describe('collectNoteMarks — eval-backed marks (#861)', () => {
     expect(marks.labelOffsetByLane.get('d2')).toBe(30)
   })
 })
+
+// ---------------------------------------------------------------------------
+// #1512 — the region rides from the runtime hap onto the mark.
+//
+// The values below are not invented. Each is what the real runtime was MEASURED
+// to put on `hap.value` for the spelling named in the comment, so these arms pin
+// the join between an engine that already resolved the region and a renderer
+// that had been discarding it.
+// ---------------------------------------------------------------------------
+describe('collectNoteMarks — the played region (#1512)', () => {
+  /** One sample hap on lane d1, carrying whatever `params` it is given. */
+  function hapWith(params: Record<string, unknown> | undefined) {
+    return [
+      { begin: 0, end: 1, trackId: '$0', s: 'take_1', gain: 1, loc: [{ start: 12, end: 14 }], params },
+    ] as unknown as Parameters<typeof collectNoteMarks>[0]
+  }
+
+  function markFor(params: Record<string, unknown> | undefined) {
+    const marks = collectNoteMarks(hapWith(params), { fake: true } as never, wholeSongWindow(4))
+    const lane = marks.marksByLane.get('d1')
+    expect(lane).toHaveLength(1)
+    return lane![0]
+  }
+
+  it('leaves a plain take with no region at all', () => {
+    // Absence is the signal that the mark plays the whole file, and it must stay
+    // distinguishable from an explicit whole-file region at the call site.
+    expect(markFor(undefined).region).toBeUndefined()
+  })
+
+  it('ignores params that say nothing about the region', () => {
+    // A hap carrying reverb and cutoff is still a plain take.
+    expect(markFor({ room: 0.3, cutoff: 800, delay: 0.2 }).region).toBeUndefined()
+  })
+
+  it('carries a chop’s own quarter — measured from `.chop(4)`', () => {
+    expect(markFor({ begin: 0.5, end: 0.75 }).region).toEqual({
+      begin: 0.5,
+      end: 0.75,
+      speed: 1,
+      unit: null,
+    })
+  })
+
+  it('fills in superdough’s own defaults for whatever the hap omits', () => {
+    // `.speed(2)` sets speed alone; the slice is still the whole file
+    // (`sampler.mjs:67` defaults begin to 0 and end to 1).
+    expect(markFor({ speed: 2 }).region).toEqual({ begin: 0, end: 1, speed: 2, unit: null })
+  })
+
+  it('carries the unit — measured from `.fit()` and `.loopAt(2)`', () => {
+    expect(markFor({ speed: 1, unit: 'c' }).region!.unit).toBe('c')
+    expect(markFor({ speed: 0.25, unit: 'c' }).region!.speed).toBe(0.25)
+  })
+
+  it('keeps `_slices` out — measured from `.slice(4, "0 2")`', () => {
+    // `.slice()` adds a bookkeeping field playback never reads; `begin`/`end`
+    // already say everything the shape needs.
+    const region = markFor({ begin: 0, end: 0.25, _slices: 4 }).region!
+    expect(Object.keys(region).sort()).toEqual(['begin', 'end', 'speed', 'unit'])
+  })
+
+  it('never reads a non-numeric region value', () => {
+    // A patterned control that failed to resolve must not become a NaN width.
+    expect(markFor({ begin: 'nonsense', end: null, speed: Number.NaN }).region).toBeUndefined()
+  })
+
+  it('does not confuse the region’s `end` with the mark’s own end IN TIME', () => {
+    // The one collision worth an arm of its own: `SceneNote.end` is a song cycle
+    // and `region.end` is a fraction of a file, and they share the word because
+    // Strudel's controls do.
+    const mark = markFor({ begin: 0.25, end: 0.5 })
+    expect(mark.end).toBe(1) // the hap's own `end`, in cycles
+    expect(mark.region!.end).toBe(0.5) // …and its slice's end, in the file
+  })
+})

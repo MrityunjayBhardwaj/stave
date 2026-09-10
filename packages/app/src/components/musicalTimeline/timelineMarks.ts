@@ -10,6 +10,8 @@
  */
 
 import type { IREvent, PatternIR } from '@stave/editor'
+
+import type { SampleRegion } from './waveformLane'
 import { positionalSectionName } from './sectionLabel'
 import { structuralWalk, wholeWalkWindow } from '@stave/editor'
 import { extractPitch } from './pitch'
@@ -408,6 +410,42 @@ export function laneKeyForHap(
  * Pitch comes from `extractPitch` — the hap's `note` is already the RESOLVED
  * name/number ("C3", or a fractional MIDI for a sampled signal).
  */
+/**
+ * The slice of its file an event plays, or undefined when it plays all of it (#1512).
+ *
+ * ⚠ THESE NUMBERS ARE ALREADY RESOLVED, WHICH IS THE WHOLE REASON THIS IS FOUR
+ * LINES. `.chop(4)` arrives as four haps each carrying its own quarter,
+ * `.slice(4, "0 2")` as two haps carrying theirs, and a PATTERNED
+ * `.begin("<0 0.5>")` as the value for the cycle being drawn. Strudel does the
+ * resolving; reading `hap.value` is all that is left. Modelling any of it in our
+ * own IR would be a second opinion about a number the engine has already fixed.
+ *
+ * They ride in `params` rather than in a dedicated slot because none of the four
+ * is in `KNOWN_VALUE_FIELDS`, so `extractParams` sweeps them up already
+ * (`engine/NormalizedHap.ts`).
+ *
+ * Returns undefined unless at least one of the four is present, so a plain mark
+ * allocates nothing and every downstream reading of it is byte-identical to
+ * what it was — `undefined` and "the whole file at rate 1" must stay
+ * distinguishable at the call site even though they draw the same thing.
+ */
+function regionOf(ev: IREvent): SampleRegion | undefined {
+  const p = ev.params
+  if (!p) return undefined
+  const begin = finiteOrNull(p.begin)
+  const end = finiteOrNull(p.end)
+  const speed = finiteOrNull(p.speed)
+  const unit = typeof p.unit === 'string' ? p.unit : null
+  if (begin == null && end == null && speed == null && unit == null) return undefined
+  // superdough's own defaults (`sampler.mjs:67`, `:36`) — a hap that sets only
+  // `speed` still begins at 0 and ends at 1.
+  return { begin: begin ?? 0, end: end ?? 1, speed: speed ?? 1, unit }
+}
+
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
 function collectHapMarks(
   events: readonly IREvent[],
   window: SongWindow,
@@ -434,12 +472,14 @@ function collectHapMarks(
       out.set(key, arr)
     }
     const end = Number.isFinite(ev.end) && ev.end > cycle ? ev.end : cycle
+    const region = regionOf(ev)
     arr.push({
       cycle,
       end,
       pitch: extractPitch(ev)?.midi ?? null,
       gain: clamp01(ev.gain ?? 1),
       voice: ev.s ?? null,
+      ...(region ? { region } : {}),
     })
   }
   return out

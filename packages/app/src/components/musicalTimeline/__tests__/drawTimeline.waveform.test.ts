@@ -140,6 +140,90 @@ describe('drawTimeline — waveform tier', () => {
     expect(cols[0].h).toBeCloseTo(rects.find((r) => r.w === 250)!.h, 6)
   })
 
+  // ── #1512 — the mark draws the slice it PLAYS ────────────────────────────
+  //
+  // The renderer's half of the region work: that `note.region` reaches
+  // `waveformFit` and `waveformColumn` at all. What the pixels then look like is
+  // a device question and belongs to the browser arm — a mock reports that a
+  // fill was requested, never that anything appeared.
+
+  it('sizes a chopped mark by the quarter it plays, not by the file', () => {
+    // 0.4s file at 1 cps over 1000px/cycle = 400px of audio, clipped to the
+    // 250px mark. One quarter of it is 100px, which fits.
+    const warm: WaveformSource = { cps: 1, peaksFor: () => fullScalePeaks(0.4) }
+    const chopped: SceneNote[] = [
+      {
+        ...oneTake[0],
+        region: { begin: 0.5, end: 0.75, speed: 1, unit: null },
+      },
+    ]
+    const { ctx: a, rects: whole } = mockCtx()
+    drawTimeline(a, sceneWith(oneTake), transform, theme, tall, undefined, warm)
+    const { ctx: b, rects: quarter } = mockCtx()
+    drawTimeline(b, sceneWith(chopped), transform, theme, tall, undefined, warm)
+
+    expect(waveformColumns(whole)).toHaveLength(250) // the file overruns the mark
+    expect(waveformColumns(quarter)).toHaveLength(100) // its quarter does not
+  })
+
+  it('reads the region’s own columns, so two chops of one file differ', () => {
+    // An envelope that is silent in its first half and full-scale in its second.
+    // Two marks, same file, same width — the only difference is which half each
+    // one plays, and that must be the only difference in what is drawn.
+    const columns = 16
+    const data = new Float32Array(columns * 2)
+    for (let i = columns / 2; i < columns; i++) {
+      data[i * 2] = -1
+      data[i * 2 + 1] = 1
+    }
+    const warm: WaveformSource = { cps: 1, peaksFor: () => ({ data, columns, duration: 0.2 }) }
+    const half = (begin: number, end: number): SceneNote[] => [
+      { ...oneTake[0], region: { begin, end, speed: 1, unit: null } },
+    ]
+
+    const { ctx: a, rects: firstHalf } = mockCtx()
+    drawTimeline(a, sceneWith(half(0, 0.5)), transform, theme, tall, undefined, warm)
+    const { ctx: b, rects: secondHalf } = mockCtx()
+    drawTimeline(b, sceneWith(half(0.5, 1)), transform, theme, tall, undefined, warm)
+
+    const quiet = waveformColumns(firstHalf)
+    const loud = waveformColumns(secondHalf)
+    // Same count — the two slices are the same length.
+    expect(quiet).toHaveLength(loud.length)
+    // …and opposite content: the silent half draws minimum-height columns, the
+    // full-scale half spans the mark.
+    expect(Math.max(...quiet.map((r) => r.h))).toBe(1)
+    expect(Math.min(...loud.map((r) => r.h))).toBeGreaterThan(1)
+  })
+
+  it('is byte-for-byte unchanged for a mark with no region', () => {
+    // The compatibility claim at the RENDERER, not only in the arithmetic.
+    const warm: WaveformSource = { cps: 1, peaksFor: () => fullScalePeaks(0.1) }
+    const { ctx: a, rects: before } = mockCtx()
+    drawTimeline(a, sceneWith(oneTake), transform, theme, tall, undefined, warm)
+    const explicit: SceneNote[] = [
+      { ...oneTake[0], region: { begin: 0, end: 1, speed: 1, unit: null } },
+    ]
+    const { ctx: b, rects: after } = mockCtx()
+    drawTimeline(b, sceneWith(explicit), transform, theme, tall, undefined, warm)
+    expect(after).toEqual(before)
+  })
+
+  it('declines a region too short to draw, leaving the plain bar', () => {
+    const warm: WaveformSource = { cps: 1, peaksFor: () => fullScalePeaks(0.1) }
+    const sliver: SceneNote[] = [
+      { ...oneTake[0], region: { begin: 0, end: 0.01, speed: 1, unit: null } },
+    ]
+    const { ctx: a, rects: bare } = mockCtx()
+    drawTimeline(a, sceneWith(oneTake), transform, theme, tall)
+    const { ctx: b, rects: declined } = mockCtx()
+    drawTimeline(b, sceneWith(sliver), transform, theme, tall, undefined, warm)
+    // 1px of audio is under MIN_WAVEFORM_W, so nothing is drawn — and "nothing"
+    // must mean the bar it drew before a source existed at all.
+    expect(waveformColumns(declined)).toEqual([])
+    expect(declined).toEqual(bare)
+  })
+
   it('stops at the mark’s edge for a sample longer than its slot', () => {
     // 10s of audio in a 250px mark: the mark's width is the whole allowance.
     const warm: WaveformSource = { cps: 1, peaksFor: () => fullScalePeaks(10) }
