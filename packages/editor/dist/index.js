@@ -3696,6 +3696,8 @@ function runRawStage(input) {
       loc: [{ start: 0, end: code.length }]
     };
   }
+  const docNumbers = collectNumericBindings(code);
+  const numberMeta = docNumbers ? { trackNumbers: docNumbers } : {};
   const tracks = extractTracks(code);
   if (tracks.length === 0) {
     const stripped = stripParserPrelude(code);
@@ -3737,11 +3739,16 @@ function runRawStage(input) {
       tag: "Code",
       code: stripped.body.trim(),
       lang: "strudel",
-      loc: [{ start, end: code.length }]
+      loc: [{ start, end: code.length }],
+      // #1514 — a BARE document resolves its own pattern bindings in
+      // MINI-EXPANDED (`buildBindingMap`), but the numeric map is built from
+      // the whole source, so it travels the same meta channel as every other
+      // shape rather than being re-derived in one arm.
+      ...numberMeta
     };
   }
   const docBindings = collectTopLevelBindings(code, 0)?.bindings;
-  const bindingMeta = docBindings ? { trackBindings: docBindings } : {};
+  const bindingMeta = { ...docBindings ? { trackBindings: docBindings } : {}, ...numberMeta };
   if (tracks.length === 1) {
     const t = tracks[0];
     return {
@@ -3813,19 +3820,29 @@ function runMiniExpandedStage(input) {
         const boundParsed = parseRootWithChainMeta(
           bound.finalExpr,
           bound.finalOffset,
-          bound.bindings
+          bound.bindings,
+          // #1514 — mirrors parseStrudel.ts:1007, which passes `numbers` on
+          // this same bare-document branch.
+          cMeta.trackNumbers
         );
         const isBareCode = boundParsed.tag === "Code" && boundParsed.via === void 0;
         if (!isBareCode) return boundParsed;
       }
     }
-    return withTrackMeta(parseRootWithChainMeta(input.code, base, cMeta.trackBindings));
+    return withTrackMeta(
+      parseRootWithChainMeta(input.code, base, cMeta.trackBindings, cMeta.trackNumbers)
+    );
   }
   if (input.tag === "Stack" && input.userMethod === void 0) {
     const tracks = input.tracks.map((t) => {
       if (t.tag !== "Code") return t;
       const tMeta = t;
-      const parsed = parseRootWithChainMeta(t.code, t.loc?.[0]?.start ?? 0, tMeta.trackBindings);
+      const parsed = parseRootWithChainMeta(
+        t.code,
+        t.loc?.[0]?.start ?? 0,
+        tMeta.trackBindings,
+        tMeta.trackNumbers
+      );
       if (tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0) {
         return {
           ...parsed,
@@ -3842,13 +3859,13 @@ function runMiniExpandedStage(input) {
   return input;
 }
 __name(runMiniExpandedStage, "runMiniExpandedStage");
-function parseRootWithChainMeta(expr, baseOffset, bindings) {
+function parseRootWithChainMeta(expr, baseOffset, bindings, numbers) {
   if (!expr.trim()) return IR.pure();
   const leadingWs = expr.length - expr.trimStart().length;
   const trimmedOffset = baseOffset + leadingWs;
   const trimmed = expr.trim();
   const { root, chain } = splitRootAndChain(trimmed);
-  const rootIR = parseRoot(root, trimmedOffset, void 0, bindings);
+  const rootIR = parseRoot(root, trimmedOffset, void 0, bindings, void 0, numbers);
   const rootIsBareCode = rootIR.tag === "Code" && rootIR.via === void 0;
   if (rootIsBareCode) {
     return IR.code(expr);
@@ -3926,7 +3943,7 @@ function applyOnTrack(node) {
 __name(applyOnTrack, "applyOnTrack");
 function stripStageMeta(node) {
   const n = node;
-  if (!("unresolvedChain" in n) && !("unresolvedBindings" in n) && !("trackBindings" in n) && !("chainOffset" in n) && !("dollarStart" in n) && !("dollarEnd" in n) && !("trackLabel" in n)) {
+  if (!("unresolvedChain" in n) && !("unresolvedBindings" in n) && !("trackBindings" in n) && !("trackNumbers" in n) && !("chainOffset" in n) && !("dollarStart" in n) && !("dollarEnd" in n) && !("trackLabel" in n)) {
     return node;
   }
   const {
@@ -3935,6 +3952,9 @@ function stripStageMeta(node) {
     // #1392 — RAW's document-level binding map. Consumed in MINI-EXPANDED;
     // stripped here so it can never reach a FINAL node body.
     trackBindings: _tb,
+    // #1514 — RAW's document-level NUMERIC map. Same lifecycle as _tb:
+    // consumed in MINI-EXPANDED, stripped here so it never reaches FINAL.
+    trackNumbers: _tn,
     chainOffset: _o,
     dollarStart: _ds,
     dollarEnd: _de,

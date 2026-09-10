@@ -241,3 +241,50 @@ test('a NAMED section is gestureable at all — the anchor reaches its arrangeme
 
   expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
 })
+
+test('a section whose WEIGHT is an expression is gestureable at all (#1514)', async ({ page }) => {
+  // ⚠ THE GESTURE IS THE INSTRUMENT HERE, NOT THE SUBJECT. Duplicate is already
+  // proven above; what this arm asks is whether the timeline ATTRIBUTED the
+  // arms in the first place. Before #1514 this document drew as ONE bare clip
+  // (`armIndex: -1`) and every clip gesture declined — correctly, given a bare
+  // clip — so nothing errored, nothing warned, and the document came back
+  // unchanged. A gesture that rewrites the file is the cheapest proof that the
+  // arm exists, because it cannot be produced by a clip that has no arm.
+  //
+  // `let M = 1` + `[M*8, …]` is not a contrived spelling: it is how the one
+  // corpus document with a 10-arm arrangement writes its song, using `M` as a
+  // global length multiplier.
+  //
+  // And the clone keeps `M*2` VERBATIM rather than `2` — the weight is copied
+  // as TEXT, so the new section stays tied to the variable every other section
+  // follows. That is the same rule the ripple/insert serializers hold, observed
+  // here through a different gesture.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(page, ['let M = 1', 'arrange([M*2, s("bd")], [M*2, s("hh")])'].join('\n'))
+  await page.locator('[data-full-song="root"]').waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-lane]').first().waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(400)
+  errors.length = 0 // live-coding editor evaluates partial text as it is typed
+
+  const grid = page.locator('[data-full-song="grid"]')
+  const box = await grid.boundingBox()
+  if (!box) throw new Error('no grid box')
+  await page.mouse.click(box.x + box.width * 0.25, box.y + 8)
+  // The selection appearing at all is the first half of the observation: a bare
+  // clip selects too, so this is necessary and not sufficient — the write below
+  // is what separates them.
+  await expect(page.locator('[data-full-song="clip-selection"]')).toBeVisible({ timeout: 5_000 })
+  await grid.press(`${MOD}+d`)
+
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    ['let M = 1', 'arrange([M*2, s("bd")], [M*2, s("bd")], [M*2, s("hh")])'].join('\n'),
+  )
+  // eslint-disable-next-line no-console
+  console.log(`[#1514] expression-weight section duplicated: ${JSON.stringify(await strudelSource(page))}`)
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})

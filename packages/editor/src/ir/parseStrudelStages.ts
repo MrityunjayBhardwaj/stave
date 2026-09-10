@@ -31,6 +31,7 @@ import {
   BINDING_RE,
   buildBindingMap,
   collectTopLevelBindings,
+  collectNumericBindings,
 } from './parseStrudel'
 
 /**
@@ -65,6 +66,18 @@ export function runRawStage(input: PatternIR): PatternIR {
       loc: [{ start: 0, end: code.length }],
     }
   }
+  // #1514 — the document's top-level NUMERIC bindings, resolved ONCE, above
+  // the track dispatch, for the same reason `trackBindings` is: `let M = 1` is
+  // a property of the DOCUMENT, and a track's lifted `code` is its expression
+  // alone. `parseStrudel` collects this at its own top (parseStrudel.ts:967)
+  // and threads it to every branch; this pipeline collected it nowhere, so an
+  // arrange arm weighted `M*2` was unresolvable HERE and resolvable THERE.
+  //
+  // A separate map from `trackBindings` because that one resolves to PATTERNS,
+  // and because it must survive that collector declining — a document whose
+  // pattern bindings don't resolve can still have a readable `let M = 1`.
+  const docNumbers = collectNumericBindings(code)
+  const numberMeta = docNumbers ? { trackNumbers: docNumbers } : {}
   const tracks = extractTracks(code)
   if (tracks.length === 0) {
     // Phase 20-14 parser-gap PARITY (#113) — strip the leading prelude
@@ -143,7 +156,12 @@ export function runRawStage(input: PatternIR): PatternIR {
       code: stripped.body.trim(),
       lang: 'strudel' as const,
       loc: [{ start, end: code.length }],
-    }
+      // #1514 — a BARE document resolves its own pattern bindings in
+      // MINI-EXPANDED (`buildBindingMap`), but the numeric map is built from
+      // the whole source, so it travels the same meta channel as every other
+      // shape rather than being re-derived in one arm.
+      ...numberMeta,
+    } as unknown as PatternIR
   }
   // #1392 — the document's top-level bindings, resolved ONCE for every track.
   //
@@ -154,7 +172,9 @@ export function runRawStage(input: PatternIR): PatternIR {
   // as stage-meta on each lift, exactly as `trackLabel` and `dollarStart` do.
   // Stripped from FINAL by `stripStageMeta` with the rest of the meta.
   const docBindings = collectTopLevelBindings(code, 0)?.bindings
-  const bindingMeta = docBindings ? { trackBindings: docBindings } : {}
+  // #1514 — `numberMeta` rides alongside; both are document-scope and both are
+  // stripped by `stripStageMeta` before FINAL.
+  const bindingMeta = { ...(docBindings ? { trackBindings: docBindings } : {}), ...numberMeta }
   if (tracks.length === 1) {
     const t = tracks[0]
     return {
@@ -234,6 +254,8 @@ export function runMiniExpandedStage(input: PatternIR): PatternIR {
       // #1392 — the document's bindings, put here by RAW (the only stage that
       // still holds the `const` lines a track's own `code` does not contain).
       trackBindings?: ReadonlyMap<string, PatternIR>
+      // #1514 — the document's numeric bindings, same provenance.
+      trackNumbers?: ReadonlyMap<string, number>
     }
 
     // #1384 — the ONE place this stage re-attaches a lone track's stage-meta.
@@ -295,6 +317,9 @@ export function runMiniExpandedStage(input: PatternIR): PatternIR {
           bound.finalExpr,
           bound.finalOffset,
           bound.bindings,
+          // #1514 — mirrors parseStrudel.ts:1007, which passes `numbers` on
+          // this same bare-document branch.
+          cMeta.trackNumbers,
         )
         // P67 (parseStrudel.ts:864-871) — if the final expression STILL
         // resolves to bare Code the map did not help, and wrapping an opaque
@@ -309,7 +334,9 @@ export function runMiniExpandedStage(input: PatternIR): PatternIR {
     // #1392 — a `$:`/`name:` track parses its expression WITH the document's
     // bindings. `undefined` for a document that declares none, which is what
     // this call passed unconditionally before.
-    return withTrackMeta(parseRootWithChainMeta(input.code, base, cMeta.trackBindings))
+    return withTrackMeta(
+      parseRootWithChainMeta(input.code, base, cMeta.trackBindings, cMeta.trackNumbers),
+    )
   }
   if (input.tag === 'Stack' && input.userMethod === undefined) {
     // Multi-track from RAW — apply parseRootWithChainMeta to each Code.
@@ -323,10 +350,18 @@ export function runMiniExpandedStage(input: PatternIR): PatternIR {
         dollarEnd?: number
         trackLabel?: string
         trackBindings?: ReadonlyMap<string, PatternIR>
+        // #1514 — every track in a multi-`$:` document resolves its arrange
+        // weights against the same document-level numeric map RAW built.
+        trackNumbers?: ReadonlyMap<string, number>
       }
       // #1392 — every track in a multi-`$:` document resolves against the same
       // document-level map RAW built.
-      const parsed = parseRootWithChainMeta(t.code, t.loc?.[0]?.start ?? 0, tMeta.trackBindings)
+      const parsed = parseRootWithChainMeta(
+        t.code,
+        t.loc?.[0]?.start ?? 0,
+        tMeta.trackBindings,
+        tMeta.trackNumbers,
+      )
       if (tMeta.dollarStart !== undefined && tMeta.dollarEnd !== undefined) {
         return {
           ...(parsed as object),
@@ -368,13 +403,20 @@ function parseRootWithChainMeta(
   // chains too (parseStrudel.ts:1388). `undefined` everywhere else keeps every
   // existing call byte-identical.
   bindings?: ReadonlyMap<string, PatternIR>,
+  // #1514 — the document's numeric bindings, threaded exactly as `bindings` is
+  // (optional trailing STACK param, PV50) so `arrange([M*2, …])` reads its
+  // weight instead of declining the whole arrangement. `parseExpression`
+  // threads the same map to the same `parseRoot` param (parseStrudel.ts:1628);
+  // this is the copy of that call that never received it. `applyChain` takes
+  // no numeric map on EITHER side, so the chain half stays at parity.
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR {
   if (!expr.trim()) return IR.pure()
   const leadingWs = expr.length - expr.trimStart().length
   const trimmedOffset = baseOffset + leadingWs
   const trimmed = expr.trim()
   const { root, chain } = splitRootAndChain(trimmed)
-  const rootIR = parseRoot(root, trimmedOffset, undefined, bindings)
+  const rootIR = parseRoot(root, trimmedOffset, undefined, bindings, undefined, numbers)
 
   // Mirror parseExpression's Code-fallback branch (parseStrudel.ts:1371-1379):
   // when parseRoot couldn't parse the root, the entire expression is opaque
@@ -594,6 +636,7 @@ function stripStageMeta(node: PatternIR): PatternIR {
     !('unresolvedChain' in n) &&
     !('unresolvedBindings' in n) &&
     !('trackBindings' in n) &&
+    !('trackNumbers' in n) &&
     !('chainOffset' in n) &&
     !('dollarStart' in n) &&
     !('dollarEnd' in n) &&
@@ -607,6 +650,9 @@ function stripStageMeta(node: PatternIR): PatternIR {
     // #1392 — RAW's document-level binding map. Consumed in MINI-EXPANDED;
     // stripped here so it can never reach a FINAL node body.
     trackBindings: _tb,
+    // #1514 — RAW's document-level NUMERIC map. Same lifecycle as _tb:
+    // consumed in MINI-EXPANDED, stripped here so it never reaches FINAL.
+    trackNumbers: _tn,
     chainOffset: _o,
     dollarStart: _ds,
     dollarEnd: _de,
@@ -618,6 +664,7 @@ function stripStageMeta(node: PatternIR): PatternIR {
   void _u
   void _ub
   void _tb
+  void _tn
   void _o
   void _ds
   void _de
