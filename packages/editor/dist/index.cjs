@@ -480,15 +480,20 @@ function aggregateLaneItems(items, window2) {
       const s = it.loc[0]?.start;
       if (typeof s === "number" && Number.isFinite(s)) lane.sourceOffset = s;
     }
-    if (lane.arrangeOffset === void 0 && it.loc && it.loc.length > 0) {
-      let outer;
-      for (const l of it.loc) {
-        const s = l?.start;
-        if (typeof s !== "number" || !Number.isFinite(s)) continue;
-        if (it.dollarPos !== void 0 && s === it.dollarPos) continue;
-        if (outer === void 0 || s < outer) outer = s;
+    if (lane.arrangeOffset === void 0) {
+      const armStart = it.armRange?.[0];
+      if (typeof armStart === "number" && Number.isFinite(armStart)) {
+        lane.arrangeOffset = armStart;
+      } else if (it.loc && it.loc.length > 0) {
+        let outer;
+        for (const l of it.loc) {
+          const s = l?.start;
+          if (typeof s !== "number" || !Number.isFinite(s)) continue;
+          if (it.dollarPos !== void 0 && s === it.dollarPos) continue;
+          if (outer === void 0 || s < outer) outer = s;
+        }
+        if (outer !== void 0) lane.arrangeOffset = outer;
       }
-      if (outer !== void 0) lane.arrangeOffset = outer;
     }
     if (lane.leafIndex === void 0 && it.leafIndex !== void 0) lane.leafIndex = it.leafIndex;
     if (typeof it.armIndex === "number") {

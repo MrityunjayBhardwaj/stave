@@ -196,3 +196,48 @@ test('the other spelling inserts the same empty section, in its own vocabulary',
 
   expect(errors, `unexpected console/page errors:\n${errors.join('\n')}`).toEqual([])
 })
+
+test('a NAMED section is gestureable at all — the anchor reaches its arrangement', async ({ page }) => {
+  // #1517. Not a duplicate feature test: duplicate is simply the cheapest gesture
+  // to prove the ANCHOR with, and every other clip gesture resolves its call from
+  // the same number.
+  //
+  // ⚠ WHY THIS WENT UNSEEN FOR THE WHOLE LIFE OF CLIP GESTURES. Every existing
+  // end-to-end arm writes its arms INLINE — `arrange([2, s("bd")], …)` — where the
+  // enclosing call really does begin earliest, so the old minimum was right. The
+  // moment an arm NAMES a binding declared above the call, the binding's own
+  // location is earlier, the anchor lands inside a `const`, and the gesture
+  // declines silently and correctly on an anchor that resolves to nothing.
+  // Roughly half of all real sections are written this way.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(
+    page,
+    ['const introduction = s("bd")', 'const development = s("hh")', 'arrange([2, introduction], [2, development])'].join('\n'),
+  )
+  await page.locator('[data-full-song="root"]').waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(400)
+  errors.length = 0 // typing noise from a live editor
+
+  const grid = page.locator('[data-full-song="grid"]')
+  const box = await grid.boundingBox()
+  if (!box) throw new Error('no grid box')
+  await page.mouse.click(box.x + box.width * 0.25, box.y + 8)
+  await expect(page.locator('[data-full-song="clip-selection"]')).toBeVisible({ timeout: 5_000 })
+  await grid.press(`${MOD}+d`)
+
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    [
+      'const introduction = s("bd")',
+      'const development = s("hh")',
+      'arrange([2, introduction], [2, introduction], [2, development])',
+    ].join('\n'),
+  )
+  // eslint-disable-next-line no-console
+  console.log(`[#1517] named section duplicated: ${JSON.stringify(await strudelSource(page))}`)
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})

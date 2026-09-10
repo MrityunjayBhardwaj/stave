@@ -154,16 +154,45 @@ export function aggregateLaneItems(items: readonly LaneItem[], window: WalkWindo
       const s = it.loc[0]?.start
       if (typeof s === 'number' && Number.isFinite(s)) lane.sourceOffset = s
     }
-    if (lane.arrangeOffset === undefined && it.loc && it.loc.length > 0) {
-      let outer: number | undefined
-      for (const l of it.loc) {
-        const s = l?.start
-        if (typeof s !== 'number' || !Number.isFinite(s)) continue
-        // Skip the `$:` Track-wrapper loc (#456): it starts before every combinator.
-        if (it.dollarPos !== undefined && s === it.dollarPos) continue
-        if (outer === undefined || s < outer) outer = s
+    if (lane.arrangeOffset === undefined) {
+      // ⚠ THE ARM'S OWN RANGE FIRST, BECAUSE THE MINIMUM IS AN ASSUMPTION (#1517).
+      //
+      // This anchor exists so a clip gesture can resolve the enclosing
+      // `arrange`/`cat` call. Taking the SMALLEST loc start reads "the outer call
+      // begins earliest", which holds for nesting and for suffix wrappers — and
+      // is FALSE the moment an arm's pattern is a binding declared above the
+      // call:
+      //
+      //     const introduction = s("bd")          <- loc 6
+      //     arrange([2, introduction], …)         <- the call starts at 56
+      //
+      // The leaf's locations include the binding's own site, 6 is smaller than
+      // 56, and the anchor lands inside a `const` where no combinator is found.
+      // Every clip gesture then declines — silently and correctly, because it
+      // was handed an anchor that resolves to nothing. Roughly half of all real
+      // sections are named this way, and the whole gesture surface was being
+      // exercised only against inline arms, where the assumption cannot fail.
+      //
+      // `armRange` is the `[n, pat]` tuple this leaf plays under (#1391), and an
+      // arm is BY CONSTRUCTION inside its call — so it resolves the combinator
+      // without assuming anything about which location is outermost.
+      const armStart = it.armRange?.[0]
+      if (typeof armStart === 'number' && Number.isFinite(armStart)) {
+        lane.arrangeOffset = armStart
+      } else if (it.loc && it.loc.length > 0) {
+        // No arrangement above this leaf — the minimum is the right reading here,
+        // and it is what a NESTED combinator relies on to resolve to the OUTER
+        // call so a nested block reads as one clip (#451).
+        let outer: number | undefined
+        for (const l of it.loc) {
+          const s = l?.start
+          if (typeof s !== 'number' || !Number.isFinite(s)) continue
+          // Skip the `$:` Track-wrapper loc (#456): it starts before every combinator.
+          if (it.dollarPos !== undefined && s === it.dollarPos) continue
+          if (outer === undefined || s < outer) outer = s
+        }
+        if (outer !== undefined) lane.arrangeOffset = outer
       }
-      if (outer !== undefined) lane.arrangeOffset = outer
     }
     if (lane.leafIndex === undefined && it.leafIndex !== undefined) lane.leafIndex = it.leafIndex
     // Arrange clips: per-cycle arm index + per-arm label. Only lanes carrying an armIndex.
