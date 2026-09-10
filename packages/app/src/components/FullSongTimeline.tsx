@@ -343,6 +343,31 @@ export interface FullSongTimelineProps {
     sourceOffset: number | null
     armIndex: number
   }) => void
+  /** Rename a SECTION (#1417 Stage 3). Fired on F2 or Enter with a clip
+   *  selected, committed from an input drawn over the clip's own rect.
+   *
+   *  ⚠ THE TWO SPELLINGS RENAME DIFFERENT THINGS, and the parent routes to the
+   *  right primitive. In `arrange(...)` the section name IS a top-level binding,
+   *  so the rename moves its declaration and every reference. In the pick family
+   *  it is an object KEY and no binding is touched. Same gesture, opposite edit.
+   *
+   *  Real arms only — a bare clip has no section to name. Optional. */
+  readonly onRenameSection?: (req: {
+    sourceOffset: number | null
+    armIndex: number
+    newName: string
+  }) => void
+  /** How many sections a rename of this clip would move (#1417).
+   *
+   *  ⚠ ASKED BEFORE THE WRITE, WHICH IS THE POINT. A returning chorus is ONE
+   *  pattern arranged twice, so renaming it moves every arm that names it — the
+   *  honest edit, and one the user has to be told about while they can still
+   *  change their mind. Returns 0 when the rename would decline, so the hint and
+   *  the write can never disagree. Optional; without it no count is shown. */
+  readonly sectionArmCount?: (req: {
+    sourceOffset: number | null
+    armIndex: number
+  }) => number
 }
 
 /** A bare loop's single implicit clip spans the SONG, not just its one-cycle
@@ -1157,6 +1182,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // remove. Selection is keyed by lane + arm; the highlight rect is re-derived
   // in render from the live scene/layout so it tracks zoom, scroll, and re-eval.
   const { onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip } = props
+  const { onRenameSection, sectionArmCount } = props
   const [selected, setSelected] = useState<{
     laneKey: string
     armIndex: number
@@ -1166,6 +1192,41 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     // Undefined for real arms (their armIndex already addresses the clip).
     barCycle?: number
   } | null>(null)
+
+  // #1417 Stage 3 — the section-rename editor. `name` is what the input opens
+  // with, `count` how many sections the rename would move, both captured when it
+  // OPENS: the document can change under a half-typed name, and a hint that
+  // silently re-computed would tell the user something different from what the
+  // commit is about to do.
+  const [editingSection, setEditingSection] = useState<{
+    laneKey: string
+    armIndex: number
+    sourceOffset: number | null
+    name: string
+    count: number
+  } | null>(null)
+  // ⚠ ONCE PER OPENED FIELD, by a ref rather than by reasoning about React's
+  // blur semantics — the same guard the caption editor needed. Enter commits and
+  // unmounts the input; a blur delivered on the way out would build the SAME
+  // rename again, from offsets the first write already moved.
+  const sectionCommittedRef = useRef(false)
+  const commitSectionName = React.useCallback(
+    (value: string): void => {
+      if (sectionCommittedRef.current) return
+      sectionCommittedRef.current = true
+      const hit = editingSection
+      setEditingSection(null)
+      // The selection is keyed by `sourceOffset` + `armIndex`, and a rename moves
+      // offsets — so it is cleared for the same reason duplicate and split clear
+      // it, whether or not the write lands.
+      setSelected(null)
+      if (!hit || !onRenameSection) return
+      const next = value.trim()
+      if (next.length === 0 || next === hit.name) return
+      onRenameSection({ sourceOffset: hit.sourceOffset, armIndex: hit.armIndex, newName: next })
+    },
+    [editingSection, onRenameSection],
+  )
 
   // #649 — the clip-selection (`selected`) and the caret lane-selection
   // (`selectedLaneKey`) are independent highlights. A selected clip persists when
@@ -1773,6 +1834,33 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       // Returning when the handler is absent is deliberate rather than lazy:
       // falling through would leave the chord quietly bound to the other
       // gesture, which is exactly the undocumented binding #1421 was about.
+      // F2 (and Enter) opens the section-rename editor over the selected clip
+      // (#1417 Stage 3). F2 is the platform's rename key and Enter is what people
+      // reach for on a selected thing; both are offered because neither alone is
+      // discoverable on a canvas that has no double-clickable node.
+      //
+      // ⚠ THIS IS WHAT MAKES THE SHIPPED PRIMITIVES REACHABLE AT ALL. The pick
+      // rename landed on trunk with zero callers, so a musician could not rename
+      // anything; a second primitive without a gesture would just have doubled
+      // the unreachable code.
+      if ((e.key === 'F2' || e.key === 'Enter') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (!onRenameSection || bareClip) return
+        const lane = sceneRef.current.lanes.find((l) => l.laneKey === selected.laneKey)
+        const clip = lane?.clips.find((c) => c.armIndex === selected.armIndex)
+        if (!clip) return
+        e.preventDefault()
+        sectionCommittedRef.current = false
+        setEditingSection({
+          laneKey: selected.laneKey,
+          armIndex: selected.armIndex,
+          sourceOffset: selected.sourceOffset,
+          name: clip.sectionName,
+          count:
+            sectionArmCount?.({ sourceOffset: selected.sourceOffset, armIndex: selected.armIndex }) ??
+            0,
+        })
+        return
+      }
       // Cmd/Ctrl+I inserts an empty section after the selection (#1461) — the
       // chord Ableton gives Insert Silence. Nothing else on this grid claims it:
       // the worry recorded on the duplicate branch, that an add gesture would
@@ -1845,7 +1933,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setSelected(null)
       }
     },
-    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip],
+    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip, onRenameSection, sectionArmCount],
   )
 
   // The selection highlight rect, derived from the LIVE scene + layout so it
@@ -2369,6 +2457,66 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                   onBlur={(e) => commitCaption(e.currentTarget.value)}
                 />
               )}
+              {editingSection && selectionRect && (
+                <>
+                  <input
+                    data-full-song="section-name"
+                    autoFocus
+                    defaultValue={editingSection.name}
+                    aria-label="Section name"
+                    style={{
+                      ...styles.sectionInput,
+                      left: selectionRect.left - scrollLeft + 2,
+                      top: selectionRect.top + 2,
+                      width: Math.max(selectionRect.width - 4, 56),
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      // ⚠ THE GUARD, not a belt over a brace. This input is a DOM
+                      // DESCENDANT of the element carrying `handleGridKeyDown`,
+                      // and React's onKeyDown BUBBLES — focus decides where a
+                      // keystroke originates, never whether it travels. Without
+                      // this, Backspace typed into a name would reach the
+                      // clip-delete branch and destroy the clip being renamed,
+                      // and Enter would re-open the editor on top of itself.
+                      e.stopPropagation()
+                      if (e.key === 'Escape') {
+                        // Disarm as well as close: abandoning is a decision, and
+                        // a blur arriving behind it must not commit what was
+                        // typed.
+                        sectionCommittedRef.current = true
+                        setEditingSection(null)
+                        setSelected(null)
+                        return
+                      }
+                      if (e.key !== 'Enter') return
+                      commitSectionName(e.currentTarget.value)
+                    }}
+                    // Committing on blur as well as on Enter: clicking away from
+                    // a half-typed name is the ordinary way people leave a field,
+                    // and the primitive returns no edits for anything it cannot
+                    // do honestly, so a stray blur writes nothing on its own.
+                    onBlur={(e) => commitSectionName(e.currentTarget.value)}
+                  />
+                  {editingSection.count > 1 && (
+                    // ⚠ SHOWN BEFORE THE WRITE, WHICH IS THE WHOLE SAFETY OF THIS
+                    // GESTURE. A returning chorus is one pattern arranged twice,
+                    // so renaming it moves every arm that names it. That is the
+                    // honest edit; discovering it afterwards is what would not be.
+                    <div
+                      data-full-song="section-name-count"
+                      style={{
+                        ...styles.sectionCount,
+                        left: selectionRect.left - scrollLeft + 2,
+                        top: selectionRect.top + 18,
+                      }}
+                    >
+                      {`renames ${editingSection.count} sections`}
+                    </div>
+                  )}
+                </>
+              )}
               {trimEdgeX != null && (
                 <div data-full-song="trim-edge" style={{ ...styles.trimEdge, left: trimEdgeX - scrollLeft }} />
               )}
@@ -2703,6 +2851,32 @@ const styles = {
   // canvas + live overlay (sticky left:0, marginTop:-height set inline). Children
   // are positioned in viewport space (`contentX - scrollLeft`) so they ride the
   // canvas's React-state scroll clock, never the natively-scrolled content.
+  sectionInput: {
+    position: 'absolute' as const,
+    pointerEvents: 'auto' as const,
+    zIndex: 6,
+    font: '10px ui-monospace, SFMono-Regular, Menlo, monospace',
+    padding: '0 2px',
+    margin: 0,
+    height: 14,
+    lineHeight: '14px',
+    border: '1px solid var(--accent, #4a9eff)',
+    borderRadius: 2,
+    color: 'var(--text-primary, #fff)',
+    background: 'var(--bg-primary, rgba(0,0,0,0.92))',
+    outline: 'none',
+  },
+  sectionCount: {
+    position: 'absolute' as const,
+    pointerEvents: 'none' as const,
+    zIndex: 6,
+    font: '9px ui-monospace, SFMono-Regular, Menlo, monospace',
+    padding: '1px 3px',
+    borderRadius: 2,
+    color: 'var(--text-secondary, #bbb)',
+    background: 'var(--bg-primary, rgba(0,0,0,0.92))',
+    whiteSpace: 'nowrap' as const,
+  },
   captionInput: {
     position: 'absolute' as const,
     pointerEvents: 'auto' as const,

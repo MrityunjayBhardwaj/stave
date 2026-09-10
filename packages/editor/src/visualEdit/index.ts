@@ -31,6 +31,8 @@ export {
   reorderArm,
   insertArm,
   insertSilenceArm,
+  renameSection as renameArrangeSection,
+  countSectionArms as countArrangeSectionArms,
   removeArm,
   silenceArm,
   wrapBare,

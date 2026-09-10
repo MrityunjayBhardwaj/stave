@@ -1447,7 +1447,7 @@ function songExtent(ir) {
   let best = 0;
   let found = false;
   let tainted = false;
-  const walk4 = /* @__PURE__ */ __name((node, factor, opaque) => {
+  const walk5 = /* @__PURE__ */ __name((node, factor, opaque) => {
     if (!node || typeof node !== "object") return;
     switch (node.tag) {
       case "Arrange": {
@@ -1477,34 +1477,34 @@ function songExtent(ir) {
         return;
       }
       case "Stack":
-        for (const t of node.tracks) walk4(t, factor, opaque);
+        for (const t of node.tracks) walk5(t, factor, opaque);
         return;
       case "Track":
       case "Loop":
-        walk4(node.body, factor, opaque);
+        walk5(node.body, factor, opaque);
         return;
       case "Slow":
-        walk4(node.body, scaled(factor, node.factor), opaque);
+        walk5(node.body, scaled(factor, node.factor), opaque);
         return;
       case "Fast":
-        walk4(node.body, node.factor > 0 && Number.isFinite(node.factor) ? factor / node.factor : factor, opaque);
+        walk5(node.body, node.factor > 0 && Number.isFinite(node.factor) ? factor / node.factor : factor, opaque);
         return;
       case "Range":
-        walk4(node.body, factor, opaque);
+        walk5(node.body, factor, opaque);
         return;
       case "Code": {
         const via = node.via;
-        if (via && "inner" in via) walk4(via.inner, factor, true);
+        if (via && "inner" in via) walk5(via.inner, factor, true);
         return;
       }
       default: {
         const body = node.body;
-        if (body && typeof body === "object") walk4(body, factor, true);
+        if (body && typeof body === "object") walk5(body, factor, true);
         return;
       }
     }
   }, "walk");
-  walk4(ir, 1, false);
+  walk5(ir, 1, false);
   if (!found) return { kind: "loop" };
   if (tainted || best <= 0) return { kind: "opaque" };
   return { kind: "arranged", cycles: best };
@@ -5666,14 +5666,14 @@ function resolveMiniSource(doc, unit, opts = {}) {
   const reachable = index.reachableRanges(unit.exprRange);
   const evalFirst = opts.proposals?.length ? attempt(doc, index, reachable, unit, opts.proposals) : null;
   if (evalFirst?.ok) return evalFirst;
-  const walk4 = attempt(
+  const walk5 = attempt(
     doc,
     index,
     reachable,
     unit,
     index.literals.map((lit) => ({ span: literalInterior(lit), via: "parse" }))
   );
-  return walk4.ok ? walk4 : evalFirst ?? walk4;
+  return walk5.ok ? walk5 : evalFirst ?? walk5;
 }
 __name(resolveMiniSource, "resolveMiniSource");
 function attempt(doc, index, reachable, unit, proposals) {
@@ -24765,14 +24765,14 @@ function headOf(h, branch = h.currentBranch) {
 }
 __name(headOf, "headOf");
 function getFileContentAt(h, fileId, commitId) {
-  let walk4 = commitId;
-  while (walk4 !== null) {
-    const c = h.commits[walk4];
+  let walk5 = commitId;
+  while (walk5 !== null) {
+    const c = h.commits[walk5];
     if (!c) break;
     if (Object.prototype.hasOwnProperty.call(c.files, fileId)) {
       return c.files[fileId];
     }
-    walk4 = c.parent;
+    walk5 = c.parent;
   }
   return null;
 }
@@ -24780,15 +24780,15 @@ __name(getFileContentAt, "getFileContentAt");
 function snapshotAt(h, commitId) {
   const files = {};
   let order;
-  let walk4 = commitId;
-  while (walk4 !== null) {
-    const c = h.commits[walk4];
+  let walk5 = commitId;
+  while (walk5 !== null) {
+    const c = h.commits[walk5];
     if (!c) break;
     for (const f of Object.keys(c.files)) {
       if (!Object.prototype.hasOwnProperty.call(files, f)) files[f] = c.files[f];
     }
     if (order === void 0 && c.order !== void 0) order = c.order;
-    walk4 = c.parent;
+    walk5 = c.parent;
   }
   return { files, order };
 }
@@ -24797,12 +24797,12 @@ function listCommits(h, branch = h.currentBranch) {
   const head = h.branches[branch]?.head;
   if (!head) return [];
   const out = [];
-  let walk4 = head;
-  while (walk4 !== null) {
-    const c = h.commits[walk4];
+  let walk5 = head;
+  while (walk5 !== null) {
+    const c = h.commits[walk5];
     if (!c) break;
     if (!c.pinned) out.push(c);
-    walk4 = c.parent;
+    walk5 = c.parent;
   }
   return out;
 }
@@ -24822,24 +24822,24 @@ function fileHistory(h, fileId) {
 }
 __name(fileHistory, "fileHistory");
 function nearestWriter(h, fromCommit, fileId) {
-  let walk4 = fromCommit;
-  while (walk4 !== null) {
-    const c = h.commits[walk4];
+  let walk5 = fromCommit;
+  while (walk5 !== null) {
+    const c = h.commits[walk5];
     if (!c) break;
-    if (Object.prototype.hasOwnProperty.call(c.files, fileId)) return walk4;
-    walk4 = c.parent;
+    if (Object.prototype.hasOwnProperty.call(c.files, fileId)) return walk5;
+    walk5 = c.parent;
   }
   return null;
 }
 __name(nearestWriter, "nearestWriter");
 function filesAliveAt(h, commitId) {
   const alive = /* @__PURE__ */ new Set();
-  let walk4 = commitId;
-  while (walk4 !== null) {
-    const c = h.commits[walk4];
+  let walk5 = commitId;
+  while (walk5 !== null) {
+    const c = h.commits[walk5];
     if (!c) break;
     for (const f of Object.keys(c.files)) alive.add(f);
-    walk4 = c.parent;
+    walk5 = c.parent;
   }
   return alive;
 }
@@ -24966,9 +24966,9 @@ function prune(h, now2, opts = {}) {
   }
   const keep = /* @__PURE__ */ new Set([...display, ...needed]);
   const nearestKeptAncestor = /* @__PURE__ */ __name((start) => {
-    let walk4 = start;
-    while (walk4 !== null && !keep.has(walk4)) walk4 = h.commits[walk4]?.parent ?? null;
-    return walk4;
+    let walk5 = start;
+    while (walk5 !== null && !keep.has(walk5)) walk5 = h.commits[walk5]?.parent ?? null;
+    return walk5;
   }, "nearestKeptAncestor");
   let mutated = keep.size !== all.length;
   const commits = {};
@@ -29477,10 +29477,10 @@ function restSpansByColumn(src, perBar2, bars) {
     return null;
   }
   const spans = [];
-  const walk4 = /* @__PURE__ */ __name((node) => {
+  const walk5 = /* @__PURE__ */ __name((node) => {
     if (!node || typeof node !== "object") return;
     if (node.type_ === "pattern") {
-      for (const el of node.source_ ?? []) walk4(el);
+      for (const el of node.source_ ?? []) walk5(el);
       return;
     }
     if (node.type_ === "element") {
@@ -29495,11 +29495,11 @@ function restSpansByColumn(src, perBar2, bars) {
           if (src.slice(s, s + atom.source_.length) === atom.source_)
             spans.push({ start: s, end: s + atom.source_.length });
         }
-      } else walk4(inner);
+      } else walk5(inner);
       return;
     }
   }, "walk");
-  walk4(ast);
+  walk5(ast);
   if (spans.length === 0) return null;
   const SENTINEL = /* @__PURE__ */ __name((i) => `qzrest${i}`, "SENTINEL");
   let probeSrc = src;
@@ -31629,13 +31629,13 @@ function useLiftResolution(steps, slotState2, onScaleTo, onResolution, effect) {
   }, [onResolution]);
 }
 __name(useLiftResolution, "useLiftResolution");
-function useViewProver(mini, parse4) {
+function useViewProver(mini, parse5) {
   const cacheRef = React36.useRef({
     mini: null,
     answers: /* @__PURE__ */ new Map()
   });
-  const parseRef = React36.useRef(parse4);
-  parseRef.current = parse4;
+  const parseRef = React36.useRef(parse5);
+  parseRef.current = parse5;
   const key2 = mini ?? null;
   return React36.useCallback(
     (scale) => {
@@ -46095,7 +46095,22 @@ function splitArm(doc, call, i, firstWeight) {
   return [{ range: arm.armRange, text: `[${n1}, ${pat}], [${n2}, ${pat}]` }];
 }
 __name(splitArm, "splitArm");
-var PICK_METHODS2 = /* @__PURE__ */ new Set(["pick", "pickRestart", "pickReset"]);
+var IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+var NOT_A_NAME = "__proto__";
+function walk3(node, parent, key2, visit) {
+  if (!node || typeof node !== "object") return;
+  if (typeof node.type === "string" && typeof node.start === "number") visit(node, parent, key2);
+  for (const k of Object.keys(node)) {
+    if (k === "type" || k === "start" || k === "end") continue;
+    const child = node[k];
+    if (Array.isArray(child)) {
+      for (const c of child) walk3(c, node, k, visit);
+    } else if (child && typeof child === "object") {
+      walk3(child, node, k, visit);
+    }
+  }
+}
+__name(walk3, "walk");
 function parseProgram2(doc) {
   try {
     return parse(doc, { ecmaVersion: "latest", allowAwaitOutsideFunction: true });
@@ -46104,21 +46119,113 @@ function parseProgram2(doc) {
   }
 }
 __name(parseProgram2, "parseProgram");
+function isNonReference(node, parent, key2) {
+  if (!parent) return false;
+  if (parent.type === "Property" && key2 === "key" && !parent.computed) return true;
+  if (parent.type === "MemberExpression" && key2 === "property" && !parent.computed) return true;
+  if (parent.type === "LabeledStatement" && key2 === "label") return true;
+  if (parent.type === "BreakStatement" || parent.type === "ContinueStatement") return true;
+  if ((parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") && key2 === "key" && !parent.computed) {
+    return true;
+  }
+  return false;
+}
+__name(isNonReference, "isNonReference");
+function isBindingIntroduction(parent, key2) {
+  if (!parent) return false;
+  if (parent.type === "VariableDeclarator" && key2 === "id") return true;
+  if ((parent.type === "FunctionDeclaration" || parent.type === "FunctionExpression" || parent.type === "ClassDeclaration") && key2 === "id") {
+    return true;
+  }
+  if (key2 === "params") return true;
+  if (parent.type === "ArrowFunctionExpression" && key2 === "params") return true;
+  return false;
+}
+__name(isBindingIntroduction, "isBindingIntroduction");
+function armIdentifier(doc, call, i) {
+  const arm = call.arms[i];
+  if (!arm) return null;
+  const text = doc.slice(arm.patternRange[0], arm.patternRange[1]).trim();
+  return IDENTIFIER.test(text) ? text : null;
+}
+__name(armIdentifier, "armIdentifier");
+function countSectionArms(doc, call, i) {
+  const name = armIdentifier(doc, call, i);
+  if (name == null) return 0;
+  if (analyze(doc, name, null) == null) return 0;
+  return call.arms.filter((_, k) => armIdentifier(doc, call, k) === name).length;
+}
+__name(countSectionArms, "countSectionArms");
+function renameSection(doc, call, i, newName) {
+  if (!IDENTIFIER.test(newName) || newName === NOT_A_NAME) return [];
+  const oldName = armIdentifier(doc, call, i);
+  if (oldName == null || oldName === newName) return [];
+  const references = analyze(doc, oldName, newName);
+  if (references == null) return [];
+  return references.map((r) => ({
+    range: r.range,
+    // `{verse}` keeps its key and moves only its value → `{verse: intro}`.
+    text: r.shorthand ? `${oldName}: ${newName}` : newName
+  }));
+}
+__name(renameSection, "renameSection");
+function analyze(doc, oldName, newName) {
+  const program = parseProgram2(doc);
+  if (!program) return null;
+  const references = [];
+  let declarations = 0;
+  let introductions = 0;
+  let newNameSeen = false;
+  walk3(program, null, null, (node, parent, key2) => {
+    if (node.type !== "Identifier") return;
+    if (newName != null && node.name === newName) {
+      newNameSeen = true;
+      return;
+    }
+    if (node.name !== oldName) return;
+    if (isNonReference(node, parent, key2)) return;
+    const shorthand = parent?.type === "Property" && parent.shorthand === true;
+    if (isBindingIntroduction(parent, key2)) {
+      introductions++;
+      const isTopLevelVar = parent.type === "VariableDeclarator" && program.body.some(
+        (st) => st.type === "VariableDeclaration" && st.declarations.some((d) => d === parent)
+      );
+      const isTopLevelFn = (parent.type === "FunctionDeclaration" || parent.type === "ClassDeclaration") && program.body.includes(parent);
+      if (isTopLevelVar || isTopLevelFn) declarations++;
+    }
+    references.push({ range: [node.start, node.end], shorthand });
+  });
+  if (newNameSeen) return null;
+  if (declarations !== 1) return null;
+  if (introductions !== declarations) return null;
+  if (references.length === 0) return null;
+  return references;
+}
+__name(analyze, "analyze");
+var PICK_METHODS2 = /* @__PURE__ */ new Set(["pick", "pickRestart", "pickReset"]);
+function parseProgram3(doc) {
+  try {
+    return parse(doc, { ecmaVersion: "latest", allowAwaitOutsideFunction: true });
+  } catch {
+    return null;
+  }
+}
+__name(parseProgram3, "parseProgram");
 function isPickCall(node) {
   return node && node.type === "CallExpression" && node.callee?.type === "MemberExpression" && node.callee.property?.type === "Identifier" && PICK_METHODS2.has(node.callee.property.name) && node.callee.object?.type === "Literal" && typeof node.callee.object.value === "string";
 }
 __name(isPickCall, "isPickCall");
-function walk3(node, visit) {
+function walk4(node, visit) {
   if (!node || typeof node !== "object") return;
   if (typeof node.type === "string" && typeof node.start === "number") visit(node);
   for (const key2 of Object.keys(node)) {
     if (key2 === "type" || key2 === "start" || key2 === "end") continue;
     const child = node[key2];
-    if (Array.isArray(child)) for (const c of child) walk3(c, visit);
-    else if (child && typeof child === "object") walk3(child, visit);
+    if (Array.isArray(child)) for (const c of child) walk4(c, visit);
+    else if (child && typeof child === "object") walk4(child, visit);
   }
 }
-__name(walk3, "walk");
+__name(walk4, "walk");
 function scanControlArms(raw, litStart) {
   const open = raw.indexOf("<");
   if (open < 0) return null;
@@ -46224,10 +46331,10 @@ function buildControl(doc, node) {
 }
 __name(buildControl, "buildControl");
 function detectPickControlAt(doc, pos) {
-  const program = parseProgram2(doc);
+  const program = parseProgram3(doc);
   if (!program) return null;
   let best = null;
-  walk3(program, (n) => {
+  walk4(program, (n) => {
     if (!isPickCall(n)) return;
     if (pos < n.start || pos > n.end) return;
     if (!best || n.start > best.start) best = n;
@@ -46236,10 +46343,10 @@ function detectPickControlAt(doc, pos) {
 }
 __name(detectPickControlAt, "detectPickControlAt");
 function detectAllPickControls(doc) {
-  const program = parseProgram2(doc);
+  const program = parseProgram3(doc);
   if (!program) return [];
   const nodes = [];
-  walk3(program, (n) => {
+  walk4(program, (n) => {
     if (isPickCall(n)) nodes.push(n);
   });
   nodes.sort((a, b) => a.start - b.start);
@@ -46352,7 +46459,7 @@ function everyOccurrenceIsAnArmHead(doc, control, name) {
   return true;
 }
 __name(everyOccurrenceIsAnArmHead, "everyOccurrenceIsAnArmHead");
-function countSectionArms(doc, control, i) {
+function countSectionArms2(doc, control, i) {
   const arm = control.arms[i];
   if (!arm) return 0;
   const name = headText(doc, control, i);
@@ -46360,8 +46467,8 @@ function countSectionArms(doc, control, i) {
   if (!everyOccurrenceIsAnArmHead(doc, control, name)) return 0;
   return control.arms.filter((_, k) => headText(doc, control, k) === name).length;
 }
-__name(countSectionArms, "countSectionArms");
-function renameSection(doc, control, i, newName) {
+__name(countSectionArms2, "countSectionArms");
+function renameSection2(doc, control, i, newName) {
   const arm = control.arms[i];
   if (!arm) return [];
   if (!SECTION_NAME.test(newName) || newName === NOT_A_KEY) return [];
@@ -46381,7 +46488,7 @@ function renameSection(doc, control, i, newName) {
   }
   return edits;
 }
-__name(renameSection, "renameSection");
+__name(renameSection2, "renameSection");
 function quoteLike(oldToken, name) {
   const q = oldToken[0];
   return q === '"' || q === "'" ? `${q}${name}${q}` : name;
@@ -46707,6 +46814,6 @@ function isPersistableTab(t) {
 }
 __name(isPersistableTab, "isPersistableTab");
 
-export { ALIAS_MAP, ASSET_DB_NAME, AUDITION_DUR_S, AUDITION_ENVELOPE, AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUILTIN_ALIASES, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DEFAULT_VIZ_ENGINE, DEFAULT_VIZ_QUALITY, DemoEngine, EPHEMERAL_ID_PREFIX, EditorView, ErrorBoundary, FALLBACK_ASSET_NAME, FSCOPE_P5_CODE, GLSL_VIZ, GM_FAMILY_KEY_COUNT, GM_FAMILY_ORDER, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HistoryPanel, HydraVizRenderer, IDB_SYNC_TIMEOUT_MS, INLINE_VIZ_ACTION_SIZE_VAR, IR, Knob, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, MASTER_CENTRE_PAN, MASTER_KEY, MASTER_UNITY_GAIN, MIXER_CONSOLE_TAB_ID, MIXER_TAB_ID, MainSignalSampler, Mixer, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PATTERN_TAB_ID, PIANOROLL_P5_CODE, PIANO_ROLL_TAB_ID, PITCHWHEEL_P5_CODE, PatternPanel, PianoRollGrid, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SCOPE_P5_CODE, SEQUENCER_TAB_ID, SHELL_STATE_KEY_PREFIX, SHELL_STATE_VERSION, SIGNALS_BACKDROP_P5_CODE, SIGNALS_SPECTRUM_P5_CODE, SILENCE_FLOOR, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, SOUND_ALIASES, SPECTRUM_P5_CODE, SPIRAL_P5_CODE, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, SequencerGrid, SignalBus, SilentCaptureError, SonicPiEngine, SplitPane, StrudelEditor, StrudelEngine, TAKE_NAME_PREFIX, UI_ICON_SIZE_VAR, VISUAL_EDIT_TABS, VIZ_FLAG_KEYS, VIZ_LANGUAGES, VisualEditStandby, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WORDFALL_P5_CODE, WavEncoder, WorkerBusFeed, WorkerVizRenderer, WorkspaceShell, Writeback, accumulateLanes, accumulateLanesInWindow, adaptMasterChunk, addAssetRecord, aggregateLaneItems, analyzeEvents, analyzeSong, analyzeWindow, applyEdits, applyEvalSourceTransform, applyOffsetEditsToFile, applyPersistedAdaptivePerf, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedPerfEnabled, applyPersistedTheme, applyPersistedUiIconSize, applyPersistedVizQuality, applyTheme, auditionSound, backdropQualityFactor, banksFromDrumMachineManifest, buildAliasSuffix, buildDefaultSnapshot, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, chunkSurface, classifyChunk, classifyLiteralRhs, clearCapture, clearIRSnapshot, clearLog, clearShellState, commitWorkspace, compilePreset, computeSections, computeSectionsInWindow, createBranchAt, createPostMessageReader, createPostMessageWriter, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, cycleFingerprints, deleteAsset, deleteProject, deleteSnapshot, deleteWorkspaceFile, deriveVizQuality, detectAllArrangeCalls, detectAllChunks, detectAllPickControls, detectArrangeAt, detectBarePattern, detectChunk, detectMasterAll, detectMasterAudioAll, detectPeriod, detectPickControlAt, detectWorkerVizCapabilities, docParses, dropLegacyBackgroundCrop, duplicateProject, emitFixed, emitLog, emptyFrame, enterRuntimeView, exitRuntimeView, extractReferenceIdentifier, fileHistory, filter, flushToPreset, formatFriendlyError, formatNumber, formatStaveInputs, frameTransferables, fuzzyMatch, generateUniquePresetId, getActiveEditor, getActiveFileId, getActiveHistoryFile, getActiveProjectId, getAdaptivePerfEnabled, getAsset, getBackdropOpacity, getBackdropQuality, getBackdropVizSpan, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getCommit, getCurrentBranch, getCurrentHistory, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFileContentAt, getFileHistoryTarget, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getInlineVizResolution, getInlineVizTeardownEnabled, getInlineVizTeardownMs, getLastOpenedProject, getLogHistory, getModifiedFileIdsSinceHead, getMusicalTimelineSubRowHeight, getNamedViz, getNoteColorMode, getPerfEnabled, getPlayVizOnHoverEnabled, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSignalAliases, getStoredSignalAliases, getSubfolderOrder, getTierFlags, getTrackColourBarsEnabled, getTrackMeta, getTrackMetaMapSnapshot, getViewedCommit, getViewedContent, getViewedFileIds, getVizConfig, getVizInputsLiveValuesEnabled, getVizMaxDprOverride, getVizMaxFpsOverride, getVizQuality, getVizWorkerFactory, getVizWorkerOverride, getZoneCropOverride, getZoneHeightOverride, gmFamily, groupDrumKits, groupSoundCatalog, hydraKaleidoscope, hydraPianoroll, hydraScope, hydrateSnapshot, importAsset, initHistory, initProjectDoc, initProjectDocSync, injectedGlobalByToken, injectedGlobals, insertArm, insertSilenceArm, installEngineLogMarkers, installGlobalErrorCatch, isBlackKey, isBootStepFailure, isBundledPresetId, isChunkFresh, isDocReady, isEphemeralProjectId, isFileModifiedSinceHead, isP5DirectCanvasEnabled, isRollChunk, isSampleSoundPlaying, isStepChunk, isValidTrackLabel, isViewing, isVizGovernorEnabled, isVizLanguage, isVizPumpSharedCacheEnabled, isVizWorkerPoolEnabled, knobRangeFor, laneKeyOf, languageForRenderer, levenshtein, listAssetRecords, listAssets, listBottomPanelTabs, listBranches, listCommits, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listTiers, listWorkspaceFiles, liveCodingRuntimeRegistry, loadShellState, makeFixedKey, masterGainEdit, masterMuteEdit, masterPanEdit, masterVizEdit, materializeBareDelete, materializeBareSplit, merge, midiToPitch, mountVizPreview, mountVizRenderer, nextTakeName, normalizeEdits, normalizeStrudelHap, noteToMidi, notifyDrumKitChanged, notifySoundCatalogChanged, onActiveEditorChange, onAdaptivePerfChange, onBackdropOpacityChange, onBackdropQualityChange, onBackdropVizSpanChange, onInlineVizActionSizeChange, onInlineVizResolutionChange, onInlineVizTeardownChange, onMusicalTimelineSubRowHeightChange, onNamedVizChanged, onPerfEnabledChange, onPlayVizOnHoverChange, onSignalAliasesChange, onThemeChange, onTrackColourBarsChange, onUiIconSizeChange, onVizInputsLiveValuesChange, onVizQualityChange, otherTrackNames, parseMessageLocation, parseMini, parsePianoRoll, parseStackLocation, parseStepGrid, parseStrudel, parseTopLevel, patternFromJSON, patternKind, patternToJSON, peaksForSample, peekAssetUrl, perf, countSectionArms as pickCountSectionArms, duplicateArm as pickDuplicateArm, insertArm2 as pickInsertArm, insertSilenceArm2 as pickInsertSilenceArm, removeArm2 as pickRemoveArm, renameSection as pickRenameSection, reorderArm2 as pickReorderArm, setWeight2 as pickSetWeight, silenceArm2 as pickSilenceArm, splitArm2 as pickSplitArm, pitchToMidi, placeNote, planAssetImport, previewProviderRegistry, pruneEphemeralArtifacts, pruneTrackMetaForCode, pruneZoneOverrides, publishIRSnapshot, purgeLegacyMasterGain, putAsset, readCurrentCycle, readMasterGain, readMasterMute, readMasterPan, readMasterViz, readPersistedActiveTabId, readPersistedOpen, redo, registerAsset, registerAssets, registerBottomPanelTab, registerEvalSourceTransform, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerReevalHandler, registerRuntimeProvider, releaseAllAssets, releaseAsset, removeArm, removeAssetRecord, renameAssetRecord, renameEdit, renameProject, renameWorkspaceFile, rendererForLanguage, reorderArm, requestReeval, resetFileStore, resetHistoryState, resetUndoManager, resizeGrid, resizeRoll, resolveAlias, resolveAliasesForEngine, resolveAsset, resolveDescriptor, restoreFileToCommit, restoreProject, restoreSnapshot, revealLineInFile, revealOffsetInFile, revertFileToSeed, routeSurface, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveShellState, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, serializePianoRoll, serializeShellState, serializeStepGrid, setActiveHistoryFile, setAdaptivePerfEnabled, setBackdropOpacity, setBackdropQuality, setBackdropVizSpan, setCaptureCapacity, setChildOrder, setContent, setCurrentCycleAccessor, setDrumKitAccessor, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFileHistoryTarget, setFolderOrder, setInlineVizActionSize, setInlineVizResolution, setInlineVizTeardownEnabled, setMusicalTimelineSubRowHeight, setNoteColorMode, setPerfEnabled, setPlayVizOnHoverEnabled, setSignalAliases, setSoundCatalogAccessor, setSubfolderOrder, setTierFlag, setTrackColourBarsEnabled, setTrackMeta, setVizConfig, setVizInputsLiveValuesEnabled, setVizQuality, setVizWorkerFactory, setWeight, setZoneCropOverride, setZoneHeightOverride, sha256Hex, shellStateKeyFor, signalAutomations, signalCarryingParamKeys, signalDimensionsOf, silenceArm, songExtent, soundNameFromFilename, soundfontGroupLabel, splitArm, startAudition, startHistoryDriver, startSampleSound, statementOffsetForSource, stopSampleSound, structuralWalk, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeNoteColorMode, subscribeToAssets, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToHistory, subscribeToRuntimeView, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, switchToBranch, timestretch, toStrudel, toggleAdaptivePerfEnabled, toggleEditorMinimap, togglePerfEnabled, touchProject, transpose, undo, uniqueSoundName, unregisterBottomPanelTab, unregisterNamedViz, updateVizConfig, useNoteColorMode, usePopoutPreview, useSilencedTrackNames, useTrackMetaMap, useWorkspaceFile, validatePersistedState, warmMonaco, warmSamplePeaks, wholeWalkWindow, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset, wrapBare };
+export { ALIAS_MAP, ASSET_DB_NAME, AUDITION_DUR_S, AUDITION_ENVELOPE, AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUILTIN_ALIASES, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DEFAULT_VIZ_ENGINE, DEFAULT_VIZ_QUALITY, DemoEngine, EPHEMERAL_ID_PREFIX, EditorView, ErrorBoundary, FALLBACK_ASSET_NAME, FSCOPE_P5_CODE, GLSL_VIZ, GM_FAMILY_KEY_COUNT, GM_FAMILY_ORDER, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HistoryPanel, HydraVizRenderer, IDB_SYNC_TIMEOUT_MS, INLINE_VIZ_ACTION_SIZE_VAR, IR, Knob, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, MASTER_CENTRE_PAN, MASTER_KEY, MASTER_UNITY_GAIN, MIXER_CONSOLE_TAB_ID, MIXER_TAB_ID, MainSignalSampler, Mixer, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PATTERN_TAB_ID, PIANOROLL_P5_CODE, PIANO_ROLL_TAB_ID, PITCHWHEEL_P5_CODE, PatternPanel, PianoRollGrid, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SCOPE_P5_CODE, SEQUENCER_TAB_ID, SHELL_STATE_KEY_PREFIX, SHELL_STATE_VERSION, SIGNALS_BACKDROP_P5_CODE, SIGNALS_SPECTRUM_P5_CODE, SILENCE_FLOOR, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, SOUND_ALIASES, SPECTRUM_P5_CODE, SPIRAL_P5_CODE, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, SequencerGrid, SignalBus, SilentCaptureError, SonicPiEngine, SplitPane, StrudelEditor, StrudelEngine, TAKE_NAME_PREFIX, UI_ICON_SIZE_VAR, VISUAL_EDIT_TABS, VIZ_FLAG_KEYS, VIZ_LANGUAGES, VisualEditStandby, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WORDFALL_P5_CODE, WavEncoder, WorkerBusFeed, WorkerVizRenderer, WorkspaceShell, Writeback, accumulateLanes, accumulateLanesInWindow, adaptMasterChunk, addAssetRecord, aggregateLaneItems, analyzeEvents, analyzeSong, analyzeWindow, applyEdits, applyEvalSourceTransform, applyOffsetEditsToFile, applyPersistedAdaptivePerf, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedPerfEnabled, applyPersistedTheme, applyPersistedUiIconSize, applyPersistedVizQuality, applyTheme, auditionSound, backdropQualityFactor, banksFromDrumMachineManifest, buildAliasSuffix, buildDefaultSnapshot, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, chunkSurface, classifyChunk, classifyLiteralRhs, clearCapture, clearIRSnapshot, clearLog, clearShellState, commitWorkspace, compilePreset, computeSections, computeSectionsInWindow, countSectionArms as countArrangeSectionArms, createBranchAt, createPostMessageReader, createPostMessageWriter, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, cycleFingerprints, deleteAsset, deleteProject, deleteSnapshot, deleteWorkspaceFile, deriveVizQuality, detectAllArrangeCalls, detectAllChunks, detectAllPickControls, detectArrangeAt, detectBarePattern, detectChunk, detectMasterAll, detectMasterAudioAll, detectPeriod, detectPickControlAt, detectWorkerVizCapabilities, docParses, dropLegacyBackgroundCrop, duplicateProject, emitFixed, emitLog, emptyFrame, enterRuntimeView, exitRuntimeView, extractReferenceIdentifier, fileHistory, filter, flushToPreset, formatFriendlyError, formatNumber, formatStaveInputs, frameTransferables, fuzzyMatch, generateUniquePresetId, getActiveEditor, getActiveFileId, getActiveHistoryFile, getActiveProjectId, getAdaptivePerfEnabled, getAsset, getBackdropOpacity, getBackdropQuality, getBackdropVizSpan, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getCommit, getCurrentBranch, getCurrentHistory, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFileContentAt, getFileHistoryTarget, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getInlineVizResolution, getInlineVizTeardownEnabled, getInlineVizTeardownMs, getLastOpenedProject, getLogHistory, getModifiedFileIdsSinceHead, getMusicalTimelineSubRowHeight, getNamedViz, getNoteColorMode, getPerfEnabled, getPlayVizOnHoverEnabled, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSignalAliases, getStoredSignalAliases, getSubfolderOrder, getTierFlags, getTrackColourBarsEnabled, getTrackMeta, getTrackMetaMapSnapshot, getViewedCommit, getViewedContent, getViewedFileIds, getVizConfig, getVizInputsLiveValuesEnabled, getVizMaxDprOverride, getVizMaxFpsOverride, getVizQuality, getVizWorkerFactory, getVizWorkerOverride, getZoneCropOverride, getZoneHeightOverride, gmFamily, groupDrumKits, groupSoundCatalog, hydraKaleidoscope, hydraPianoroll, hydraScope, hydrateSnapshot, importAsset, initHistory, initProjectDoc, initProjectDocSync, injectedGlobalByToken, injectedGlobals, insertArm, insertSilenceArm, installEngineLogMarkers, installGlobalErrorCatch, isBlackKey, isBootStepFailure, isBundledPresetId, isChunkFresh, isDocReady, isEphemeralProjectId, isFileModifiedSinceHead, isP5DirectCanvasEnabled, isRollChunk, isSampleSoundPlaying, isStepChunk, isValidTrackLabel, isViewing, isVizGovernorEnabled, isVizLanguage, isVizPumpSharedCacheEnabled, isVizWorkerPoolEnabled, knobRangeFor, laneKeyOf, languageForRenderer, levenshtein, listAssetRecords, listAssets, listBottomPanelTabs, listBranches, listCommits, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listTiers, listWorkspaceFiles, liveCodingRuntimeRegistry, loadShellState, makeFixedKey, masterGainEdit, masterMuteEdit, masterPanEdit, masterVizEdit, materializeBareDelete, materializeBareSplit, merge, midiToPitch, mountVizPreview, mountVizRenderer, nextTakeName, normalizeEdits, normalizeStrudelHap, noteToMidi, notifyDrumKitChanged, notifySoundCatalogChanged, onActiveEditorChange, onAdaptivePerfChange, onBackdropOpacityChange, onBackdropQualityChange, onBackdropVizSpanChange, onInlineVizActionSizeChange, onInlineVizResolutionChange, onInlineVizTeardownChange, onMusicalTimelineSubRowHeightChange, onNamedVizChanged, onPerfEnabledChange, onPlayVizOnHoverChange, onSignalAliasesChange, onThemeChange, onTrackColourBarsChange, onUiIconSizeChange, onVizInputsLiveValuesChange, onVizQualityChange, otherTrackNames, parseMessageLocation, parseMini, parsePianoRoll, parseStackLocation, parseStepGrid, parseStrudel, parseTopLevel, patternFromJSON, patternKind, patternToJSON, peaksForSample, peekAssetUrl, perf, countSectionArms2 as pickCountSectionArms, duplicateArm as pickDuplicateArm, insertArm2 as pickInsertArm, insertSilenceArm2 as pickInsertSilenceArm, removeArm2 as pickRemoveArm, renameSection2 as pickRenameSection, reorderArm2 as pickReorderArm, setWeight2 as pickSetWeight, silenceArm2 as pickSilenceArm, splitArm2 as pickSplitArm, pitchToMidi, placeNote, planAssetImport, previewProviderRegistry, pruneEphemeralArtifacts, pruneTrackMetaForCode, pruneZoneOverrides, publishIRSnapshot, purgeLegacyMasterGain, putAsset, readCurrentCycle, readMasterGain, readMasterMute, readMasterPan, readMasterViz, readPersistedActiveTabId, readPersistedOpen, redo, registerAsset, registerAssets, registerBottomPanelTab, registerEvalSourceTransform, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerReevalHandler, registerRuntimeProvider, releaseAllAssets, releaseAsset, removeArm, removeAssetRecord, renameSection as renameArrangeSection, renameAssetRecord, renameEdit, renameProject, renameWorkspaceFile, rendererForLanguage, reorderArm, requestReeval, resetFileStore, resetHistoryState, resetUndoManager, resizeGrid, resizeRoll, resolveAlias, resolveAliasesForEngine, resolveAsset, resolveDescriptor, restoreFileToCommit, restoreProject, restoreSnapshot, revealLineInFile, revealOffsetInFile, revertFileToSeed, routeSurface, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveShellState, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, serializePianoRoll, serializeShellState, serializeStepGrid, setActiveHistoryFile, setAdaptivePerfEnabled, setBackdropOpacity, setBackdropQuality, setBackdropVizSpan, setCaptureCapacity, setChildOrder, setContent, setCurrentCycleAccessor, setDrumKitAccessor, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFileHistoryTarget, setFolderOrder, setInlineVizActionSize, setInlineVizResolution, setInlineVizTeardownEnabled, setMusicalTimelineSubRowHeight, setNoteColorMode, setPerfEnabled, setPlayVizOnHoverEnabled, setSignalAliases, setSoundCatalogAccessor, setSubfolderOrder, setTierFlag, setTrackColourBarsEnabled, setTrackMeta, setVizConfig, setVizInputsLiveValuesEnabled, setVizQuality, setVizWorkerFactory, setWeight, setZoneCropOverride, setZoneHeightOverride, sha256Hex, shellStateKeyFor, signalAutomations, signalCarryingParamKeys, signalDimensionsOf, silenceArm, songExtent, soundNameFromFilename, soundfontGroupLabel, splitArm, startAudition, startHistoryDriver, startSampleSound, statementOffsetForSource, stopSampleSound, structuralWalk, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeNoteColorMode, subscribeToAssets, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToHistory, subscribeToRuntimeView, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, switchToBranch, timestretch, toStrudel, toggleAdaptivePerfEnabled, toggleEditorMinimap, togglePerfEnabled, touchProject, transpose, undo, uniqueSoundName, unregisterBottomPanelTab, unregisterNamedViz, updateVizConfig, useNoteColorMode, usePopoutPreview, useSilencedTrackNames, useTrackMetaMap, useWorkspaceFile, validatePersistedState, warmMonaco, warmSamplePeaks, wholeWalkWindow, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset, wrapBare };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

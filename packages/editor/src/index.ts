@@ -655,6 +655,8 @@ export {
   reorderArm,
   insertArm,
   insertSilenceArm,
+  renameArrangeSection,
+  countArrangeSectionArms,
   removeArm,
   silenceArm,
   wrapBare,

@@ -202,3 +202,176 @@ test('a named section puts its name on the canvas', async ({ page }) => {
 
   expect(errors, `page errors while drawing captions: ${errors.join(' | ')}`).toEqual([])
 })
+
+// ---------------------------------------------------------------------------
+// #1417 Stage 3 — the RENAME GESTURE, which is what makes either rename
+// primitive reachable by a musician at all. Stage 1 shipped the pick rename to
+// trunk with zero callers.
+// ---------------------------------------------------------------------------
+
+function strudelSource(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const eds = ((window as unknown as { monaco?: { editor?: { getEditors?: () => Array<{ getModel: () => { getLanguageId?: () => string; getValue: () => string } | null }> } } }).monaco?.editor?.getEditors?.()) ?? []
+    const t = eds.find((e) => e.getModel()?.getLanguageId?.() === 'strudel') ?? eds[0]
+    return t?.getModel()?.getValue() ?? ''
+  })
+}
+
+/** Select the first clip and open the rename editor over it. */
+async function openRename(page: Page): Promise<void> {
+  await page.locator('[data-full-song="root"]').waitFor({ timeout: 10_000 })
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(400)
+  const grid = page.locator('[data-full-song="grid"]')
+  const box = await grid.boundingBox()
+  if (!box) throw new Error('no grid box')
+  await page.mouse.click(box.x + box.width * 0.25, box.y + 8)
+  await expect(page.locator('[data-full-song="clip-selection"]')).toBeVisible({ timeout: 5_000 })
+  await grid.press('F2')
+  await expect(page.locator('[data-full-song="section-name"]')).toBeVisible({ timeout: 5_000 })
+}
+
+async function typeName(page: Page, name: string): Promise<void> {
+  const input = page.locator('[data-full-song="section-name"]')
+  await input.fill(name)
+  await input.press('Enter')
+}
+
+test('renaming an arrange section moves its BINDING, declaration and all', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(page, LONG_NAMES)
+  await openRename(page)
+  errors.length = 0 // typing noise from a live editor — the claim is the gesture
+  await typeName(page, 'opening')
+
+  // The declaration AND the arm, as one edit. A rename that moved only the arm
+  // would leave the document referring to a binding that no longer exists.
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    [
+      'const opening = s("bd")',
+      'const development = s("hh")',
+      'arrange([2, opening], [2, development])',
+    ].join('\n'),
+  )
+  // eslint-disable-next-line no-console
+  console.log(`[#1417] arrange rename: ${JSON.stringify(await strudelSource(page))}`)
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})
+
+test('renaming a pick section moves its KEY and leaves the binding alone', async ({ page }) => {
+  test.setTimeout(120_000)
+  // The opposite edit, and the reason each spelling gets its own primitive. Here
+  // the section name is an object key; the pattern behind it keeps its own name.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(
+    page,
+    '"<verse@2 chorus@2>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+  )
+  await openRename(page)
+  errors.length = 0
+  await typeName(page, 'opening')
+
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    '"<opening@2 chorus@2>".pickRestart({opening: s("bd"), chorus: s("hh")})',
+  )
+  // eslint-disable-next-line no-console
+  console.log(`[#1417] pick rename: ${JSON.stringify(await strudelSource(page))}`)
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})
+
+test('a returning section says how many it will rename, BEFORE the write', async ({ page }) => {
+  test.setTimeout(120_000)
+  // A chorus that comes back is ONE pattern arranged twice, so renaming it moves
+  // every arm that names it. That is the honest edit; the part that makes it safe
+  // is being told while you can still change your mind.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(
+    page,
+    [
+      'const together = s("bd")',
+      'const bass = s("hh")',
+      'arrange([2, together], [2, bass], [2, together])',
+    ].join('\n'),
+  )
+  await openRename(page)
+  errors.length = 0
+
+  const hint = page.locator('[data-full-song="section-name-count"]')
+  await expect(hint).toBeVisible({ timeout: 5_000 })
+  await expect(hint).toHaveText('renames 2 sections')
+
+  // …and the write then does exactly what the hint said.
+  await typeName(page, 'chorus')
+  await expect.poll(() => strudelSource(page), { timeout: 8_000 }).toBe(
+    [
+      'const chorus = s("bd")',
+      'const bass = s("hh")',
+      'arrange([2, chorus], [2, bass], [2, chorus])',
+    ].join('\n'),
+  )
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})
+
+test('a section renamed only once shows NO count', async ({ page }) => {
+  test.setTimeout(120_000)
+  // The control that makes the hint mean something. A badge that always appeared
+  // would satisfy the arm above and tell a musician nothing.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(page, LONG_NAMES)
+  await openRename(page)
+  errors.length = 0
+
+  await expect(page.locator('[data-full-song="section-name-count"]')).toHaveCount(0)
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})
+
+test('typing in the name editor cannot delete the clip being renamed', async ({ page }) => {
+  test.setTimeout(120_000)
+  // ⚠ The input is a DOM DESCENDANT of the element carrying the grid's key
+  // handler, and React's onKeyDown BUBBLES — focus decides where a keystroke
+  // originates, never whether it travels. Without the guard, Backspace typed
+  // into a name reaches the clip-delete branch and destroys the clip being
+  // renamed. The caption editor needed the same arm for the same reason.
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+
+  await bootShell(page)
+  await typeSongAndEval(page, LONG_NAMES)
+  await openRename(page)
+  errors.length = 0
+
+  const input = page.locator('[data-full-song="section-name"]')
+  await input.press('Backspace')
+  await input.press('Backspace')
+  await page.waitForTimeout(1200)
+
+  // Nothing was deleted and nothing was silenced — the document is untouched
+  // while the editor is open.
+  expect(await strudelSource(page)).toBe(LONG_NAMES)
+  expect(await strudelSource(page)).not.toContain('silence')
+
+  // Escape abandons, and abandoning writes nothing either.
+  await input.press('Escape')
+  await page.waitForTimeout(1200)
+  expect(await strudelSource(page)).toBe(LONG_NAMES)
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([])
+})
+
