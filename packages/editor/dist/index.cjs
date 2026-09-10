@@ -2455,17 +2455,28 @@ function parseStrudel(code, _opts) {
       const bareStmts = stripSideEffectStatements(
         splitTopLevelStatements(stripped.body, stripped.offset)
       );
-      if (bareStmts.length > 1 && !bareStmts.some((s) => BINDING_RE.test(s.text))) {
+      const declaresBinding = bareStmts.some((s) => BINDING_RE.test(s.text));
+      const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
+      const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
+      if (trackStmts.length > 1) {
         return IR.stack(
-          ...bareStmts.map(
+          ...trackStmts.map(
             (s, i) => (
               // Each statement carries its OWN source range, so the timeline can
               // anchor a hap to the statement that produced it by containment —
               // the same mechanism a `$:` document uses, not a parallel path.
               // Synthetic wrapper: no userMethod (there is no `.p()` here).
-              IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, void 0, void 0, opts, numbers), {
-                loc: [{ start: s.offset, end: s.offset + s.text.length }]
-              })
+              IR.track(
+                `d${i + 1}`,
+                // #1523 — `collected?.bindings`, so an identifier declared above
+                // resolves in EVERY statement of the tail. `undefined` for a
+                // document that declares none, which is what this passed
+                // unconditionally before.
+                parseExpression(s.text, s.offset, void 0, collected?.bindings, opts, numbers),
+                {
+                  loc: [{ start: s.offset, end: s.offset + s.text.length }]
+                }
+              )
             )
           )
         );
@@ -2498,6 +2509,7 @@ __name(parseStrudel, "parseStrudel");
 function lexStateAt(code, idx) {
   let depth = 0;
   let inString = false;
+  let inComment = false;
   let stringChar = "";
   let escaped = false;
   let i = 0;
@@ -2518,6 +2530,13 @@ function lexStateAt(code, idx) {
       while (i < idx && code[i] !== "\n") i++;
       continue;
     }
+    if (ch === "/" && code[i + 1] === "*") {
+      i += 2;
+      while (i < idx && !(code[i] === "*" && code[i + 1] === "/")) i++;
+      if (i < idx) i += 2;
+      else inComment = true;
+      continue;
+    }
     if (ch === '"' || ch === "'" || ch === "`") {
       inString = true;
       stringChar = ch;
@@ -2536,7 +2555,7 @@ function lexStateAt(code, idx) {
     }
     i++;
   }
-  return { depth, inString };
+  return { depth, inString, inComment };
 }
 __name(lexStateAt, "lexStateAt");
 var RESERVED_LABEL_IDENTS = /* @__PURE__ */ new Set(["let", "const", "var", "default", "case"]);
@@ -2674,7 +2693,7 @@ function extractTracks(code) {
   while (m = dollarRe.exec(code)) {
     const label = m[2];
     const st = lexStateAt(code, m.index);
-    if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+    if (st.depth > 0 || st.inString || st.inComment || RESERVED_LABEL_IDENTS.has(label)) {
       continue;
     }
     if (m[1] && !commentedLabelIsTrack(code, m.index + m[0].length)) {
@@ -3738,14 +3757,24 @@ function runRawStage(input) {
     const bareStmts = stripSideEffectStatements(
       splitTopLevelStatements(stripped.body, stripped.offset)
     );
-    if (bareStmts.length > 1 && !bareStmts.some((st) => BINDING_RE.test(st.text))) {
+    const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text));
+    const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
+    const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
+    if (trackStmts.length > 1) {
       return {
         tag: "Stack",
-        tracks: bareStmts.map((st) => ({
+        tracks: trackStmts.map((st) => ({
           tag: "Code",
           code: st.text,
           lang: "strudel",
           loc: [{ start: st.offset, end: st.offset + st.text.length }],
+          // #1523 — the document's bindings, same map on every statement. And
+          // `numberMeta` alongside, because the monolithic side passes its
+          // numeric map to every one of these statements; without it a
+          // `[M*8, …]` arm would resolve THERE and not HERE, which is the
+          // divergence #1514 closed on the single-statement arm.
+          ...collected ? { trackBindings: collected.bindings } : {},
+          ...numberMeta,
           // The statement's OWN range, threaded through the EXISTING
           // dollarStart/dollarEnd channel so CHAIN-APPLIED builds
           // `Track(d{i+1}, …, {loc})` with no new metadata path.
@@ -3753,6 +3782,11 @@ function runRawStage(input) {
           // matching parseStrudel.ts's `IR.track(\`d${i + 1}\`, …)`.
           dollarStart: st.offset,
           dollarEnd: st.offset + st.text.length
+          // `unknown` hop — the same idiom the labelled-track lifts below use,
+          // and it became necessary here for the same reason they need it: once
+          // `trackBindings` is in the object, the literal no longer overlaps
+          // `PatternIR` enough for a direct assertion. ⚠ Only the tsup dts build
+          // says so; the whole vitest suite was green with the direct cast.
         })),
         loc: [{ start: 0, end: code.length }]
         // userMethod intentionally undefined — synthetic-from-RAW wrapper,
@@ -46974,6 +47008,7 @@ function isPersistableTab(t) {
   return t.kind === "editor";
 }
 __name(isPersistableTab, "isPersistableTab");
+//   /* @license  CC BY-NC-SA (https://creativecommons.org/licenses/…/4.0/)
 
 exports.ALIAS_MAP = ALIAS_MAP;
 exports.ASSET_DB_NAME = ASSET_DB_NAME;

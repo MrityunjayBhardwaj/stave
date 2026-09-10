@@ -97,10 +97,46 @@ describe('#1096 — a bare document declares every statement it names', () => {
     expect(ir.tag === 'Track' && ir.loc).toBeUndefined()
   })
 
-  it('a document with bindings keeps the existing single-Track shape', () => {
-    // Declaring a track per statement here would need substitution to be
-    // meaningful, so those documents are deliberately left alone rather than
-    // given a second, weaker binding map.
-    expect(parseStrudel('let a = s("bd*4")\na.fast(2)\ns("hh*8")').tag).toBe('Track')
+  // ── #1523 — the one arm here that CHANGED, and why the old reason lapsed ──
+  //
+  // This used to read "a document with bindings keeps the existing single-Track
+  // shape", because "declaring a track per statement here would need
+  // substitution to be meaningful, so those documents are deliberately left
+  // alone rather than given a second, weaker binding map."
+  //
+  // The reason was right and it has been overtaken rather than overruled: since
+  // #1392 the substitution engine — `collectTopLevelBindings` — accepts an
+  // N-statement tail, and `buildBindingMap` is a caller of it. So the tail can
+  // be split reading the map that already exists, and no second one is
+  // invented. What the old shape cost was the ordinary document
+  //
+  //     let M = 2
+  //     s("cp")
+  //     arrange([2, s("bd")], [2, s("hh")])
+  //
+  // which reached the IR wholly opaque — no rows, no marks, no sound — while
+  // the same document with the `s("cp")` line deleted parsed perfectly.
+  it('#1523 — a document with bindings splits too, reading the resolved map', () => {
+    const code = 'let a = s("bd*4")\na.fast(2)\ns("hh*8")'
+    const ir = parseStrudel(code)
+    expect(ir.tag).toBe('Stack')
+    const ts = tracksOf(ir)
+    expect(ts.map((t) => (t.tag === 'Track' ? t.trackId : t.tag))).toEqual(['d1', 'd2'])
+    // The binding is SUBSTITUTED, not merely tolerated: `a.fast(2)` is
+    // Fast(2, …) over the pattern `a` names, so the identifier really resolved.
+    const body = ts[0].tag === 'Track' ? ts[0].body : ts[0]
+    expect(body.tag).toBe('Fast')
+    expect(body.tag === 'Fast' && body.body.tag).toBe('Fast')
+    // Only the TAIL declares tracks — the `let` line is not a row.
+    expect(code.slice(ts[0].loc![0].start, ts[0].loc![0].end)).toBe('a.fast(2)')
+    expect(code.slice(ts[1].loc![0].start, ts[1].loc![0].end)).toBe('s("hh*8")')
+  })
+
+  it('#1523 — a binding the ENGINE declines keeps the single-Track shape', () => {
+    // The narrowness did not go away, it moved: a document whose bindings do
+    // not resolve is still left whole rather than split on a map that does not
+    // exist. Here the same name is bound twice, which the engine refuses.
+    const code = 'let a = s("bd*4")\nlet a = s("sd*4")\na.fast(2)\ns("hh*8")'
+    expect(parseStrudel(code).tag).toBe('Track')
   })
 })

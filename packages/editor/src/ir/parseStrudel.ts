@@ -1052,16 +1052,63 @@ export function parseStrudel(
       const bareStmts = stripSideEffectStatements(
         splitTopLevelStatements(stripped.body, stripped.offset),
       )
-      if (bareStmts.length > 1 && !bareStmts.some(s => BINDING_RE.test(s.text))) {
+      // #1523 — …AND THE NARROWNESS ABOVE COST THE DOCUMENTS THAT DECLARE ONE.
+      //
+      //   let M = 2                     → Arrange, arms=2   ✅
+      //   arrange([2, s("bd")], …)
+      //
+      //   let M = 2                     → NOTHING. Wholly opaque.  ❌
+      //   s("cp")
+      //   arrange([2, s("bd")], …)
+      //
+      // One extra top-level expression, same binding, same LITERAL weights.
+      // `buildBindingMap` wants `bindings*, exactly ONE expression` and
+      // declines; the branch below wants NO bindings and declines too; the two
+      // cover disjoint sets and this ordinary shape fell between them, straight
+      // to the whole-body parse, which gives up.
+      //
+      // ⚠ THE NARROWNESS WAS RIGHT AND ITS REASON STILL HOLDS — "inventing
+      // per-statement binding semantics here would be a second, weaker
+      // `buildBindingMap`". So this does not invent any: it asks
+      // `collectTopLevelBindings`, the engine `buildBindingMap` itself is now a
+      // caller of, which has accepted an N-statement tail since #1392. One
+      // engine, one answer, read by both branches.
+      //
+      // ⚠ EVERY tail statement becomes a track, including ones that parse
+      // opaque — deliberately the same rule #1096 measured and chose for
+      // binding-free documents, NOT a new one. Keeping only the statements that
+      // parse musically was the tempting alternative and is rejected twice
+      // over: it would give this file two different answers to one question,
+      // and the staged pipeline splits at RAW, before anything is parsed, so it
+      // could not mirror the filter and the two parsers would diverge. An
+      // opaque statement therefore draws a silent row, which is what #1096
+      // decided a statement the parser cannot read should do.
+      const declaresBinding = bareStmts.some(s => BINDING_RE.test(s.text))
+      const collected = declaresBinding
+        ? collectTopLevelBindings(stripped.body, stripped.offset)
+        : null
+      // A binding-bearing document whose bindings the ENGINE declines (a cycle,
+      // a duplicate name, no leading binding at all) keeps the existing
+      // whole-body shape rather than being split on a map that does not exist.
+      const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
+      if (trackStmts.length > 1) {
         return IR.stack(
-          ...bareStmts.map((s, i) =>
+          ...trackStmts.map((s, i) =>
             // Each statement carries its OWN source range, so the timeline can
             // anchor a hap to the statement that produced it by containment —
             // the same mechanism a `$:` document uses, not a parallel path.
             // Synthetic wrapper: no userMethod (there is no `.p()` here).
-            IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, undefined, undefined, opts, numbers), {
-              loc: [{ start: s.offset, end: s.offset + s.text.length }],
-            }),
+            IR.track(
+              `d${i + 1}`,
+              // #1523 — `collected?.bindings`, so an identifier declared above
+              // resolves in EVERY statement of the tail. `undefined` for a
+              // document that declares none, which is what this passed
+              // unconditionally before.
+              parseExpression(s.text, s.offset, undefined, collected?.bindings, opts, numbers),
+              {
+                loc: [{ start: s.offset, end: s.offset + s.text.length }],
+              },
+            ),
           ),
         )
       }
