@@ -57,3 +57,26 @@ describe('AddEffectMenu — scroll-dismiss scope', () => {
     expect(document.querySelector('[data-mixer-add-effect-menu]')).toBeNull()
   })
 })
+
+describe('the catalog reaches the take controls (#1530)', () => {
+  it('offers Pitch shift, so a take can be shifted without typing it', () => {
+    openMenu()
+    expect(screen.getByText('Pitch shift')).toBeTruthy()
+  })
+
+  it('adds it as `.stretch(1)` — an octave, because unison here is 0 not 1', () => {
+    const onToggle = vi.fn()
+    render(<AddEffectMenu present={new Set()} onToggle={onToggle} />)
+    fireEvent.click(screen.getAllByRole('button', { name: /More/ })[0])
+    fireEvent.click(screen.getAllByText('Pitch shift')[0])
+    expect(onToggle).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'stretch', def: 1 }),
+    )
+  })
+
+  it('never labels it as a corrective control — the shift misses by up to 246 cents', () => {
+    openMenu()
+    const menu = document.querySelector('[data-mixer-add-effect-menu]') as HTMLElement
+    expect(/tune|correct|align/i.test(menu.textContent ?? '')).toBe(false)
+  })
+})

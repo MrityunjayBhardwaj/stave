@@ -34857,6 +34857,26 @@ var RANGES = {
   sustain: lin(0, 1, 0.01),
   release: lin(0, 4, 0.01),
   // playback
+  /**
+   * A PITCH SHIFT, despite the name, and the range is the engine's own
+   * arithmetic rather than a guess (#1530).
+   *
+   * `.stretch(v)` reaches superdough's `phase-vocoder-processor` as
+   * `pitchFactor`, and the worklet computes
+   * `pitchFactor = max(0, (v < 0 ? v * 0.25 : v) + 1)` (worklets.mjs:624-631).
+   * So `-2` is an octave down, `0` is UNISON, `+1` is an octave up — and
+   * duration is untouched, because the vocoder advances its time cursor by the
+   * overlap-add hop whatever the factor. Time-align is `.speed`, not this.
+   *
+   * ⚠ Without an entry here the value-derived fallback gives a `.stretch(0.5)`
+   * a 0..1 knob, which is wrong twice: it presents the IDENTITY value as the
+   * dial's minimum, and it puts every downward shift out of reach.
+   *
+   * The knob is asymmetric in cents per unit — 600 below unison, 1200 above —
+   * because the control is (that `* 0.25` on negatives). The range does not
+   * invent that, it stops hiding it.
+   */
+  stretch: lin(-2, 1, 0.01),
   speed: lin(-2, 2, 0.01),
   accelerate: lin(-2, 2, 0.01),
   begin: lin(0, 1, 0.01),
@@ -34937,6 +34957,23 @@ var EFFECTS = [
   { method: "release", label: "Release", group: "Envelope", def: 0.5 },
   // Playback
   { method: "speed", label: "Speed", group: "Playback", def: 1.5 },
+  /**
+   * A CREATIVE pitch shifter, and never a corrective one (#1530, measured in
+   * #1529). `.stretch` moves pitch and leaves duration alone — which is what
+   * makes it worth having on a take, and is also the opposite of what its name
+   * and its upstream doc block say.
+   *
+   * ⚠ The label matters more than usual here. Its shift is quantised to the
+   * vocoder's 2048-bin FFT, so the pitch it lands on misses the one asked for
+   * by 34 to 246 cents; the error changes SIGN with the note, and it moves with
+   * the device's sample rate. One value therefore detunes different notes of the
+   * same phrase in different directions. So: "Pitch shift", never "Tune",
+   * "Correct" or "Align" — `take-pitch-and-time.spec.ts` holds the numbers.
+   *
+   * An octave is the default because it is the least ambiguous demonstration of
+   * what the control does. ⚠ Unison here is `0`, not `1`.
+   */
+  { method: "stretch", label: "Pitch shift", group: "Playback", def: 1 },
   { method: "accelerate", label: "Accelerate", group: "Playback", def: 0.5 },
   // Time
   { method: "slow", label: "Slow", group: "Time", def: 2 },

@@ -59,6 +59,23 @@ export const EFFECTS: readonly Effect[] = [
   { method: 'release', label: 'Release', group: 'Envelope', def: 0.5 },
   // Playback
   { method: 'speed', label: 'Speed', group: 'Playback', def: 1.5 },
+  /**
+   * A CREATIVE pitch shifter, and never a corrective one (#1530, measured in
+   * #1529). `.stretch` moves pitch and leaves duration alone — which is what
+   * makes it worth having on a take, and is also the opposite of what its name
+   * and its upstream doc block say.
+   *
+   * ⚠ The label matters more than usual here. Its shift is quantised to the
+   * vocoder's 2048-bin FFT, so the pitch it lands on misses the one asked for
+   * by 34 to 246 cents; the error changes SIGN with the note, and it moves with
+   * the device's sample rate. One value therefore detunes different notes of the
+   * same phrase in different directions. So: "Pitch shift", never "Tune",
+   * "Correct" or "Align" — `take-pitch-and-time.spec.ts` holds the numbers.
+   *
+   * An octave is the default because it is the least ambiguous demonstration of
+   * what the control does. ⚠ Unison here is `0`, not `1`.
+   */
+  { method: 'stretch', label: 'Pitch shift', group: 'Playback', def: 1 },
   { method: 'accelerate', label: 'Accelerate', group: 'Playback', def: 0.5 },
   // Time
   { method: 'slow', label: 'Slow', group: 'Time', def: 2 },

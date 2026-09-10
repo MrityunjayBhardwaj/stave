@@ -9,6 +9,21 @@ describe('knobRangeFor', () => {
     expect(knobRangeFor('crush', 4)).toMatchObject({ min: 1, max: 16, step: 1 })
   })
 
+  it('gives stretch a range that reaches BELOW unison (#1530)', () => {
+    // `.stretch` is a PITCH SHIFT whose identity value is 0, not 1, and whose
+    // downward shifts are negative (`pitchFactor = max(0, (v<0 ? v*0.25 : v)+1)`,
+    // superdough worklets.mjs:624-631). The value-derived fallback would hand a
+    // `.stretch(0.5)` a 0..1 knob, which presents unison as the dial's MINIMUM
+    // and puts every downward shift out of reach.
+    const r = knobRangeFor('stretch', 0.5)
+    expect(r).toMatchObject({ min: -2, max: 1, step: 0.01, scale: 'linear' })
+    expect(r.min, 'a downward shift has to be reachable').toBeLessThan(0)
+  })
+
+  it('an authored stretch beyond an octave up widens rather than pins', () => {
+    expect(knobRangeFor('stretch', 3).max).toBe(3)
+  })
+
   it('marks filter cutoffs as logarithmic', () => {
     expect(knobRangeFor('lpf', 800)).toMatchObject({ scale: 'log', min: 20, max: 20000 })
     expect(knobRangeFor('cutoff', 1200).scale).toBe('log')

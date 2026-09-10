@@ -62,6 +62,26 @@ const RANGES: Record<string, KnobRange> = {
   sustain: lin(0, 1, 0.01),
   release: lin(0, 4, 0.01),
   // playback
+  /**
+   * A PITCH SHIFT, despite the name, and the range is the engine's own
+   * arithmetic rather than a guess (#1530).
+   *
+   * `.stretch(v)` reaches superdough's `phase-vocoder-processor` as
+   * `pitchFactor`, and the worklet computes
+   * `pitchFactor = max(0, (v < 0 ? v * 0.25 : v) + 1)` (worklets.mjs:624-631).
+   * So `-2` is an octave down, `0` is UNISON, `+1` is an octave up — and
+   * duration is untouched, because the vocoder advances its time cursor by the
+   * overlap-add hop whatever the factor. Time-align is `.speed`, not this.
+   *
+   * ⚠ Without an entry here the value-derived fallback gives a `.stretch(0.5)`
+   * a 0..1 knob, which is wrong twice: it presents the IDENTITY value as the
+   * dial's minimum, and it puts every downward shift out of reach.
+   *
+   * The knob is asymmetric in cents per unit — 600 below unison, 1200 above —
+   * because the control is (that `* 0.25` on negatives). The range does not
+   * invent that, it stops hiding it.
+   */
+  stretch: lin(-2, 1, 0.01),
   speed: lin(-2, 2, 0.01),
   accelerate: lin(-2, 2, 0.01),
   begin: lin(0, 1, 0.01),
