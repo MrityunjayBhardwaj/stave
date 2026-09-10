@@ -90,6 +90,30 @@ export function firstMark(profile: InkProfile): number[] {
  * both. This is the discriminator between "the mark is drawn" and "the mark's
  * shape is drawn", stated as a ratio of two readings inside ONE snapshot.
  */
+/**
+ * Every contiguous run of inked columns, in order — one entry per drawn mark.
+ *
+ * `firstMark` answers "what does a mark look like"; this answers "how do two
+ * marks in ONE snapshot differ", which is the only way to compare two renderings
+ * without comparing two device states as well. A canvas is a device: the same
+ * document drawn twice can differ for reasons that have nothing to do with the
+ * code under test, so a claim about a difference belongs inside a single frame.
+ */
+export function allMarks(profile: InkProfile): number[][] {
+  const out: number[][] = []
+  let run: number[] = []
+  for (const n of profile.columns) {
+    if (n > 0) {
+      run.push(n)
+    } else if (run.length > 0) {
+      out.push(run)
+      run = []
+    }
+  }
+  if (run.length > 0) out.push(run)
+  return out
+}
+
 export function markVariation(mark: number[]): number {
   const inked = mark.filter((n) => n > 0)
   if (inked.length === 0) return 0

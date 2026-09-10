@@ -18,6 +18,7 @@
 
 import type { SongAnalysis, SongSection } from '@stave/editor'
 import type { SongWindow } from './songAxis'
+import type { SampleRegion } from './waveformLane'
 import { trackIdentity } from './colors'
 import { containingAnchor } from './laneIdentity'
 import { resolveLaneName } from './trackLabel'
@@ -55,6 +56,16 @@ export interface SceneNote {
    *  in the runtime walk (`timelineMarks`), so this pure module never reads the
    *  editor IR. Optional so hand-built fixtures stay terse (treated as null). */
   readonly voice?: string | null
+  /** The slice of its file this mark PLAYS — `begin`/`end`/`speed`/`unit`, as the
+   *  runtime already resolved them (#1512). Drives the waveform tier only; a
+   *  mark without region controls omits it and draws the whole file, which is
+   *  what every mark did before.
+   *
+   *  ⚠ `begin`/`end` INSIDE this object are fractions of the FILE, 0..1. The
+   *  `cycle`/`end` fields above them are song TIME. The two meanings share the
+   *  word `end` because Strudel's own controls do, and keeping the region in its
+   *  own object is what stops them ever being read for one another. */
+  readonly region?: SampleRegion
 }
 
 /**

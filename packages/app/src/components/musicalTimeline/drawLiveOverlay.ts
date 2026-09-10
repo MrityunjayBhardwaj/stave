@@ -194,7 +194,7 @@ function markHasWaveform(
   if (voice == null || voice === NO_VOICE) return false
   const peaks = waveforms.peaksFor(voice, note.pitch ?? null)
   if (peaks == null) return false
-  return waveformFit(peaks.duration, waveforms.cps, r.w, r.h, pxPerCycle) != null
+  return waveformFit(peaks.duration, waveforms.cps, r.w, r.h, pxPerCycle, note.region) != null
 }
 
 /**

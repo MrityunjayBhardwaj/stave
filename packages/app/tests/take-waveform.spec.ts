@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 import { bootApp, seedCode } from './_appBoot'
-import { readInk, firstMark } from './_waveformInk'
+import { readInk, firstMark, allMarks } from './_waveformInk'
 
 /**
  * The instrument for #1506 — a take draws its waveform on the Song timeline.
@@ -338,4 +338,98 @@ test.describe('a take is visible on the Song timeline', () => {
     await page.screenshot({ path: 'test-results/take-waveform-lit-outline.png' })
     expect(errors).toEqual([])
   })
+
+  test('two marks of ONE file differ when they play different halves of it', async ({ page }) => {
+    // The #1512 claim, in pixels: a mark draws the slice it PLAYS.
+    //
+    // ## Why both halves live in one document
+    //
+    // The two readings compared below come from a SINGLE canvas snapshot. Two
+    // page loads would be two device states, and a difference between them could
+    // be a difference in the device — which is exactly the confusion an absolute
+    // pixel count invites. `cat` puts the two spellings on one lane as
+    // consecutive marks, so one frame holds the whole comparison.
+    //
+    // ## Why the QUIETEST column and not the tallest
+    //
+    // A mark is inked across its full width: the waveform covers only the part
+    // of the mark its audio is worth, and the plain bar fills the rest at full
+    // height. So the TALLEST column of any mark is the bar, whatever the
+    // waveform does, and it discriminates nothing. The quietest column is inside
+    // the waveform, and it is what tells a flat slice from a full-scale one.
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+
+    await bootWithTimeline(page)
+    await page.evaluate(() => (window as ProbeWindow).__staveAssetProbe!.reset())
+
+    // The take is loud for its first half and silent for its second.
+    const wav = loudThenSilentWav()
+    await page.evaluate(async (base64) => {
+      const p = (window as ProbeWindow).__staveAssetProbe!
+      const res = await p.import(base64, 'audio/wav', 'take_1.wav', await p.docList())
+      await p.docAdd(res.record)
+    }, wav)
+
+    // Mark 1 plays the file's LOUD half, mark 2 its SILENT half. Same file, same
+    // width, same lane, same frame — the region is the only difference.
+    //
+    // ⚠ THE SILENT CYCLE BETWEEN THEM IS LOAD-BEARING. `cat` puts consecutive
+    // arms edge to edge, and a mark is inked across its whole width, so two
+    // adjacent marks share a lit boundary column and read as ONE run. Without
+    // the rest this arm found a single mark of double width and could not
+    // compare anything — which the poll below caught rather than passing.
+    await seedCode(page, '$: cat(s("take_1").end(0.5), silence, s("take_1").begin(0.5))')
+    await page.evaluate(() => {
+      try {
+        localStorage.setItem('stave:musicalTimeline.subRowHeight', '48')
+      } catch {
+        /* ignore */
+      }
+    })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => Boolean((window as ProbeWindow).__staveAssetProbe), { timeout: 30_000 })
+    await page.waitForFunction(() => (window as ProbeWindow).__staveAssetProbe!.inSoundMap('take_1'), undefined, {
+      timeout: 30_000,
+    })
+    await page.locator('[data-full-song-canvas]').waitFor({ timeout: 20_000 })
+
+    // Wait for the decode to land and BOTH marks to be drawn.
+    await expect
+      .poll(async () => allMarks(await readInk(page)).filter((m) => m.length > 20).length, {
+        timeout: 30_000,
+        message: 'the two marks never both reached a readable width',
+      })
+      .toBeGreaterThanOrEqual(2)
+
+    const marks = allMarks(await readInk(page)).filter((m) => m.length > 20)
+    // Printed whether or not the assertions below hold: a claim about how two
+    // marks differ is worth nothing without knowing how many marks were found
+    // and how wide each is, and that is exactly what a bare pass hides.
+    // eslint-disable-next-line no-console
+    console.log(`[#1512] runs=${JSON.stringify(marks.map((m) => m.length))}`)
+    const [loudHalf, silentHalf] = marks
+    const quietestIn = (m: number[]) => Math.min(...m.filter((n) => n > 0))
+    const tallestIn = (m: number[]) => Math.max(...m)
+
+    const loudFloor = quietestIn(loudHalf)
+    const silentFloor = quietestIn(silentHalf)
+    // eslint-disable-next-line no-console
+    console.log(
+      `[#1512] marks=${marks.length} loudHalf(floor=${loudFloor} peak=${tallestIn(loudHalf)}) ` +
+        `silentHalf(floor=${silentFloor} peak=${tallestIn(silentHalf)}) ratio=${(loudFloor / silentFloor).toFixed(2)}`,
+    )
+
+    // The claim. Drawing the whole file in both marks makes these two floors
+    // EQUAL — each mark would contain the same silence — so the ratio is the
+    // difference between the fix and its absence.
+    expect(loudFloor / silentFloor).toBeGreaterThan(3)
+
+    // …and the half that is loud is loud all the way through, so the reading
+    // above is a full-scale slice rather than a mark that merely drew less.
+    expect(loudFloor).toBeGreaterThan(tallestIn(loudHalf) * 0.5)
+
+    expect(errors).toEqual([])
+  })
+
 })

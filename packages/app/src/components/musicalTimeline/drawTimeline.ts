@@ -982,7 +982,7 @@ function drawMarkWaveform(
   if (voice == null || voice === NO_VOICE) return budget
   const peaks = peaksFor(voice, note.pitch ?? null)
   if (peaks == null) return budget
-  const fit = waveformFit(peaks.duration, cps, r.w, r.h, pxPerCycle)
+  const fit = waveformFit(peaks.duration, cps, r.w, r.h, pxPerCycle, note.region)
   if (fit == null) return budget
 
   const columns = Math.min(Math.floor(fit.extentPx), budget)
@@ -1003,7 +1003,7 @@ function drawMarkWaveform(
   ctx.globalAlpha = 1
   ctx.fillStyle = inkStyle
   for (let i = 0; i < columns; i++) {
-    const col = waveformColumn(peaks.data, peaks.columns, i, columns, fit.visibleFraction)
+    const col = waveformColumn(peaks.data, peaks.columns, i, columns, fit)
     const top = centreY - Math.max(-1, Math.min(1, col.max)) * halfH
     const bottom = centreY - Math.max(-1, Math.min(1, col.min)) * halfH
     ctx.fillRect(r.x + i, top, 1, Math.max(1, bottom - top))
