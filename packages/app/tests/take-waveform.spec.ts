@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 import { bootApp, seedCode } from './_appBoot'
+import { readInk, firstMark } from './_waveformInk'
 
 /**
  * The instrument for #1506 — a take draws its waveform on the Song timeline.
@@ -99,83 +100,6 @@ function loudThenSilentWav(): string {
   header.write('data', 36)
   header.writeUInt32LE(data.length, 40)
   return Buffer.concat([header, data]).toString('base64')
-}
-
-/** Per-column height of FULLY saturated lane ink, read off the real canvas. */
-interface InkProfile {
-  readonly columns: number[]
-  readonly width: number
-}
-
-/**
- * Count, for each canvas column, the pixels drawn in the lane's own colour at
- * full strength.
- *
- * Saturation separates lane ink from every piece of theme furniture — the
- * background, the row stripes, the section bands and the gridlines are all
- * greys. Brightness then separates the waveform (drawn at full opacity) from the
- * bar beneath it, which the bed has washed toward the background. Both
- * thresholds are relative to the brightest lane pixel found in this same
- * snapshot, so nothing here depends on knowing the track's colour in advance.
- */
-async function readInk(page: Page): Promise<InkProfile> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector('[data-full-song-canvas]') as HTMLCanvasElement | null
-    if (!canvas) throw new Error('no song canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('no 2d context')
-    const { width, height } = canvas
-    const { data } = ctx.getImageData(0, 0, width, height)
-
-    const saturation = (i: number) => {
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      return Math.max(r, g, b) - Math.min(r, g, b)
-    }
-    const brightness = (i: number) => data[i] + data[i + 1] + data[i + 2]
-
-    // The brightest saturated pixel present is full-strength lane ink.
-    let peak = 0
-    for (let i = 0; i < data.length; i += 4) {
-      if (saturation(i) > 40 && brightness(i) > peak) peak = brightness(i)
-    }
-    if (peak === 0) return { columns: new Array(width).fill(0), width }
-
-    const columns: number[] = new Array(width).fill(0)
-    for (let x = 0; x < width; x++) {
-      let n = 0
-      for (let y = 0; y < height; y++) {
-        const i = (y * width + x) * 4
-        if (saturation(i) > 40 && brightness(i) >= peak * 0.9) n++
-      }
-      columns[x] = n
-    }
-    return { columns, width }
-  })
-}
-
-/**
- * The first contiguous run of inked columns — one mark.
- *
- * Located rather than assumed. An earlier version of this spec measured fixed
- * fractions of the whole inked span on the belief that one cycle was on screen;
- * two are, so it sampled the wrong places and read a working waveform as a flat
- * bar. Where the mark falls is a function of tempo, zoom and song length, and
- * none of those are what this spec is about.
- */
-function firstMark(profile: InkProfile): number[] {
-  const run: number[] = []
-  let started = false
-  for (const n of profile.columns) {
-    if (n > 0) {
-      started = true
-      run.push(n)
-    } else if (started) {
-      break
-    }
-  }
-  return run
 }
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
