@@ -46611,6 +46611,79 @@ function padCells(cells, steps) {
 }
 __name(padCells, "padCells");
 
+// src/visualEdit/regionTrim.ts
+var REGION_DEFAULT = { begin: 0, end: 1 };
+var MIN_REGION_SPAN = 0.01;
+function callFor(chunk, control) {
+  let found = null;
+  for (const c of chunk.chain) if (c.name === control && c.args.length >= 1) found = c;
+  return found;
+}
+__name(callFor, "callFor");
+function readRegionControl(chunk, control) {
+  const call = callFor(chunk, control);
+  if (!call) return "absent";
+  return call.args[0]?.numeric ?? null;
+}
+__name(readRegionControl, "readRegionControl");
+function readRegion(chunk) {
+  const b = readRegionControl(chunk, "begin");
+  const e = readRegionControl(chunk, "end");
+  if (b === null || e === null) return null;
+  return {
+    begin: b === "absent" ? REGION_DEFAULT.begin : b,
+    end: e === "absent" ? REGION_DEFAULT.end : e
+  };
+}
+__name(readRegion, "readRegion");
+function regionControlEdit(chunk, control, value) {
+  if (!Number.isFinite(value)) return null;
+  const call = callFor(chunk, control);
+  if (!call) {
+    return { range: [chunk.exprRange[1], chunk.exprRange[1]], text: `.${control}(${formatNumber(value)})` };
+  }
+  const arg = call.args[0];
+  if (arg.numeric === null) return null;
+  return { range: arg.range, text: formatNumber(value) };
+}
+__name(regionControlEdit, "regionControlEdit");
+var MULTI_VOICE_HEADS = /* @__PURE__ */ new Set([
+  "stack",
+  "overlay",
+  "superimpose",
+  "layer",
+  "cat",
+  "slowcat",
+  "fastcat",
+  "seq",
+  "timeCat",
+  "timecat",
+  "randcat",
+  "wrandcat",
+  "arrange",
+  "polymeter",
+  "pm"
+]);
+function regionTrimEdit(chunk, control, value) {
+  if (chunk.headFn !== null && MULTI_VOICE_HEADS.has(chunk.headFn)) {
+    return { edit: null, refusal: "not-one-voice", value };
+  }
+  const current4 = readRegion(chunk);
+  if (!current4 || !Number.isFinite(value)) {
+    return { edit: null, refusal: "not-a-number", value };
+  }
+  const clamped = control === "begin" ? Math.min(Math.max(0, value), current4.end - MIN_REGION_SPAN) : Math.max(Math.min(1, value), current4.begin + MIN_REGION_SPAN);
+  if (!Number.isFinite(clamped)) return { edit: null, refusal: "not-a-number", value };
+  const before = current4[control];
+  if (formatNumber(clamped) === formatNumber(before)) {
+    return { edit: null, refusal: "no-change", value: clamped };
+  }
+  const edit = regionControlEdit(chunk, control, clamped);
+  if (!edit) return { edit: null, refusal: "not-a-number", value: clamped };
+  return { edit, refusal: null, value: clamped };
+}
+__name(regionTrimEdit, "regionTrimEdit");
+
 // src/visualEdit/mixer/trackMetaPrune.ts
 function pruneTrackMetaForCode(fileId, code) {
   const names = /* @__PURE__ */ new Set();
@@ -46907,8 +46980,10 @@ exports.LiveRecorder = LiveRecorder;
 exports.MASTER_CENTRE_PAN = MASTER_CENTRE_PAN;
 exports.MASTER_KEY = MASTER_KEY;
 exports.MASTER_UNITY_GAIN = MASTER_UNITY_GAIN;
+exports.MIN_REGION_SPAN = MIN_REGION_SPAN;
 exports.MIXER_CONSOLE_TAB_ID = MIXER_CONSOLE_TAB_ID;
 exports.MIXER_TAB_ID = MIXER_TAB_ID;
+exports.MULTI_VOICE_HEADS = MULTI_VOICE_HEADS;
 exports.MainSignalSampler = MainSignalSampler;
 exports.Mixer = Mixer;
 exports.OfflineRenderer = OfflineRenderer;
@@ -47238,7 +47313,11 @@ exports.readMasterPan = readMasterPan;
 exports.readMasterViz = readMasterViz;
 exports.readPersistedActiveTabId = readPersistedActiveTabId;
 exports.readPersistedOpen = readPersistedOpen;
+exports.readRegion = readRegion;
+exports.readRegionControl = readRegionControl;
 exports.redo = redo;
+exports.regionControlEdit = regionControlEdit;
+exports.regionTrimEdit = regionTrimEdit;
 exports.registerAsset = registerAsset;
 exports.registerAssets = registerAssets;
 exports.registerBottomPanelTab = registerBottomPanelTab;

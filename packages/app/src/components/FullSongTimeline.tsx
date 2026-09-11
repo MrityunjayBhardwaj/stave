@@ -89,12 +89,24 @@ import { declaredTracks } from './musicalTimeline/trackOrder'
 import { signalAutomations, type SignalAutomation } from '@stave/editor'
 import { computeLaneLayout, laneAtY, type LaneLayout } from './musicalTimeline/laneLayout'
 import {
+  markRegionValue,
+  regionEdgeAt,
+  regionValueAtDrag,
+  type RegionEdgeHit,
+  type RegionSide,
+} from './musicalTimeline/regionEdge'
+import {
   loadTimelineCamera,
   saveTimelineCamera,
 } from './musicalTimeline/timelineCameraPersistence'
 import { SongTimelineCanvas } from './SongTimelineCanvas'
 import {
   songCycleToX,
+  // The UNCLAMPED map, because the region hit test has to agree with the
+  // renderer pixel-for-pixel and `drawTimeline` uses this one — the clamped
+  // variant would pile every off-screen mark onto the viewport edge and make
+  // marks grabbable where none is drawn.
+  songCycleToXUnclamped,
   xToSongCycle,
   trimExtent,
   wrapSongPosition,
@@ -257,6 +269,37 @@ export interface FullSongTimelineProps {
     sourceOffset: number | null
     armIndex: number
     weight: number
+  }) => void
+  /** Trim the SLICE OF THE FILE a sample mark plays, by dragging the mark's own
+   *  edge on an expanded lane (#1527). The left edge moves `begin`, the right
+   *  edge moves `end`; the parent resolves the lane anchor to a chunk and writes
+   *  `.begin(0.25)`, appending the call when the document does not have one.
+   *
+   *  ⚠ A DIFFERENT GESTURE FROM `onTrimClip`, ON DELIBERATELY DIFFERENT PIXELS.
+   *  That one drags a CLIP's edge and changes how many bars an arrangement arm
+   *  lasts; this one drags a MARK's edge and changes which part of a sample file
+   *  is heard. Clip edges keep precedence where the two are within a few pixels
+   *  of each other — the arrangement gesture is the established one, and a mark
+   *  landing exactly on an arm boundary is rare.
+   *
+   *  `playing` is what the ENGINE resolved this mark to play, and the parent
+   *  must check it against what the chunk's text says before writing: a lane's
+   *  source anchor can resolve to an expression that does not own the region
+   *  (`const vox = s("take")` / `$: vox.begin(0.1)` resolves to the const),
+   *  where an append would edit a shared binding the outer call then overrides.
+   *  Optional — without it, mark edges are inert. */
+  readonly onTrimRegion?: (req: {
+    /** Lane anchors to try IN ORDER, until one resolves to a chunk that agrees
+     *  with `playing`. The statement anchor comes first and the innermost
+     *  content anchor second, which is measured rather than guessed: for
+     *  `const vox = s("take")` / `$: vox.begin(0.1)` the content anchor lands on
+     *  the const (no region on it) and the statement anchor lands on the track
+     *  that owns the region; for an unlabelled bare expression there is no
+     *  statement anchor at all and only the content one exists. */
+    anchors: readonly number[]
+    side: RegionSide
+    value: number
+    playing: { begin: number; end: number }
   }) => void
   /** Delete a clip (Phase 5c, #386). Fired when a selected clip is removed
    *  (click a clip to select, then Delete/Backspace). Receives the clip's lane
@@ -1443,6 +1486,96 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     [onTrimClip, bareSong, songWindow, dragAwareContentWidth],
   )
 
+  // ── Trim a REGION: drag a mark's own edge → set what slice it plays (#1527) ─
+  // A different gesture from the clip trim above, on a different target: that
+  // one changes how many BARS an arrangement arm lasts, this one changes which
+  // part of a SAMPLE FILE a mark is heard playing. Only on expanded lanes, where
+  // the waveform this trims is actually drawn.
+  const { onTrimRegion } = props
+  const [regionGhost, setRegionGhost] = useState<{
+    left: number
+    top: number
+    height: number
+    label: string
+  } | null>(null)
+  const regionDragRef = useRef<
+    | (RegionEdgeHit & {
+        pointerId: number
+        startClientX: number
+        /** The region as it was at pointer-down. The drag scale is derived from
+         *  it once and never re-derived — see `REGION_DRAG_SPAN_PX`. */
+        startValue: number
+        playing: { begin: number; end: number }
+        value: number
+      })
+    | null
+  >(null)
+
+  /**
+   * The mark edge under the pointer, in the SAME coordinate frame the renderer
+   * drew the marks in: x is screen-space (the canvas is sticky horizontally and
+   * `toScreenX` has already taken the scroll off), y is content-space (the
+   * canvas scrolls vertically with its container). Getting those two the same
+   * way round is the whole reason this closure re-creates `toScreenX` rather
+   * than reusing the clip helpers' content-space mapping.
+   */
+  const regionEdgeAtClient = React.useCallback(
+    (clientX: number, clientY: number): RegionEdgeHit | null => {
+      if (!onTrimRegion) return null
+      const el = areaRef.current
+      if (!el) return null
+      const rect = el.getBoundingClientRect()
+      const cw = dragAwareContentWidth(rect.width)
+      const scene = sceneRef.current
+      const dc = Math.max(1, scene.displayCycles)
+      const ppc = cw / dc
+      if (!(ppc > 0)) return null
+      const toScreenX = (cycle: number): number =>
+        songCycleToXUnclamped(cycle, songWindowRef.current, cw) - scrollLeftRef.current
+      const firstIndex = Math.max(0, Math.floor(scrollLeftRef.current / ppc))
+      const lastIndex = Math.min(dc, Math.ceil((scrollLeftRef.current + rect.width) / ppc))
+      return regionEdgeAt({
+        lanes: scene.lanes,
+        layout: layoutRef.current,
+        screenX: clientX - rect.left,
+        contentY: clientY - rect.top + scrollTopRef.current,
+        pxPerCycle: ppc,
+        viewportWidth: rect.width,
+        firstCycle: scene.windowOriginCycles + firstIndex,
+        lastCycle: scene.windowOriginCycles + lastIndex,
+        toScreenX,
+      })
+    },
+    [onTrimRegion, dragAwareContentWidth],
+  )
+
+  /** Move the dragged region edge to wherever the pointer is now. */
+  const applyRegionTrim = React.useCallback((clientX: number): void => {
+    const drag = regionDragRef.current
+    const el = areaRef.current
+    if (!drag || !el) return
+    // ⚠ THE ONE OWNER of this sum, not the same arithmetic written again here.
+    // It carries the rule that the scale is fixed at pointer-down; a second
+    // copy is how that rule comes to be true in one place and not the other.
+    const raw = regionValueAtDrag(
+      drag.startValue,
+      clientX - drag.startClientX,
+      drag.fractionPerPx,
+    )
+    // Clamped only to 0..1 here. The real clamp is against the OTHER edge and
+    // lives in the editor's `regionTrimEdit`, which reads the document rather
+    // than the drawn mark — the ghost is a preview, not the decision.
+    const value = Math.min(1, Math.max(0, raw))
+    drag.value = value
+    const box = layoutRef.current.boxes.find((b) => b.laneKey === drag.laneKey)
+    setRegionGhost({
+      left: drag.rect.x + scrollLeftRef.current + (value - drag.startValue) / drag.fractionPerPx,
+      top: box?.top ?? drag.rect.y,
+      height: box?.height ?? drag.rect.h,
+      label: `${drag.side} ${value.toFixed(2)}`,
+    })
+  }, [])
+
   // Apply an extend at a given clientX: map the cursor to a whole-cycle weight at
   // the CONSTANT rest px/cycle (edge tracks the cursor 1:1), grow the visual span
   // so there's room past the edge, and move the trim-edge ghost. Shared by the
@@ -1549,6 +1682,36 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       }
       const hit = clipEdgeAt(e.clientX, e.clientY)
       if (!hit) {
+        // #1527 — a MARK's edge, tested after the clip edge and before the clip
+        // body. After, because the arrangement trim is the established gesture
+        // and a mark landing within a few px of an arm boundary is rare; before,
+        // because a mark sits ON a clip body, so testing the body first would
+        // swallow every region grab into a select.
+        const edge = regionEdgeAtClient(e.clientX, e.clientY)
+        if (edge) {
+          e.preventDefault()
+          try {
+            areaRef.current?.setPointerCapture?.(e.pointerId)
+          } catch {
+            /* capture is best-effort (jsdom / inactive pointer) — drag still works */
+          }
+          userScrollUntilRef.current = Date.now() + USER_SCROLL_GUARD_MS
+          const playing = {
+            begin: markRegionValue(edge.note, 'begin'),
+            end: markRegionValue(edge.note, 'end'),
+          }
+          const startValue = playing[edge.side]
+          regionDragRef.current = {
+            ...edge,
+            pointerId: e.pointerId,
+            startClientX: e.clientX,
+            startValue,
+            playing,
+            value: startValue,
+          }
+          applyRegionTrim(e.clientX)
+          return
+        }
         // Not a clip edge. A press on a clip BODY begins a PENDING gesture that
         // resolves on pointer-up: a MOVE drag if the pointer travelled, else a
         // click (select + seek). A press off any clip clears selection + seeks.
@@ -1610,7 +1773,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       const cw = dragAwareContentWidth(areaRef.current!.getBoundingClientRect().width)
       setTrimEdgeX(songCycleToX(hit.clip.endCycle, songWindow, cw))
     },
-    [editableCaptionAt, clipEdgeAt, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
+    [editableCaptionAt, clipEdgeAt, regionEdgeAtClient, applyRegionTrim, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
   )
 
   const handleGridPointerMove = React.useCallback(
@@ -1633,6 +1796,15 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         } else {
           stopExtendAutoScroll()
         }
+        return
+      }
+      // Region trim (#1527): the edge follows the pointer at the scale frozen at
+      // pointer-down. No auto-scroll — the value is bounded 0..1 and the whole
+      // sweep is reachable inside `REGION_DRAG_SPAN_PX`, so there is nothing off
+      // the edge of the viewport to scroll towards.
+      const rd = regionDragRef.current
+      if (rd && e.pointerId === rd.pointerId) {
+        applyRegionTrim(e.clientX)
         return
       }
       // Move drag (Phase 5c): once the press travels past the threshold, preview
@@ -1667,16 +1839,21 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       }
       // Not dragging: cursor affordance — col-resize over an edge, grab over a
       // movable body. Direct style write (no React state) so hover never churns.
+      // The mark edge shows the same `col-resize` as a clip edge and is tested
+      // in the same order the press is, so what the cursor promises and what the
+      // press does cannot come apart.
       el.style.cursor = clipEdgeAt(e.clientX, e.clientY)
         ? 'col-resize'
-        : onMoveClip && clipBodyAt(e.clientX, e.clientY)
-          ? 'grab'
-          : ''
+        : regionEdgeAtClient(e.clientX, e.clientY)
+          ? 'col-resize'
+          : onMoveClip && clipBodyAt(e.clientX, e.clientY)
+            ? 'grab'
+            : ''
     },
     // #1210 — `songWindow`, not `displayCycles`: this handler maps the pointer
     // through the window itself (the move-target highlight), so a paged origin
     // has to re-create it.
-    [clipEdgeAt, clipBodyAt, armSpansNow, songWindow, dragAwareContentWidth, applyTrim, extendAutoScrollTick, stopExtendAutoScroll, onMoveClip],
+    [clipEdgeAt, regionEdgeAtClient, applyRegionTrim, clipBodyAt, armSpansNow, songWindow, dragAwareContentWidth, applyTrim, extendAutoScrollTick, stopExtendAutoScroll, onMoveClip],
   )
 
   const endTrimDrag = React.useCallback(
@@ -1773,27 +1950,74 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     [jumpToLaneAtClientY, onMoveClip, dragAwareContentWidth],
   )
 
+  /**
+   * End a region trim (#1527). A commit hands the value up; the parent decides
+   * whether the document can take it, and says so if it cannot.
+   *
+   * A drag that never moved is NOT a commit: `regionTrimEdit` would report it as
+   * no-change anyway, but stopping here means a stray click on a mark edge does
+   * not travel through the whole write path to be refused at the far end.
+   */
+  const endRegionDrag = React.useCallback(
+    (e: React.PointerEvent, commit: boolean) => {
+      const drag = regionDragRef.current
+      if (!drag || e.pointerId !== drag.pointerId) return
+      regionDragRef.current = null
+      setRegionGhost(null)
+      try {
+        areaRef.current?.releasePointerCapture?.(e.pointerId)
+      } catch {
+        /* best-effort */
+      }
+      if (commit && drag.value !== drag.startValue) {
+        const lane = sceneRef.current.lanes.find((l) => l.laneKey === drag.laneKey)
+        // Statement anchor first, content anchor second. `playing` travels with
+        // them so the parent can check that the chunk an anchor resolves to
+        // really owns this mark's region before writing through it — no single
+        // anchor is right for every spelling a take can be written in.
+        const anchors = [lane?.labelOffset, lane?.sourceOffset].filter(
+          (o, i, all): o is number => typeof o === 'number' && all.indexOf(o) === i,
+        )
+        onTrimRegion?.({
+          anchors,
+          side: drag.side,
+          value: drag.value,
+          playing: drag.playing,
+        })
+      }
+    },
+    [onTrimRegion],
+  )
+
   // Unified pointer end: a live trim drag wins; otherwise resolve the body
   // gesture. Cancel discards (no commit).
   const handleGridPointerUp = React.useCallback(
     (e: React.PointerEvent) => {
+      if (regionDragRef.current) {
+        endRegionDrag(e, true)
+        return
+      }
       if (trimDragRef.current) {
         endTrimDrag(e, true)
         return
       }
       endBodyDrag(e, true)
     },
-    [endTrimDrag, endBodyDrag],
+    [endRegionDrag, endTrimDrag, endBodyDrag],
   )
   const handleGridPointerCancel = React.useCallback(
     (e: React.PointerEvent) => {
+      if (regionDragRef.current) {
+        endRegionDrag(e, false)
+        return
+      }
       if (trimDragRef.current) {
         endTrimDrag(e, false)
         return
       }
       endBodyDrag(e, false)
     },
-    [endTrimDrag, endBodyDrag],
+    [endRegionDrag, endTrimDrag, endBodyDrag],
   )
 
   // Delete/Backspace on the focused grid removes the selected clip. The grid is
@@ -2532,6 +2756,32 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                   }}
                 />
               )}
+              {regionGhost && (
+                <>
+                  <div
+                    data-full-song="region-edge"
+                    style={{
+                      ...styles.regionEdge,
+                      left: regionGhost.left - scrollLeft,
+                      top: regionGhost.top,
+                      height: regionGhost.height,
+                    }}
+                  />
+                  {/* The number, next to the edge. A region is a fraction of a
+                      file — there is no ruler on screen that reads it off, so
+                      without this the gesture is a guess until the code changes. */}
+                  <div
+                    data-full-song="region-edge-value"
+                    style={{
+                      ...styles.regionEdgeValue,
+                      left: regionGhost.left - scrollLeft + 4,
+                      top: regionGhost.top + 2,
+                    }}
+                  >
+                    {regionGhost.label}
+                  </div>
+                </>
+              )}
               {moveGhost && (
                 <div
                   data-full-song="clip-move-ghost"
@@ -2937,5 +3187,26 @@ const styles = {
     background: 'var(--accent-faint, rgba(110,168,254,0.10))',
     pointerEvents: 'none' as const,
     boxSizing: 'border-box' as const,
+  },
+  // Region-trim edge (#1527): the LANE-height line the dragged slice boundary
+  // is at. Lane-height rather than mark-height on purpose — the edit lands on
+  // the track's expression, so every mark in the lane moves with it, and a line
+  // drawn only across the grabbed mark would say otherwise.
+  regionEdge: {
+    position: 'absolute' as const,
+    width: 2,
+    background: 'var(--accent, #6ea8fe)',
+    boxShadow: '0 0 5px var(--accent, rgba(110,168,254,0.6))',
+    pointerEvents: 'none' as const,
+  },
+  regionEdgeValue: {
+    position: 'absolute' as const,
+    font: '10px ui-monospace, SFMono-Regular, Menlo, monospace',
+    color: 'var(--accent, #6ea8fe)',
+    background: 'var(--panel-bg, rgba(0,0,0,0.72))',
+    padding: '1px 3px',
+    borderRadius: 2,
+    whiteSpace: 'nowrap' as const,
+    pointerEvents: 'none' as const,
   },
 } satisfies Record<string, React.CSSProperties>

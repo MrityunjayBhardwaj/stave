@@ -1009,3 +1009,193 @@ describe('FullSongTimeline — the marks are read for the WINDOW on screen (#120
     expect(prefix.mock.calls[0]).toEqual([8])
   })
 })
+
+describe('FullSongTimeline — trim a REGION (drag a mark edge → .begin/.end, #1527)', () => {
+  // The fixture's bd lane has four 1-cycle marks. At zoom 1 the period (4) fits
+  // 800px → 200px/cycle, so the mark at cycle 1 is the rect x∈[200,400).
+  //
+  // Its Y is derived, not guessed: an expanded single-voice percussive lane is
+  // one 22px sub-row (the mocked row height), `laneMarkBands` insets it by 3 and
+  // gives an expanded mark 4px, so the band is [3, 15) and the mark sits on its
+  // centre line at y=9, occupying [9, 13). y=10 is inside it; y=20 is not.
+  //
+  // ⚠ THE HAPS CARRY `trackId: 'bd'` AND THAT IS LOAD-BEARING. With the clip
+  // fixture's own events — which have no `trackId` — the marks are keyed to an
+  // EVAL-BACKED lane appended after the analysis lanes, so they land on a lane
+  // that has no clips and no source anchor, and the precedence arm below cannot
+  // contest anything. Naming the track puts the marks on the same lane as the
+  // clips, which is what the app does for a declared track.
+  //
+  // With `bd` expanded the rows are bd [0,22), hh [22,44); an expanded
+  // single-voice percussive lane is inset 3 and its mark is 4px, so the mark
+  // band is [9, 13). y=20 is inside the lane and outside the mark.
+  const MARK_LANE = 'bd'
+  const MARK_X = 200
+  const MARK_Y = 10
+  const OUTSIDE_MARK_Y = 20
+  const REGION_EVENTS = TRIM_EVENTS.map((e) => ({ ...e, trackId: 'bd' }))
+
+  function renderRegion(
+    onTrimRegion: ReturnType<typeof vi.fn>,
+    extra?: Partial<React.ComponentProps<typeof FullSongTimeline>>,
+  ) {
+    // ⚠ `getTimelineEvents` IS LOAD-BEARING HERE, and its absence is why the
+    // first version of these arms passed by never applying. Note marks come from
+    // the EVENT accessors on the props, not from the barrel's `collectCycles`
+    // — the clip fixtures above need no haps because clips come off the IR walk.
+    // Without it the lanes carry zero marks and every "is inert" arm below is
+    // vacuous while every "it fires" arm is impossible.
+    const utils = renderFull({
+      ir: {} as never,
+      onTrimRegion,
+      getTimelineEvents: () => REGION_EVENTS as never,
+      ...extra,
+    })
+    const grid = utils.container.querySelector('[data-full-song="grid"]') as HTMLElement
+    grid.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 48, right: 800, bottom: 48, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    return { ...utils, grid }
+  }
+
+  /** Expand a lane — the gesture is deliberately inert on a collapsed one. */
+  async function expandLane(container: HTMLElement, laneKey: string) {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      ;(container.querySelector(`[data-full-song-lane-expand="${laneKey}"]`) as HTMLElement).click()
+    })
+  }
+
+  it('drags a mark’s LEFT edge → onTrimRegion(begin), scaled by the mark’s width', async () => {
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    await expandLane(container, MARK_LANE)
+    // 80px of travel across a 200px mark = 0.4 of the file.
+    fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimRegion).toHaveBeenCalledTimes(1)
+    const req = onTrimRegion.mock.calls[0][0]
+    expect(req.side).toBe('begin')
+    expect(req.value).toBeCloseTo(0.4, 6)
+    // The mark plays the whole file — no region controls on the fixture.
+    expect(req.playing).toEqual({ begin: 0, end: 1 })
+    // The lane's anchors, statement first. These events carry no `dollarPos`, so
+    // only the content anchor exists — which is exactly the case the ordered
+    // list is there to handle.
+    expect(req.anchors).toEqual([9])
+  })
+
+  it('drags a mark’s RIGHT edge → onTrimRegion(end)', async () => {
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    await expandLane(container, MARK_LANE)
+    // The LAST mark spans [3,4) → its right edge is x=800, with no neighbour to
+    // contest it. Drag LEFT by 100px across a 200px mark → 1 − 0.5.
+    fireEvent.pointerDown(grid, { clientX: 800, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: 700, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: 700, clientY: MARK_Y, pointerId: 1 })
+    const req = onTrimRegion.mock.calls[0][0]
+    expect(req.side).toBe('end')
+    expect(req.value).toBeCloseTo(0.5, 6)
+  })
+
+  it('⚠ where two marks touch, BOTH gestures stay reachable', async () => {
+    // Marks at cycles 1 and 2 abut at x=400. With grip bands centred on the
+    // edges, the eight pixels around that join claimed both the earlier mark's
+    // `end` and the later one's `begin`, and the scan resolved them to a `begin`
+    // already at 0 — where dragging left clamps to 0 and commits nothing. The
+    // bands lie inside the marks instead, so each side of the join is its own
+    // gesture. This is the arm that fails if they ever straddle again.
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    await expandLane(container, MARK_LANE)
+    // Just LEFT of the join → the earlier mark's `end`, draggable downwards.
+    fireEvent.pointerDown(grid, { clientX: 397, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: 297, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: 297, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimRegion.mock.calls[0][0].side).toBe('end')
+    expect(onTrimRegion.mock.calls[0][0].value).toBeCloseTo(0.5, 6)
+    // Just RIGHT of it → the later mark's `begin`, draggable upwards.
+    fireEvent.pointerDown(grid, { clientX: 403, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: 503, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: 503, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimRegion.mock.calls[1][0].side).toBe('begin')
+    expect(onTrimRegion.mock.calls[1][0].value).toBeCloseTo(0.5, 6)
+  })
+
+  it('⚠ is INERT on a collapsed lane — the waveform it trims is not drawn there', async () => {
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    // Deliberately NOT expanded.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(
+      (container.querySelector(`[data-full-song-lane="${MARK_LANE}"]`) as HTMLElement).getAttribute(
+        'data-expanded',
+      ),
+    ).toBe('false')
+    fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimRegion).not.toHaveBeenCalled()
+  })
+
+  it('does not fire off the mark’s own band', async () => {
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    await expandLane(container, MARK_LANE)
+    fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: OUTSIDE_MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: MARK_X + 80, clientY: OUTSIDE_MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: MARK_X + 80, clientY: OUTSIDE_MARK_Y, pointerId: 1 })
+    expect(onTrimRegion).not.toHaveBeenCalled()
+  })
+
+  it('a press that never moves does not commit', async () => {
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    await expandLane(container, MARK_LANE)
+    fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimRegion).not.toHaveBeenCalled()
+  })
+
+  it('a cancelled drag discards, and clears the edge ghost', async () => {
+    const onTrimRegion = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion)
+    await expandLane(container, MARK_LANE)
+    fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    // The ghost is the drag's only visible feedback — a region is a fraction of
+    // a file and nothing else on screen reads it off.
+    expect(container.querySelector('[data-full-song="region-edge"]')).not.toBeNull()
+    fireEvent.pointerCancel(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimRegion).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-full-song="region-edge"]')).toBeNull()
+  })
+
+  it('⚠ the CLIP edge keeps precedence where the two gestures contest a pixel', async () => {
+    // Arm 0's right edge is at x=400, which is also the cycle-1 mark's right
+    // edge. The arrangement trim is the established gesture and wins; without
+    // this ordering the clip trim would become ungrabbable on an expanded lane.
+    const onTrimRegion = vi.fn()
+    const onTrimClip = vi.fn()
+    const { grid, container } = renderRegion(onTrimRegion, { onTrimClip })
+    await expandLane(container, MARK_LANE)
+    fireEvent.pointerDown(grid, { clientX: 400, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: 600, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: 600, clientY: MARK_Y, pointerId: 1 })
+    expect(onTrimClip).toHaveBeenCalledTimes(1)
+    expect(onTrimRegion).not.toHaveBeenCalled()
+  })
+
+  it('is inert with no handler wired — the marks stay read-only', async () => {
+    const { grid, container } = renderRegion(vi.fn(), { onTrimRegion: undefined })
+    await expandLane(container, MARK_LANE)
+    fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
+    fireEvent.pointerMove(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
+    expect(container.querySelector('[data-full-song="region-edge"]')).toBeNull()
+  })
+})

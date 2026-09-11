@@ -54,6 +54,12 @@ export type WriteSource =
   // #1464 Stage 2 — the Song Timeline's automation caption (a bound or a signal
   // kind edited in place on the lane).
   | 'automation'
+  // #1527 — the Song Timeline's region trim: dragging a sample mark's own edge
+  // to change which slice of its file it plays (`.begin` / `.end`). Its own
+  // source rather than `knob` because it edits the same two controls the
+  // inspector's knobs do, from a different surface with a different failure
+  // mode, and a Console line that cannot tell them apart is not an instrument.
+  | 'region.trim'
 
 /** A single replacement, addressed by absolute pre-edit doc offsets. */
 export interface OffsetEdit {
