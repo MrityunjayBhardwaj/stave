@@ -822,8 +822,11 @@ interface SignalAutomation {
  * (insert a call at `chainEnd`), and the two must not be confused, because one
  * preserves every other byte and the other lengthens the document.
  *
- * Measured over the sweep corpus (`loadCorpus`, 150 documents, 200 drawable
- * automations): range spelled 180 (90%), rate spelled 128 (64%), NEITHER 16 (8%).
+ * Measured over the sweep corpus (`loadCorpus`, 150 documents, 204 drawable
+ * automations): range spelled 184 (90%), rate spelled 130 (64%), NEITHER 16 (8%).
+ * (#1468 moved the first three by +4/+4/+2: two documents whose top-level
+ * bindings were discarded by the old leading-run rule now resolve, so their
+ * chains are readable. The shares are unchanged.)
  * ⚠ Those figures are OWNED BY A GATE, not transcribed here and left to rot:
  * `packages/app/tests/parity-corpus/signal-span-census.test.ts` derives them
  * from these spans and pins them, so the comment and the corpus cannot drift

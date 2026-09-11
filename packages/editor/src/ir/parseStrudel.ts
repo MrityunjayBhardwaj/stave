@@ -870,21 +870,46 @@ export function collectTopLevelBindings(
   // mid-loop; the def-site arithmetic is fixed at first pass).
   const descs: { name: string; rhs: string; rhsOffset: number }[] = []
   const seen = new Set<string>()
-  let tailIdx = -1
+  const tail: { text: string; offset: number }[] = []
   for (let s = 0; s < stmts.length; s++) {
     const { text, offset } = stmts[s]
     const bm = text.match(BINDING_RE)
     if (!bm) {
-      // First non-binding statement opens the TAIL. Bindings are the leading
-      // run only; anything binding-shaped after this point is not part of the
-      // map (a trailing binding is what `buildBindingMap`'s shape fence
-      // rejects, and the tail is what a `$:` document's tracks live in).
-      tailIdx = s
-      break
+      // #1468 — A BINDING NEED NOT LEAD.
+      //
+      // This used to `break`: bindings were the LEADING RUN, and the first
+      // statement that was not one ended the map. JavaScript has no such rule —
+      // a top-level `let` is a top-level `let` wherever it is written — and the
+      // documents that pay for it are ordinary:
+      //
+      //     await initHydra()          ← not a binding, so the run ends HERE
+      //     let p1 = "0!3 ~ 0!2 ~ …"   ← never collected
+      //     shape(2,0.01).…out()       ← a hydra visual between the bindings
+      //     let a1 = stack( … )        ← never collected
+      //     let a2 = stack( … )        ← never collected
+      //     arrange([4, a1], [4, a2])  ← cannot resolve, so the WHOLE document
+      //                                  falls to the opaque fallback
+      //
+      // That was #1468's remaining cause, and its causes C ("top-level await")
+      // and D ("a visual side-effect chain between bindings") turn out to be one
+      // cause wearing two hats: neither `await` nor hydra matters, only that
+      // something that is not a binding appears before the bindings do.
+      //
+      // So a non-binding statement now joins the TAIL and the scan continues.
+      tail.push({ text, offset })
+      continue
     }
     const name = bm[1]
     const rhs = bm[2].trim()
     // D-02: reassignment / shadowing (duplicate name) → fallback.
+    //
+    // ⚠ THIS FENCE IS NOW STRICTER, because it sees the whole document rather
+    // than the leading run: a name bound twice with an expression between the
+    // two used to resolve (the second was never looked at) and now declines.
+    // Measured before taking it — across the 558-document archive, the number
+    // of documents with a duplicate binding name outside the leading run is
+    // ZERO, and the detector was control-checked against a constructed input so
+    // the zero is not instrument failure.
     if (seen.has(name)) return null
     seen.add(name)
     // RHS absolute offset = statement offset + (where rhs starts in text).
@@ -892,7 +917,7 @@ export function collectTopLevelBindings(
     const rhsOffset = offset + rhsStartInText
     descs.push({ name, rhs, rhsOffset })
   }
-  if (tailIdx === -1) return null // all statements were bindings, nothing to play
+  if (tail.length === 0) return null // all statements were bindings, nothing to play
   if (descs.length === 0) return null // no bindings → nothing to resolve
 
   // BOUNDED LEAST-FIXPOINT (Datalog discipline: total + PTIME +
@@ -968,7 +993,11 @@ export function collectTopLevelBindings(
   // #1292 and its verdicts "are not re-derivable from this tree". The 329-
   // document corpus is the better basis, and it is what moved this.
   if (bindings.size === 0) return null
-  return { bindings, tail: stmts.slice(tailIdx) }
+  // #1468 — the tail is now the NON-BINDING statements in source order, not a
+  // suffix slice. A declaration is not a part (#1534 decided that for rows), so
+  // it does not appear here either, and the two answers agree by construction
+  // rather than by a filter kept in step by hand.
+  return { bindings, tail }
 }
 
 /**

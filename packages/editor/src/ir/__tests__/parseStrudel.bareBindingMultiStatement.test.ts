@@ -127,10 +127,88 @@ describe('#1523 — a bare document with a binding and several trailing expressi
     // not exist — no second, weaker binding map is invented here.
     const dup = 'let a = s("bd*4")\nlet a = s("sd*4")\na.fast(2)\ns("hh*8")'
     expect(bothParsers(dup).tag).toBe('Track')
-    // …and a document whose FIRST statement is an expression has no leading
-    // binding run for the engine to read, so it is left whole too.
+  })
+
+  // ⚠ THE SHAPE THAT MOTIVATED #1468, reduced to its skeleton. A hydra tune
+  // opens with `await initHydra()`, declares its patterns, drops a visual
+  // side-effect chain between them, and arranges at the end. Under the
+  // leading-run rule the FIRST line ended the map, so `a1`/`a2` never resolved
+  // and the arrangement — the whole point of the document — was unreadable.
+  //
+  // The issue filed this as two causes, "top-level await" and "a visual chain
+  // between bindings". Neither is the cause: `await` and hydra are incidental,
+  // and only the ORDER matters. One arm covers both because there was only ever
+  // one defect.
+  it('#1468 — an expression above the bindings no longer costs the arrangement', () => {
+    const code =
+      'await initHydra()\n' +
+      'let a1 = s("bd*4")\n' +
+      'shape(2,0.01).out()\n' +
+      'let a2 = s("hh*8")\n' +
+      'arrange([4, a1], [4, a2])'
+    const ir = bothParsers(code)
+    // The arrangement is the property that was lost — asserted before any count.
+    expect(census(ir).Arrange).toBe(1)
+    const arrange = tracksOf(ir)
+      .map((t) => (t.tag === 'Track' ? t.body : t))
+      .find((b) => b.tag === 'Arrange')
+    expect(arrange?.tag === 'Arrange' && arrange.arms.map((a) => a.weight)).toEqual([4, 4])
+  })
+
+  // ⚠ NOT A CONTROL, and it was labelled one until the break test said
+  // otherwise — the third time in this arc. It FLIPS with the change reverted,
+  // so it is a claim about the new engine's semantics, not a shape that was
+  // always true.
+  //
+  // Under the leading-run rule the second `let a` sat OUTSIDE the run, was
+  // never looked at, and the map resolved happily on the first. Seeing the
+  // whole document means seeing the reassignment, so the dup fence now fires
+  // where it used to be blind: strictly stricter, and deliberately so — a name
+  // bound twice is exactly what that fence exists to refuse.
+  //
+  // Measured before taking it: across the 558-document archive, the number of
+  // documents with a duplicate binding name outside the leading run is ZERO,
+  // and the detector was control-checked against a constructed input so the
+  // zero is not instrument failure.
+  it('#1468 — a duplicate name ANYWHERE now declines, where a late one used to be invisible', () => {
+    const code = 'let a = s("bd*4")\ns("cp")\nlet a = s("sd*4")\na.fast(2)'
+    expect(bothParsers(code).tag).toBe('Track')
+  })
+
+  it('#1468 CONTROL — a document of bindings ALONE still declines', () => {
+    // Nothing to play, so there is nothing to resolve for. Passes with the
+    // change reverted.
+    expect(bothParsers('let a = s("bd*4")\nlet b = s("hh*8")').tag).toBe('Track')
+  })
+
+  // ⚠ THIS ARM ASSERTED THE OPPOSITE UNTIL #1468, and it was the RULE written
+  // down as a control rather than a regression. It read:
+  //
+  //   "a document whose FIRST statement is an expression has no leading binding
+  //    run for the engine to read, so it is left whole too"  → expect Track
+  //
+  // That was a true description of the engine and a false description of
+  // JavaScript. Bindings were taken as a LEADING RUN, so one expression above
+  // them discarded every binding in the document — which is the remaining cause
+  // of #1468, and why a hydra tune whose `await initHydra()` sits on line 1
+  // reached the timeline with nothing in it. The run restriction is gone; a
+  // top-level `let` is collected wherever it is written.
+  it('#1468 — a binding declared BELOW the first expression still resolves', () => {
     const late = 's("cp")\nlet a = s("bd*4")\na.fast(2)'
-    expect(bothParsers(late).tag).toBe('Track')
+    const ir = bothParsers(late)
+    expect(ir.tag).toBe('Stack')
+    const ts = tracksOf(ir)
+    // Two parts — the declaration is not one of them (#1534) and no longer
+    // costs the document its map.
+    expect(ts).toHaveLength(2)
+    expect(ts.map((t) => late.slice(t.loc![0].start, t.loc![0].end))).toEqual([
+      's("cp")',
+      'a.fast(2)',
+    ])
+    // …and `a` really resolved: Fast(2, Fast(4, Play(bd))), not an opaque node.
+    const body = ts[1].tag === 'Track' ? ts[1].body : ts[1]
+    expect(body.tag).toBe('Fast')
+    expect(census(ir).Code ?? 0).toBe(0)
   })
 
   // ⚠ NOT A CONTROL, and it was labelled as one until the break test said
