@@ -112,11 +112,11 @@ the rest of the line as its initialiser), no destructuring, no `=` inside a prec
 1x  /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/
 ```
 
-### A3b · "does this statement DECLARE, rather than play?" — 1 site
+### A3b · "can this statement ever be a musical part?" — 1 site
 
-`DECLARATION_RE:798`
+`NON_EXPRESSION_HEAD_RE:839`
 
-Owner: acorn (`VariableDeclaration`). **Transcribed.**
+Owner: acorn (`Statement` vs `ExpressionStatement`). **Transcribed.**
 
 ⚠ A SEPARATE ENTRY FROM A3 ON PURPOSE, and the separation is the finding. A3 asks a
 question whose answer feeds a substitution map, so it needs a name and an initialiser and
@@ -125,15 +125,32 @@ be a musical part — and `const {movement} = createParams('movement')` answers 
 firmly while matching A3 not at all. Written with A3, the #1534 row filter left that exact
 line drawing a silent row in the one archive document it was measured on.
 
-Known-incomplete: **observed** — `function` and `class` declarations are declarations too and
-are deliberately outside it (they still take a silent row, #1096's rule; see 1536). The word
-boundary rather than whitespace is a deliberate choice between two spellings that differ on
-exactly four inputs: it accepts `const{m}=x` and `let[a,b]=x`, declarations written without a
-space, and the only thing it additionally admits — a call spelled `var(…)` — cannot appear at
-statement start, because those are reserved words.
+⚠ RENAMED AND WIDENED IN #1536, AND THE QUESTION IS WHAT CHANGED. It used to be spelled
+`DECLARATION_RE` and ask "does this DECLARE", which forced its own entry to argue why
+`function` and `class` — declarations by any reading — were excluded from it. That argument
+was the tell. The question it actually answers is whether the statement can SOUND, and
+JavaScript decides that: a statement is not an expression, and only an expression can
+evaluate to a pattern. Membership is now a syntactic fact rather than a judgement, which is
+what keeps it from becoming the hand-rolled category #1534 refused to build.
+
+Known-incomplete: **observed** — ASSIGNMENTS are deliberately outside it.
+`Pattern.prototype.kolam = …` and `window.inited = …` cannot sound either, but they are
+ExpressionStatements and `x = s("bd")` is the same shape and can, so dropping them would hide
+something a better parser could use. Measured over the 558-document archive (99 bare
+multi-statement documents, 494 top-level statements): the widening newly drops 7 statements
+in 4 documents — 5 `function` declarations and 2 `if` blocks, every one a helper or a boot
+guard — and touches zero real parts; the 2 excluded assignments live in 1 document. The
+corpus holds no top-level `class`, `for`, `while`, `switch`, `try` or `do` at all, so those
+members rest on the syntactic argument rather than on evidence.
+
+The word boundary rather than whitespace is a deliberate choice between two spellings that
+differ on exactly four inputs: it accepts `const{m}=x` and `let[a,b]=x`, declarations written
+without a space, and the only thing it additionally admits — a call spelled `var(…)` — cannot
+appear at statement start, because those are reserved words. The same boundary is what keeps
+`doubled`, `iffy`, `forEach` and `classic` out, each with an arm.
 
 ```regex
-1x  /^(?:let|const|var)\b/
+1x  /^(?:let|const|var|function|class|if|for|while|switch|try|do)\b|^async\s+function\b/
 ```
 
 ### A4 · "is this a `param => bodyvar.chain` arrow, and what is the chain?" — 1 site
