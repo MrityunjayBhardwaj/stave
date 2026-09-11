@@ -8,9 +8,14 @@ import {
   setFolderOrder,
   setSubfolderOrder,
   withStructBatch,
+  putAsset,
+  addAssetRecord,
+  type AssetRecord,
   type ProjectMeta,
   type WorkspaceLanguage,
 } from "@stave/editor";
+
+import { ASSET_DIR } from "./exportProject";
 
 interface StaveManifest {
   schemaVersion: 1;
@@ -18,6 +23,8 @@ interface StaveManifest {
   files: Array<{ id: string; path: string; language: string }>;
   fileOrder: Record<string, string[]>;
   subfolderOrder?: Record<string, string[]>;
+  /** Optional for the same reason the exporter omits it — see `StaveManifest` there. */
+  assets?: AssetRecord[];
 }
 
 /**
@@ -73,6 +80,46 @@ export async function importProjectFromZip(file: File): Promise<ProjectMeta> {
       }
     }
   });
+
+  // Assets last, and outside the struct batch: storing bytes is async, so it
+  // cannot join a synchronous batch, and putting it after the files means a
+  // failure here leaves the project with its code rather than with neither.
+  //
+  // ⚠ The record is written with the hash the STORE computed, never the one
+  // the manifest claims. They agree for an intact archive; when they don't,
+  // trusting the manifest would mint a record pointing at bytes that are not
+  // in the store — a name that registers nothing and plays silently, which is
+  // the failure this whole path exists to remove.
+  //
+  // Registration is deliberately NOT done here. `StrudelEditorClient` already
+  // owns "a project's takes are playable", keyed on project id, and it also
+  // warms each take's waveform. A second registration site would be a second
+  // owner of that invariant and would skip the warm. This function's contract
+  // is narrower and is what that effect needs: by the time it returns, the
+  // records exist and their bytes are in the store.
+  //
+  // ⚠ Guarded per asset. The files are already in the project by this point,
+  // so throwing would surface "Import failed" over a project that imported
+  // fine, and one unreadable take would cost the user every other one. A take
+  // that cannot be stored is skipped for the same reason its bytes are never
+  // half-written: a record with no bytes behind it is the silent failure.
+  for (const asset of manifest.assets ?? []) {
+    try {
+      const entry = zip.file(`${ASSET_DIR}${asset.blobHash}`);
+      if (!entry) continue;
+      // Read as an ArrayBuffer rather than a blob: a blob from JSZip carries an
+      // empty MIME type and would have to be re-wrapped, and `new Blob([aBlob])`
+      // — legal in a browser — is not implemented by jsdom, which would put this
+      // line beyond the reach of any arm. Going through the buffer gives the
+      // store the MIME the record remembers and stays testable. The bytes are
+      // untouched either way, so the content hash is unaffected.
+      const bytes = await entry.async("arraybuffer");
+      const { hash } = await putAsset(new Blob([bytes], { type: asset.mime }));
+      addAssetRecord({ ...asset, blobHash: hash });
+    } catch (err) {
+      console.error(`[stave] import: skipped asset "${asset.name}":`, err);
+    }
+  }
 
   return meta;
 }
