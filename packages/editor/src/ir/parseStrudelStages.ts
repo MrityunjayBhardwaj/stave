@@ -29,7 +29,7 @@ import {
   splitTopLevelStatements,
   stripSideEffectStatements,
   BINDING_RE,
-  DECLARATION_RE,
+  NON_EXPRESSION_HEAD_RE,
   buildBindingMap,
   collectTopLevelBindings,
   collectNumericBindings,
@@ -145,15 +145,21 @@ export function runRawStage(input: PatternIR): PatternIR {
       ? collectTopLevelBindings(stripped.body, stripped.offset, docNumbers)
       : null
     const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
-    // #1534 — the mirror of parseStrudel.ts's declaration filter. A `let` in
-    // the tail is not a part and must not take a row.
+    // #1534/#1536 — the mirror of parseStrudel.ts's row filter. A statement that
+    // cannot be an expression is not a part and must not take a row.
     //
     // ⚠ The reason this one is mirrorable at all, when the filter #1523
     // rejected was not, is that it is TEXTUAL. That one asked "did this
     // statement parse musically?", which this stage cannot answer — it splits
-    // at RAW, before anything is parsed. `DECLARATION_RE` reads the
+    // at RAW, before anything is parsed. `NON_EXPRESSION_HEAD_RE` reads the
     // statement's text, which is all RAW has and all it needs.
-    const playable = trackStmts.filter((st) => !DECLARATION_RE.test(st.text))
+    //
+    // ⚠ AND THAT IS WHY #1536's WIDENING COST NOTHING HERE. Adding `function`,
+    // `class`, `if` and the rest to the predicate is still a question about
+    // TEXT, so this line did not change at all — one predicate, imported, and
+    // both parsers move together. A widening that had needed parse results
+    // would have had to stop at the same fence #1523 hit.
+    const playable = trackStmts.filter((st) => !NON_EXPRESSION_HEAD_RE.test(st.text))
     if (playable.length > 1) {
       return {
         tag: 'Stack' as const,
