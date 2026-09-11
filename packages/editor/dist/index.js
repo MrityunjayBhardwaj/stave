@@ -43687,7 +43687,8 @@ function planAssetImport(input, existing, mintId) {
     name,
     blobHash: input.blobHash,
     mime: input.mime,
-    ...input.duration != null ? { duration: input.duration } : {}
+    ...input.duration != null ? { duration: input.duration } : {},
+    ...input.origin != null ? { origin: input.origin } : {}
   };
   return {
     record,
@@ -43831,7 +43832,7 @@ async function registerAssets(records) {
   return registered;
 }
 __name(registerAssets, "registerAssets");
-async function importAsset(blob, filename, existing = [], deps = {}) {
+async function importAsset(blob, filename, existing = [], deps = {}, origin) {
   const put = await putAsset(blob, deps.digest ?? sha256Hex);
   let duration;
   try {
@@ -43840,7 +43841,7 @@ async function importAsset(blob, filename, existing = [], deps = {}) {
     duration = void 0;
   }
   const plan = planAssetImport(
-    { blobHash: put.hash, filename, mime: blob.type, duration },
+    { blobHash: put.hash, filename, mime: blob.type, duration, origin },
     existing,
     deps.mintId ?? (() => crypto.randomUUID())
   );

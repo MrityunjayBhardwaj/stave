@@ -393,6 +393,7 @@ export {
 } from './workspace/assetNaming'
 export type {
   AssetRecord,
+  AssetOrigin,
   AssetImportPlan,
   AssetImportInput,
 } from './workspace/assetNaming'

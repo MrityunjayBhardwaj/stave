@@ -15,6 +15,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
+import {
+  AddAudioButton,
+  AddAudioMessage,
+  useAudioDrop,
+  useAudioImport,
+} from "./AddAudioButton";
 import { RecordTakeButton } from "./RecordTakeButton";
 import {
   listAssetProviders,
@@ -85,6 +91,15 @@ export function AssetLibraryPanel({ onClose }: { onClose?: () => void }) {
   const [tick, setTick] = useState(0);
   useEffect(() => subscribeToAssetProviders(() => setTick((t) => t + 1)), []);
   const providers = useMemo(() => listAssetProviders(), [tick]);
+
+  // #1541 — one owner for both ways audio arrives: the picker and a drop
+  // anywhere on the panel.
+  const audio = useAudioImport();
+  const onFiles = useCallback(
+    (files: readonly File[]) => void audio.importFiles(files),
+    [audio],
+  );
+  const drop = useAudioDrop(onFiles);
 
   const [query, setQuery] = useState("");
   const [type, setType] = useState<AssetType | null>(null);
@@ -188,11 +203,20 @@ export function AssetLibraryPanel({ onClose }: { onClose?: () => void }) {
   );
 
   return (
-    <div style={styles.root} data-sidebar data-asset-library>
+    <div
+      style={{ ...styles.root, ...(drop.over ? styles.dropping : null) }}
+      data-sidebar
+      data-asset-library
+      data-audio-dropping={drop.over ? "true" : "false"}
+      {...drop.handlers}
+    >
       <div style={styles.header}>
         <span>LIBRARY</span>
         <div style={styles.headerActions}>
-          {/* #1504 — the record control sits with the assets it produces. */}
+          {/* #1504/#1541 — the two ways audio gets in sit with what they
+              produce. Add comes first: it is the one every project can use,
+              while recording needs a microphone and a permission. */}
+          <AddAudioButton busy={audio.busy} onFiles={onFiles} />
           <RecordTakeButton />
           {onClose && (
             <button
@@ -206,6 +230,8 @@ export function AssetLibraryPanel({ onClose }: { onClose?: () => void }) {
           )}
         </div>
       </div>
+
+      <AddAudioMessage message={audio.message} />
 
       <div style={styles.controls}>
         <input
@@ -720,6 +746,13 @@ function AssetCard({
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  // #1541 — a drop target has to LOOK like one while a file is over it, or the
+  // only feedback is the cursor, which the browser owns and which says nothing
+  // about whether this panel will take it.
+  dropping: {
+    outline: "1px dashed var(--accent, #6ea8fe)",
+    outlineOffset: -3,
+  },
   root: {
     // Width is owned by SidePanel (#1367) — and this panel already
     // re-measures its content width on every panel resize, so it wants a
