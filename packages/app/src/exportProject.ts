@@ -78,20 +78,32 @@ export async function exportProjectAsZip(project: ProjectMeta): Promise<void> {
   // dropped rather than exported. Carrying it would import a name that
   // registers nothing and plays silently, which is precisely the failure this
   // path exists to remove.
+  //
+  // ⚠ The whole walk is guarded. Before this existed an export touched no
+  // storage at all, so a blob store that is unreachable — a bounded open that
+  // rejects, a private-mode refusal — could not stop anyone exporting their
+  // CODE. Letting it throw here would trade a missing take for a missing
+  // project. Records already collected are kept: each one is pushed only
+  // after its bytes are in the zip, so a partial list still describes the
+  // archive truthfully.
   const assets: AssetRecord[] = [];
   const packed = new Set<string>();
-  for (const record of listAssetRecords()) {
-    if (!packed.has(record.blobHash)) {
-      const blob = await getAsset(record.blobHash);
-      if (!blob) continue;
-      // Written as bytes rather than as the blob itself, symmetric with the
-      // importer reading `arraybuffer` back. It costs no extra memory — the
-      // zip is assembled in memory regardless — and it keeps both directions
-      // on one representation instead of relying on JSZip's blob handling.
-      zip.file(`${ASSET_DIR}${record.blobHash}`, await blob.arrayBuffer());
-      packed.add(record.blobHash);
+  try {
+    for (const record of listAssetRecords()) {
+      if (!packed.has(record.blobHash)) {
+        const blob = await getAsset(record.blobHash);
+        if (!blob) continue;
+        // Written as bytes rather than as the blob itself, symmetric with the
+        // importer reading `arraybuffer` back. It costs no extra memory — the
+        // zip is assembled in memory regardless — and it keeps both directions
+        // on one representation instead of relying on JSZip's blob handling.
+        zip.file(`${ASSET_DIR}${record.blobHash}`, await blob.arrayBuffer());
+        packed.add(record.blobHash);
+      }
+      assets.push(record);
     }
-    assets.push(record);
+  } catch (err) {
+    console.error("[stave] export: assets unavailable, exporting code only:", err);
   }
 
   const manifest: StaveManifest = {

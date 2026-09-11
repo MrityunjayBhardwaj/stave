@@ -33,6 +33,16 @@ const store = {
   subfolderOrder: {} as Record<string, string[]>,
   records: [] as AssetRecord[],
   blobs: new Map<string, Blob>(),
+  // Held on the fake rather than inlined in the mock factory so an arm can
+  // swap one out to model a store that is failing rather than merely empty.
+  getAsset: async (hash: string): Promise<Blob | null> =>
+    store.blobs.get(hash) ?? null,
+  putAsset: async (blob: Blob): Promise<{ hash: string; written: boolean }> => {
+    const hash = await fakeHash(blob);
+    const written = !store.blobs.has(hash);
+    if (written) store.blobs.set(hash, blob);
+    return { hash, written };
+  },
 };
 
 /**
@@ -99,13 +109,8 @@ vi.mock("@stave/editor", () => ({
   getFolderOrder: (p: string) => store.folderOrder[p] ?? [],
   getSubfolderOrder: (p: string) => store.subfolderOrder[p] ?? [],
   listAssetRecords: () => store.records,
-  getAsset: async (hash: string) => store.blobs.get(hash) ?? null,
-  putAsset: async (blob: Blob) => {
-    const hash = await fakeHash(blob);
-    const written = !store.blobs.has(hash);
-    if (written) store.blobs.set(hash, blob);
-    return { hash, written };
-  },
+  getAsset: (hash: string) => store.getAsset(hash),
+  putAsset: (blob: Blob) => store.putAsset(blob),
   addAssetRecord: (r: AssetRecord) => {
     store.records.push(r);
   },
@@ -286,6 +291,49 @@ describe("#1539 — the archive carries a recorded take", () => {
     // The record points at the hash of the bytes that actually arrived, so it
     // resolves — the manifest's claim is ignored.
     expect(store.records[0].blobHash).not.toBe("h_not_the_bytes");
+    expect(store.blobs.has(store.records[0].blobHash)).toBe(true);
+  });
+});
+
+describe("#1539 — a failing blob store costs takes, never the project", () => {
+  it("still exports the code when the blob store is unreachable", async () => {
+    await seedTake("my_take");
+    const realGet = store.getAsset;
+    store.getAsset = async () => {
+      throw new Error("IndexedDB unavailable");
+    };
+    try {
+      const { zip } = await exportToZip();
+      // The code is all there — which is the point: before assets were in the
+      // archive at all, a broken store could not stop anyone exporting.
+      expect(entryNames(zip)).toEqual(["song.js", "stave.json"]);
+      expect(await readManifest(zip)).not.toHaveProperty("assets");
+    } finally {
+      store.getAsset = realGet;
+    }
+  });
+
+  it("skips one unstorable take and keeps its neighbour", async () => {
+    await seedTake("bad", new Uint8Array([1, 1, 1]));
+    await seedTake("good", new Uint8Array([2, 2, 2]));
+    const { blob } = await exportToZip();
+
+    wipeStore();
+    const realPut = store.putAsset;
+    let seen = 0;
+    store.putAsset = async (b: Blob) => {
+      // Fail exactly the first take stored, not all of them — an arm where
+      // every write fails cannot tell "skipped one" from "skipped all".
+      if (++seen === 1) throw new Error("quota exceeded");
+      return realPut(b);
+    };
+    try {
+      await importProjectFromZip(blob as unknown as File);
+    } finally {
+      store.putAsset = realPut;
+    }
+
+    expect(store.records).toHaveLength(1);
     expect(store.blobs.has(store.records[0].blobHash)).toBe(true);
   });
 });

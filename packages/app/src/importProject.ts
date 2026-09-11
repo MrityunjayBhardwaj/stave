@@ -97,18 +97,28 @@ export async function importProjectFromZip(file: File): Promise<ProjectMeta> {
   // owner of that invariant and would skip the warm. This function's contract
   // is narrower and is what that effect needs: by the time it returns, the
   // records exist and their bytes are in the store.
+  //
+  // ⚠ Guarded per asset. The files are already in the project by this point,
+  // so throwing would surface "Import failed" over a project that imported
+  // fine, and one unreadable take would cost the user every other one. A take
+  // that cannot be stored is skipped for the same reason its bytes are never
+  // half-written: a record with no bytes behind it is the silent failure.
   for (const asset of manifest.assets ?? []) {
-    const entry = zip.file(`${ASSET_DIR}${asset.blobHash}`);
-    if (!entry) continue;
-    // Read as an ArrayBuffer rather than a blob: a blob from JSZip carries an
-    // empty MIME type and would have to be re-wrapped, and `new Blob([aBlob])`
-    // — legal in a browser — is not implemented by jsdom, which would put this
-    // line beyond the reach of any arm. Going through the buffer gives the
-    // store the MIME the record remembers and stays testable. The bytes are
-    // untouched either way, so the content hash is unaffected.
-    const bytes = await entry.async("arraybuffer");
-    const { hash } = await putAsset(new Blob([bytes], { type: asset.mime }));
-    addAssetRecord({ ...asset, blobHash: hash });
+    try {
+      const entry = zip.file(`${ASSET_DIR}${asset.blobHash}`);
+      if (!entry) continue;
+      // Read as an ArrayBuffer rather than a blob: a blob from JSZip carries an
+      // empty MIME type and would have to be re-wrapped, and `new Blob([aBlob])`
+      // — legal in a browser — is not implemented by jsdom, which would put this
+      // line beyond the reach of any arm. Going through the buffer gives the
+      // store the MIME the record remembers and stays testable. The bytes are
+      // untouched either way, so the content hash is unaffected.
+      const bytes = await entry.async("arraybuffer");
+      const { hash } = await putAsset(new Blob([bytes], { type: asset.mime }));
+      addAssetRecord({ ...asset, blobHash: hash });
+    } catch (err) {
+      console.error(`[stave] import: skipped asset "${asset.name}":`, err);
+    }
   }
 
   return meta;
