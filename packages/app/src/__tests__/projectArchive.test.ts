@@ -476,7 +476,15 @@ describe("#1543 — provenance survives the archive", () => {
       startPreview: () => ({ stop: () => {} }),
       onInsert: () => {},
     });
-    const tagsFor = (name: string) => rows.find((r) => r.code === name)!.tags;
+    // Named rather than asserted non-null: if the archive dropped the record
+    // entirely, `find(...)!.tags` throws "cannot read properties of undefined"
+    // and says nothing about WHICH row is missing — the same count-shaped
+    // failure this arm exists to replace.
+    const tagsFor = (name: string) => {
+      const row = rows.find((r) => r.code === name);
+      expect(row, `no library row addresses s("${name}")`).toBeDefined();
+      return row!.tags;
+    };
 
     expect(tagsFor("guitar")).toContain("imported");
     expect(tagsFor("guitar")).not.toContain("recorded");
