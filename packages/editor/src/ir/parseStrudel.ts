@@ -452,6 +452,49 @@ export function stripParserPrelude(code: string): { body: string; offset: number
       continue
     }
 
+    // 2b. BLOCK comment (#1533) — the third walker in this file to need this,
+    // and the invariant is worth stating where it is finally true: for every
+    // comment form the language has, every top-level walker here handles it or
+    // none does. `splitTopLevelStatements` got its `/* … */` branch in #152,
+    // `lexStateAt` in #1532, and this scan had none — so a `/*` licence header
+    // was not recognised as prelude, the scan stopped on line 1, and the body
+    // handed onward was the ENTIRE source. `parseExpression` then met a comment
+    // as its root and gave up: `/* h */\ns("bd")` drew nothing at all.
+    //
+    // ⚠ WHY THAT WAS INVISIBLE FOR SO LONG — the ≥2-statement path repairs it
+    // downstream. `splitTopLevelStatements` does model block comments, so a
+    // TWO-pattern document with the same header splits correctly and plays.
+    // Only the single-statement fallback, which hands `stripped.body` to
+    // `parseExpression` whole, was left holding an unstripped source. The
+    // simplest possible document was the broken one.
+    //
+    // ⚠ THIS IS A LINE SCANNER, so the skip is line-based to stay in step with
+    // the rest of the function. A block comment that opens and closes on ONE
+    // line leaves the rest of that line to be re-read as its own line, so
+    // `/* h */ samples("x")` still has its boot call recognised by rule 3 —
+    // decided, not accidental, and it has an arm.
+    if (trimmed.startsWith('/*')) {
+      const close = code.indexOf('*/', i)
+      if (close === -1) {
+        // Unterminated: everything after this is a comment, so there is no
+        // musical body left to strip toward. Stop and let the caller see the
+        // remainder — the same verdict `lexStateAt`'s `inComment` reaches.
+        break
+      }
+      const afterClose = close + 2
+      const rest = code.slice(afterClose, code.indexOf('\n', afterClose) === -1 ? code.length : code.indexOf('\n', afterClose))
+      if (rest.trim() === '') {
+        // Comment occupies the rest of its line — advance past the newline.
+        const nl = code.indexOf('\n', afterClose)
+        i = nl === -1 ? code.length : nl + 1
+      } else {
+        // Code follows `*/` on the same line — resume scanning AT that code so
+        // rule 3 still sees it.
+        i = afterClose
+      }
+      continue
+    }
+
     // 3. Top-level recognised prelude call — possibly multi-line.
     //    Either a direct boot call (PRELUDE_CALL_RE) OR the #143
     //    guarded-boot idiom `typeof X !== 'undefined' && X(...)`
@@ -1052,16 +1095,63 @@ export function parseStrudel(
       const bareStmts = stripSideEffectStatements(
         splitTopLevelStatements(stripped.body, stripped.offset),
       )
-      if (bareStmts.length > 1 && !bareStmts.some(s => BINDING_RE.test(s.text))) {
+      // #1523 — …AND THE NARROWNESS ABOVE COST THE DOCUMENTS THAT DECLARE ONE.
+      //
+      //   let M = 2                     → Arrange, arms=2   ✅
+      //   arrange([2, s("bd")], …)
+      //
+      //   let M = 2                     → NOTHING. Wholly opaque.  ❌
+      //   s("cp")
+      //   arrange([2, s("bd")], …)
+      //
+      // One extra top-level expression, same binding, same LITERAL weights.
+      // `buildBindingMap` wants `bindings*, exactly ONE expression` and
+      // declines; the branch below wants NO bindings and declines too; the two
+      // cover disjoint sets and this ordinary shape fell between them, straight
+      // to the whole-body parse, which gives up.
+      //
+      // ⚠ THE NARROWNESS WAS RIGHT AND ITS REASON STILL HOLDS — "inventing
+      // per-statement binding semantics here would be a second, weaker
+      // `buildBindingMap`". So this does not invent any: it asks
+      // `collectTopLevelBindings`, the engine `buildBindingMap` itself is now a
+      // caller of, which has accepted an N-statement tail since #1392. One
+      // engine, one answer, read by both branches.
+      //
+      // ⚠ EVERY tail statement becomes a track, including ones that parse
+      // opaque — deliberately the same rule #1096 measured and chose for
+      // binding-free documents, NOT a new one. Keeping only the statements that
+      // parse musically was the tempting alternative and is rejected twice
+      // over: it would give this file two different answers to one question,
+      // and the staged pipeline splits at RAW, before anything is parsed, so it
+      // could not mirror the filter and the two parsers would diverge. An
+      // opaque statement therefore draws a silent row, which is what #1096
+      // decided a statement the parser cannot read should do.
+      const declaresBinding = bareStmts.some(s => BINDING_RE.test(s.text))
+      const collected = declaresBinding
+        ? collectTopLevelBindings(stripped.body, stripped.offset)
+        : null
+      // A binding-bearing document whose bindings the ENGINE declines (a cycle,
+      // a duplicate name, no leading binding at all) keeps the existing
+      // whole-body shape rather than being split on a map that does not exist.
+      const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
+      if (trackStmts.length > 1) {
         return IR.stack(
-          ...bareStmts.map((s, i) =>
+          ...trackStmts.map((s, i) =>
             // Each statement carries its OWN source range, so the timeline can
             // anchor a hap to the statement that produced it by containment —
             // the same mechanism a `$:` document uses, not a parallel path.
             // Synthetic wrapper: no userMethod (there is no `.p()` here).
-            IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, undefined, undefined, opts, numbers), {
-              loc: [{ start: s.offset, end: s.offset + s.text.length }],
-            }),
+            IR.track(
+              `d${i + 1}`,
+              // #1523 — `collected?.bindings`, so an identifier declared above
+              // resolves in EVERY statement of the tail. `undefined` for a
+              // document that declares none, which is what this passed
+              // unconditionally before.
+              parseExpression(s.text, s.offset, undefined, collected?.bindings, opts, numbers),
+              {
+                loc: [{ start: s.offset, end: s.offset + s.text.length }],
+              },
+            ),
           ),
         )
       }
@@ -1147,9 +1237,25 @@ export function parseStrudel(
  * MULTI-LINE forms where the colon-bearing token sits at a physical line
  * start (matrix in 20-15-OBSERVATIONS.md).
  */
-function lexStateAt(code: string, idx: number): { depth: number; inString: boolean } {
+function lexStateAt(
+  code: string,
+  idx: number,
+): { depth: number; inString: boolean; inComment: boolean } {
   let depth = 0
   let inString = false
+  // #1532 — set when `idx` falls inside a `/* … */` block comment.
+  //
+  // ⚠ NOT ONLY AN UNTERMINATED ONE, which is what this comment said first and
+  // is narrower than the mechanism. The walk STOPS AT `idx`, so a candidate
+  // inside a comment that closes later in the document is indistinguishable
+  // from one after a `/*` that never closes — the closing `*/` is simply past
+  // the end of the scan. Both are commented-out text and both must be rejected,
+  // so the bounded case needs its own verdict rather than falling through to
+  // `depth === 0`, which would ADMIT it.
+  //
+  // A `//` comment cannot need this: it ends at the newline, and every label
+  // candidate matches from `^`, so no label is ever mid-line-comment.
+  let inComment = false
   let stringChar = ''
   let escaped = false
   let i = 0
@@ -1172,6 +1278,36 @@ function lexStateAt(code: string, idx: number): { depth: number; inString: boole
       while (i < idx && code[i] !== '\n') i++
       continue
     }
+    // `/* … */` block comment — consume to the closing `*/`, counting nothing
+    // in between. THE MIRROR OF `splitTopLevelStatements`' #152 branch, which
+    // this walker was not given at the same time (#1532).
+    //
+    // Without it a bracket written inside a comment is counted as though it
+    // were code. That is usually harmless because a comment's brackets are
+    // normally balanced — and the pairing that is NOT harmless is ordinary:
+    //
+    //   /* @license  CC BY-NC-SA (https://creativecommons.org/licenses/…/4.0/)
+    //   */
+    //
+    // The `(` is counted; then the `//` in `https://` opens a line comment as
+    // far as the branch above is concerned and swallows the `)`. Depth is stuck
+    // at 1 for the REST OF THE DOCUMENT, so `extractTracks` rejects every
+    // `$:`/`name:` label after it as "inside brackets" and a six-track tune
+    // reaches the IR as one opaque `Code` node — no rows, no marks, no
+    // gestures, and nothing said.
+    //
+    // ⚠ AN UNTERMINATED `/*` NEEDS ITS OWN ANSWER, and consuming to `idx` is
+    // not it: that reports depth 0, which ADMITS the label. Everything after an
+    // unclosed `/*` really is inside a comment, so `inComment` says so and the
+    // caller's guard rejects it — the same verdict `splitTopLevelStatements`
+    // reaches by emitting no statements for the swallowed remainder.
+    if (ch === '/' && code[i + 1] === '*') {
+      i += 2
+      while (i < idx && !(code[i] === '*' && code[i + 1] === '/')) i++
+      if (i < idx) i += 2 // consume the closing `*/`
+      else inComment = true // ran out of input before `*/` — still commented
+      continue
+    }
     if (ch === '"' || ch === "'" || ch === '`') {
       inString = true
       stringChar = ch
@@ -1190,7 +1326,7 @@ function lexStateAt(code: string, idx: number): { depth: number; inString: boole
     }
     i++
   }
-  return { depth, inString }
+  return { depth, inString, inComment }
 }
 
 // 20-15 G5 (#138) — reserved identifiers that the generalized `name:`
@@ -1465,7 +1601,9 @@ export function extractTracks(
     // captured by group 1 (not consumed by the lexState `//` rule because
     // we scan UP TO m.index, which is the line start BEFORE the `//`).
     const st = lexStateAt(code, m.index)
-    if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+    // `inComment` (#1532) — the candidate sits after an unclosed `/*`, so it is
+    // commented-out text rather than a track label.
+    if (st.depth > 0 || st.inString || st.inComment || RESERVED_LABEL_IDENTS.has(label)) {
       continue
     }
     // #1475 — a `//` comment that merely READS like `word:` is prose, not a

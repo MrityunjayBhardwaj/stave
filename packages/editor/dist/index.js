@@ -2175,6 +2175,21 @@ function stripParserPrelude(code) {
       i = lineEnd + 1;
       continue;
     }
+    if (trimmed.startsWith("/*")) {
+      const close = code.indexOf("*/", i);
+      if (close === -1) {
+        break;
+      }
+      const afterClose = close + 2;
+      const rest = code.slice(afterClose, code.indexOf("\n", afterClose) === -1 ? code.length : code.indexOf("\n", afterClose));
+      if (rest.trim() === "") {
+        const nl = code.indexOf("\n", afterClose);
+        i = nl === -1 ? code.length : nl + 1;
+      } else {
+        i = afterClose;
+      }
+      continue;
+    }
     if (PRELUDE_CALL_RE.test(line) || GUARDED_BOOT_RE.test(line)) {
       let j = i;
       let depth = 0;
@@ -2429,17 +2444,28 @@ function parseStrudel(code, _opts) {
       const bareStmts = stripSideEffectStatements(
         splitTopLevelStatements(stripped.body, stripped.offset)
       );
-      if (bareStmts.length > 1 && !bareStmts.some((s) => BINDING_RE.test(s.text))) {
+      const declaresBinding = bareStmts.some((s) => BINDING_RE.test(s.text));
+      const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
+      const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
+      if (trackStmts.length > 1) {
         return IR.stack(
-          ...bareStmts.map(
+          ...trackStmts.map(
             (s, i) => (
               // Each statement carries its OWN source range, so the timeline can
               // anchor a hap to the statement that produced it by containment —
               // the same mechanism a `$:` document uses, not a parallel path.
               // Synthetic wrapper: no userMethod (there is no `.p()` here).
-              IR.track(`d${i + 1}`, parseExpression(s.text, s.offset, void 0, void 0, opts, numbers), {
-                loc: [{ start: s.offset, end: s.offset + s.text.length }]
-              })
+              IR.track(
+                `d${i + 1}`,
+                // #1523 — `collected?.bindings`, so an identifier declared above
+                // resolves in EVERY statement of the tail. `undefined` for a
+                // document that declares none, which is what this passed
+                // unconditionally before.
+                parseExpression(s.text, s.offset, void 0, collected?.bindings, opts, numbers),
+                {
+                  loc: [{ start: s.offset, end: s.offset + s.text.length }]
+                }
+              )
             )
           )
         );
@@ -2472,6 +2498,7 @@ __name(parseStrudel, "parseStrudel");
 function lexStateAt(code, idx) {
   let depth = 0;
   let inString = false;
+  let inComment = false;
   let stringChar = "";
   let escaped = false;
   let i = 0;
@@ -2492,6 +2519,13 @@ function lexStateAt(code, idx) {
       while (i < idx && code[i] !== "\n") i++;
       continue;
     }
+    if (ch === "/" && code[i + 1] === "*") {
+      i += 2;
+      while (i < idx && !(code[i] === "*" && code[i + 1] === "/")) i++;
+      if (i < idx) i += 2;
+      else inComment = true;
+      continue;
+    }
     if (ch === '"' || ch === "'" || ch === "`") {
       inString = true;
       stringChar = ch;
@@ -2510,7 +2544,7 @@ function lexStateAt(code, idx) {
     }
     i++;
   }
-  return { depth, inString };
+  return { depth, inString, inComment };
 }
 __name(lexStateAt, "lexStateAt");
 var RESERVED_LABEL_IDENTS = /* @__PURE__ */ new Set(["let", "const", "var", "default", "case"]);
@@ -2648,7 +2682,7 @@ function extractTracks(code) {
   while (m = dollarRe.exec(code)) {
     const label = m[2];
     const st = lexStateAt(code, m.index);
-    if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+    if (st.depth > 0 || st.inString || st.inComment || RESERVED_LABEL_IDENTS.has(label)) {
       continue;
     }
     if (m[1] && !commentedLabelIsTrack(code, m.index + m[0].length)) {
@@ -3712,14 +3746,24 @@ function runRawStage(input) {
     const bareStmts = stripSideEffectStatements(
       splitTopLevelStatements(stripped.body, stripped.offset)
     );
-    if (bareStmts.length > 1 && !bareStmts.some((st) => BINDING_RE.test(st.text))) {
+    const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text));
+    const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
+    const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
+    if (trackStmts.length > 1) {
       return {
         tag: "Stack",
-        tracks: bareStmts.map((st) => ({
+        tracks: trackStmts.map((st) => ({
           tag: "Code",
           code: st.text,
           lang: "strudel",
           loc: [{ start: st.offset, end: st.offset + st.text.length }],
+          // #1523 — the document's bindings, same map on every statement. And
+          // `numberMeta` alongside, because the monolithic side passes its
+          // numeric map to every one of these statements; without it a
+          // `[M*8, …]` arm would resolve THERE and not HERE, which is the
+          // divergence #1514 closed on the single-statement arm.
+          ...collected ? { trackBindings: collected.bindings } : {},
+          ...numberMeta,
           // The statement's OWN range, threaded through the EXISTING
           // dollarStart/dollarEnd channel so CHAIN-APPLIED builds
           // `Track(d{i+1}, …, {loc})` with no new metadata path.
@@ -3727,6 +3771,11 @@ function runRawStage(input) {
           // matching parseStrudel.ts's `IR.track(\`d${i + 1}\`, …)`.
           dollarStart: st.offset,
           dollarEnd: st.offset + st.text.length
+          // `unknown` hop — the same idiom the labelled-track lifts below use,
+          // and it became necessary here for the same reason they need it: once
+          // `trackBindings` is in the object, the literal no longer overlaps
+          // `PatternIR` enough for a direct assertion. ⚠ Only the tsup dts build
+          // says so; the whole vitest suite was green with the direct cast.
         })),
         loc: [{ start: 0, end: code.length }]
         // userMethod intentionally undefined — synthetic-from-RAW wrapper,
@@ -46948,6 +46997,7 @@ function isPersistableTab(t) {
   return t.kind === "editor";
 }
 __name(isPersistableTab, "isPersistableTab");
+//   /* @license  CC BY-NC-SA (https://creativecommons.org/licenses/…/4.0/)
 
 export { ALIAS_MAP, ASSET_DB_NAME, AUDITION_DUR_S, AUDITION_ENVELOPE, AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUILTIN_ALIASES, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DEFAULT_VIZ_ENGINE, DEFAULT_VIZ_QUALITY, DemoEngine, EPHEMERAL_ID_PREFIX, EditorView, ErrorBoundary, FALLBACK_ASSET_NAME, FSCOPE_P5_CODE, GLSL_VIZ, GM_FAMILY_KEY_COUNT, GM_FAMILY_ORDER, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HistoryPanel, HydraVizRenderer, IDB_SYNC_TIMEOUT_MS, INLINE_VIZ_ACTION_SIZE_VAR, IR, Knob, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, MASTER_CENTRE_PAN, MASTER_KEY, MASTER_UNITY_GAIN, MIN_REGION_SPAN, MIXER_CONSOLE_TAB_ID, MIXER_TAB_ID, MULTI_VOICE_HEADS, MainSignalSampler, Mixer, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PATTERN_TAB_ID, PIANOROLL_P5_CODE, PIANO_ROLL_TAB_ID, PITCHWHEEL_P5_CODE, PatternPanel, PianoRollGrid, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SCOPE_P5_CODE, SEQUENCER_TAB_ID, SHELL_STATE_KEY_PREFIX, SHELL_STATE_VERSION, SIGNALS_BACKDROP_P5_CODE, SIGNALS_SPECTRUM_P5_CODE, SILENCE_FLOOR, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, SOUND_ALIASES, SPECTRUM_P5_CODE, SPIRAL_P5_CODE, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, SequencerGrid, SignalBus, SilentCaptureError, SonicPiEngine, SplitPane, StrudelEditor, StrudelEngine, TAKE_NAME_PREFIX, UI_ICON_SIZE_VAR, VISUAL_EDIT_TABS, VIZ_FLAG_KEYS, VIZ_LANGUAGES, VisualEditStandby, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WORDFALL_P5_CODE, WavEncoder, WorkerBusFeed, WorkerVizRenderer, WorkspaceShell, Writeback, accumulateLanes, accumulateLanesInWindow, adaptMasterChunk, addAssetRecord, aggregateLaneItems, analyzeEvents, analyzeSong, analyzeWindow, applyEdits, applyEvalSourceTransform, applyOffsetEditsToFile, applyPersistedAdaptivePerf, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedPerfEnabled, applyPersistedTheme, applyPersistedUiIconSize, applyPersistedVizQuality, applyTheme, auditionSound, backdropQualityFactor, banksFromDrumMachineManifest, buildAliasSuffix, buildDefaultSnapshot, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, chunkSurface, classifyChunk, classifyLiteralRhs, clearCapture, clearIRSnapshot, clearLog, clearShellState, commitWorkspace, compilePreset, computeSections, computeSectionsInWindow, countSectionArms as countArrangeSectionArms, createBranchAt, createPostMessageReader, createPostMessageWriter, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, cycleFingerprints, deleteAsset, deleteProject, deleteSnapshot, deleteWorkspaceFile, deriveVizQuality, detectAllArrangeCalls, detectAllChunks, detectAllPickControls, detectArrangeAt, detectBarePattern, detectChunk, detectMasterAll, detectMasterAudioAll, detectPeriod, detectPickControlAt, detectWorkerVizCapabilities, docParses, dropLegacyBackgroundCrop, duplicateProject, emitFixed, emitLog, emptyFrame, enterRuntimeView, exitRuntimeView, extractReferenceIdentifier, fileHistory, filter, flushToPreset, formatFriendlyError, formatNumber, formatStaveInputs, frameTransferables, fuzzyMatch, generateUniquePresetId, getActiveEditor, getActiveFileId, getActiveHistoryFile, getActiveProjectId, getAdaptivePerfEnabled, getAsset, getBackdropOpacity, getBackdropQuality, getBackdropVizSpan, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getCommit, getCurrentBranch, getCurrentHistory, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFileContentAt, getFileHistoryTarget, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getInlineVizResolution, getInlineVizTeardownEnabled, getInlineVizTeardownMs, getLastOpenedProject, getLogHistory, getModifiedFileIdsSinceHead, getMusicalTimelineSubRowHeight, getNamedViz, getNoteColorMode, getPerfEnabled, getPlayVizOnHoverEnabled, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSignalAliases, getStoredSignalAliases, getSubfolderOrder, getTierFlags, getTrackColourBarsEnabled, getTrackMeta, getTrackMetaMapSnapshot, getViewedCommit, getViewedContent, getViewedFileIds, getVizConfig, getVizInputsLiveValuesEnabled, getVizMaxDprOverride, getVizMaxFpsOverride, getVizQuality, getVizWorkerFactory, getVizWorkerOverride, getZoneCropOverride, getZoneHeightOverride, gmFamily, groupDrumKits, groupSoundCatalog, hydraKaleidoscope, hydraPianoroll, hydraScope, hydrateSnapshot, importAsset, initHistory, initProjectDoc, initProjectDocSync, injectedGlobalByToken, injectedGlobals, insertArm, insertSilenceArm, installEngineLogMarkers, installGlobalErrorCatch, isBlackKey, isBootStepFailure, isBundledPresetId, isChunkFresh, isDocReady, isEphemeralProjectId, isFileModifiedSinceHead, isP5DirectCanvasEnabled, isRollChunk, isSampleSoundPlaying, isStepChunk, isValidTrackLabel, isViewing, isVizGovernorEnabled, isVizLanguage, isVizPumpSharedCacheEnabled, isVizWorkerPoolEnabled, knobRangeFor, laneKeyOf, languageForRenderer, levenshtein, listAssetRecords, listAssets, listBottomPanelTabs, listBranches, listCommits, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listTiers, listWorkspaceFiles, liveCodingRuntimeRegistry, loadShellState, makeFixedKey, masterGainEdit, masterMuteEdit, masterPanEdit, masterVizEdit, materializeBareDelete, materializeBareSplit, merge, midiToPitch, mountVizPreview, mountVizRenderer, nextTakeName, normalizeEdits, normalizeStrudelHap, noteToMidi, notifyDrumKitChanged, notifySoundCatalogChanged, onActiveEditorChange, onAdaptivePerfChange, onBackdropOpacityChange, onBackdropQualityChange, onBackdropVizSpanChange, onInlineVizActionSizeChange, onInlineVizResolutionChange, onInlineVizTeardownChange, onMusicalTimelineSubRowHeightChange, onNamedVizChanged, onPerfEnabledChange, onPlayVizOnHoverChange, onSignalAliasesChange, onThemeChange, onTrackColourBarsChange, onUiIconSizeChange, onVizInputsLiveValuesChange, onVizQualityChange, otherTrackNames, parseMessageLocation, parseMini, parsePianoRoll, parseStackLocation, parseStepGrid, parseStrudel, parseTopLevel, patternFromJSON, patternKind, patternToJSON, peaksForSample, peekAssetUrl, perf, countSectionArms2 as pickCountSectionArms, duplicateArm as pickDuplicateArm, insertArm2 as pickInsertArm, insertSilenceArm2 as pickInsertSilenceArm, removeArm2 as pickRemoveArm, renameSection2 as pickRenameSection, reorderArm2 as pickReorderArm, setWeight2 as pickSetWeight, silenceArm2 as pickSilenceArm, splitArm2 as pickSplitArm, pitchToMidi, placeNote, planAssetImport, previewProviderRegistry, pruneEphemeralArtifacts, pruneTrackMetaForCode, pruneZoneOverrides, publishIRSnapshot, purgeLegacyMasterGain, putAsset, readCurrentCycle, readMasterGain, readMasterMute, readMasterPan, readMasterViz, readPersistedActiveTabId, readPersistedOpen, readRegion, readRegionControl, redo, regionControlEdit, regionTrimEdit, registerAsset, registerAssets, registerBottomPanelTab, registerEvalSourceTransform, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerReevalHandler, registerRuntimeProvider, releaseAllAssets, releaseAsset, removeArm, removeAssetRecord, renameSection as renameArrangeSection, renameAssetRecord, renameEdit, renameProject, renameWorkspaceFile, rendererForLanguage, reorderArm, requestReeval, resetFileStore, resetHistoryState, resetUndoManager, resizeGrid, resizeRoll, resolveAlias, resolveAliasesForEngine, resolveAsset, resolveDescriptor, restoreFileToCommit, restoreProject, restoreSnapshot, revealLineInFile, revealOffsetInFile, revertFileToSeed, routeSurface, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveShellState, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, serializePianoRoll, serializeShellState, serializeStepGrid, setActiveHistoryFile, setAdaptivePerfEnabled, setBackdropOpacity, setBackdropQuality, setBackdropVizSpan, setCaptureCapacity, setChildOrder, setContent, setCurrentCycleAccessor, setDrumKitAccessor, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFileHistoryTarget, setFolderOrder, setInlineVizActionSize, setInlineVizResolution, setInlineVizTeardownEnabled, setMusicalTimelineSubRowHeight, setNoteColorMode, setPerfEnabled, setPlayVizOnHoverEnabled, setSignalAliases, setSoundCatalogAccessor, setSubfolderOrder, setTierFlag, setTrackColourBarsEnabled, setTrackMeta, setVizConfig, setVizInputsLiveValuesEnabled, setVizQuality, setVizWorkerFactory, setWeight, setZoneCropOverride, setZoneHeightOverride, sha256Hex, shellStateKeyFor, signalAutomations, signalCarryingParamKeys, signalDimensionsOf, silenceArm, songExtent, soundNameFromFilename, soundfontGroupLabel, splitArm, startAudition, startHistoryDriver, startSampleSound, statementOffsetForSource, stopSampleSound, structuralWalk, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeNoteColorMode, subscribeToAssets, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToHistory, subscribeToRuntimeView, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, switchToBranch, timestretch, toStrudel, toggleAdaptivePerfEnabled, toggleEditorMinimap, togglePerfEnabled, touchProject, transpose, undo, uniqueSoundName, unregisterBottomPanelTab, unregisterNamedViz, updateVizConfig, useNoteColorMode, usePopoutPreview, useSilencedTrackNames, useTrackMetaMap, useWorkspaceFile, validatePersistedState, warmMonaco, warmSamplePeaks, wholeWalkWindow, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset, wrapBare };
 //# sourceMappingURL=index.js.map

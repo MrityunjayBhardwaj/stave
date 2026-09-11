@@ -128,14 +128,35 @@ export function runRawStage(input: PatternIR): PatternIR {
     const bareStmts = stripSideEffectStatements(
       splitTopLevelStatements(stripped.body, stripped.offset),
     )
-    if (bareStmts.length > 1 && !bareStmts.some((st) => BINDING_RE.test(st.text))) {
+    // #1523 — the mirror of parseStrudel.ts's bare branch: a document that
+    // DECLARES a binding and then plays several expressions is split the same
+    // way, reading its identifiers through the same engine.
+    //
+    // The narrowness this replaces was justified as "inventing per-statement
+    // binding semantics here would be a second, weaker binding map", and that
+    // reason still holds — which is why this asks `collectTopLevelBindings`
+    // rather than inventing anything. The map travels to MINI-EXPANDED on the
+    // existing `trackBindings` channel, exactly as a labelled track's does.
+    const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text))
+    const collected = declaresBinding
+      ? collectTopLevelBindings(stripped.body, stripped.offset)
+      : null
+    const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
+    if (trackStmts.length > 1) {
       return {
         tag: 'Stack' as const,
-        tracks: bareStmts.map((st) => ({
+        tracks: trackStmts.map((st) => ({
           tag: 'Code' as const,
           code: st.text,
           lang: 'strudel' as const,
           loc: [{ start: st.offset, end: st.offset + st.text.length }],
+          // #1523 — the document's bindings, same map on every statement. And
+          // `numberMeta` alongside, because the monolithic side passes its
+          // numeric map to every one of these statements; without it a
+          // `[M*8, …]` arm would resolve THERE and not HERE, which is the
+          // divergence #1514 closed on the single-statement arm.
+          ...(collected ? { trackBindings: collected.bindings } : {}),
+          ...numberMeta,
           // The statement's OWN range, threaded through the EXISTING
           // dollarStart/dollarEnd channel so CHAIN-APPLIED builds
           // `Track(d{i+1}, …, {loc})` with no new metadata path.
@@ -143,7 +164,12 @@ export function runRawStage(input: PatternIR): PatternIR {
           // matching parseStrudel.ts's `IR.track(\`d${i + 1}\`, …)`.
           dollarStart: st.offset,
           dollarEnd: st.offset + st.text.length,
-        } as PatternIR)),
+          // `unknown` hop — the same idiom the labelled-track lifts below use,
+          // and it became necessary here for the same reason they need it: once
+          // `trackBindings` is in the object, the literal no longer overlaps
+          // `PatternIR` enough for a direct assertion. ⚠ Only the tsup dts build
+          // says so; the whole vitest suite was green with the direct cast.
+        } as unknown as PatternIR)),
         loc: [{ start: 0, end: code.length }],
         // userMethod intentionally undefined — synthetic-from-RAW wrapper,
         // same as the multi-`$:` return below.
