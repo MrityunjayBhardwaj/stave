@@ -326,3 +326,145 @@ test('stopping ends the capture tracks rather than leaving the mic held', async 
   })
   expect(stillLive).toBe(0)
 })
+
+// ---------------------------------------------------------------------------
+// Bringing a file in (#1541) — the other way audio arrives
+// ---------------------------------------------------------------------------
+
+/**
+ * A real, decodable mono WAV.
+ *
+ * Synthesised rather than committed as a fixture so the arms can say what is in
+ * it: a 440 Hz tone at a known amplitude, which is what makes the "not silence"
+ * reading below mean something. 8 kHz keeps it small; `decodeAudioData` resamples.
+ */
+function wavBytes(seconds = 0.5, freq = 440, rate = 8000): Buffer {
+  const n = Math.floor(seconds * rate)
+  const buf = Buffer.alloc(44 + n * 2)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + n * 2, 4)
+  buf.write('WAVE', 8)
+  buf.write('fmt ', 12)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20) // PCM
+  buf.writeUInt16LE(1, 22) // mono
+  buf.writeUInt32LE(rate, 24)
+  buf.writeUInt32LE(rate * 2, 28)
+  buf.writeUInt16LE(2, 32)
+  buf.writeUInt16LE(16, 34)
+  buf.write('data', 36)
+  buf.writeUInt32LE(n * 2, 40)
+  for (let i = 0; i < n; i++) {
+    buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * freq * i) / rate) * 20000), 44 + i * 2)
+  }
+  return buf
+}
+
+/**
+ * Hand files to the REAL hidden input the button clicks.
+ *
+ * Not by calling `importAudioFiles` from page scope: that passes with the
+ * button unwired and the input missing, which is exactly half of what this
+ * slice claims. `setInputFiles` fires the same change event a picker does.
+ */
+async function addFiles(
+  page: Page,
+  files: { name: string; mimeType: string; buffer: Buffer }[],
+): Promise<void> {
+  await page.locator('[data-add-audio-input]').setInputFiles(files)
+  await expect(page.locator('[data-add-audio-message]')).toBeVisible({ timeout: 20_000 })
+}
+
+test('the add-audio control is in the library header', async ({ page }) => {
+  // The cheapest thing that can be wrong, and the one no unit arm can see.
+  await expect(page.locator('[data-add-audio]')).toBeVisible()
+})
+
+test('picking a file puts one sound in the project, named from the filename', async ({
+  page,
+}) => {
+  await addFiles(page, [
+    { name: 'My Vocal.wav', mimeType: 'audio/wav', buffer: wavBytes() },
+  ])
+  const names = await page.evaluate(async () =>
+    (await window.__staveAssetProbe!.docList()).map((r) => r.name),
+  )
+  expect(names).toEqual(['my_vocal'])
+})
+
+test('the brought-in file is playable immediately, without a reload', async ({ page }) => {
+  await soundMapPublished(page)
+  await addFiles(page, [{ name: 'vox.wav', mimeType: 'audio/wav', buffer: wavBytes() }])
+  const seen = await page.evaluate(() => ({
+    added: window.__staveAssetProbe!.inSoundMap('vox'),
+    neverAdded: window.__staveAssetProbe!.inSoundMap('nope'),
+  }))
+  // The control shares the run, so this cannot pass against a detector that
+  // matches every name.
+  expect(seen).toEqual({ added: true, neverAdded: false })
+})
+
+test('the brought-in bytes decode to the tone that was handed over', async ({ page }) => {
+  await addFiles(page, [{ name: 'tone.wav', mimeType: 'audio/wav', buffer: wavBytes() }])
+  const peak = await page.evaluate(async () => {
+    const p = window.__staveAssetProbe!
+    const [record] = await p.docList()
+    const url = await p.resolve(record.blobHash)
+    if (!url) return null
+    const ctx = new AudioContext()
+    try {
+      const b = await ctx.decodeAudioData(await (await fetch(url)).arrayBuffer())
+      const d = b.getChannelData(0)
+      let max = 0
+      for (let i = 0; i < d.length; i++) max = Math.max(max, Math.abs(d[i]))
+      return max
+    } finally {
+      void ctx.close()
+    }
+  })
+  // Not silence, and not clipping: the tone went in at ~0.61 full scale.
+  expect(peak).toBeGreaterThan(0.3)
+})
+
+test('a file that is not audio is skipped while its neighbour still arrives', async ({
+  page,
+}) => {
+  // The control is the neighbour. Asserting only that the PDF is absent also
+  // passes when the whole gesture is broken and nothing at all was added.
+  await addFiles(page, [
+    { name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 not audio') },
+    { name: 'good.wav', mimeType: 'audio/wav', buffer: wavBytes() },
+  ])
+  const names = await page.evaluate(async () =>
+    (await window.__staveAssetProbe!.docList()).map((r) => r.name),
+  )
+  expect(names).toEqual(['good'])
+})
+
+test('the brought-in sound appears in the library as a user sample', async ({ page }) => {
+  await addFiles(page, [{ name: 'guitar.wav', mimeType: 'audio/wav', buffer: wavBytes() }])
+  await filterToSamples(page)
+  await expect(page.locator('[data-asset-row^="sample:"]')).toContainText('guitar', {
+    timeout: 15_000,
+  })
+})
+
+test('a brought-in sound survives a reload, bytes and name alike', async ({ page }) => {
+  await addFiles(page, [{ name: 'keeper.wav', mimeType: 'audio/wav', buffer: wavBytes() }])
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await bootWithProbe(page)
+  await soundMapPublished(page)
+  await page.waitForFunction(() => window.__staveAssetProbe!.inSoundMap('keeper'), undefined, {
+    timeout: 30_000,
+  })
+
+  const duration = await page.evaluate(async () => {
+    const p = window.__staveAssetProbe!
+    const [record] = await p.docList()
+    const url = await p.resolve(record.blobHash)
+    if (!url) return null
+    return (await p.decode(url)).duration
+  })
+  expect(duration).toBeGreaterThan(0.3)
+})
