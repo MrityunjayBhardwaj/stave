@@ -220,7 +220,17 @@ describe('#1523 — a bare document with a binding and several trailing expressi
     // what the user wrote. Keeping only the statements that parse would give
     // this file two answers to one question, and the staged pipeline splits
     // before anything is parsed, so it could not mirror the filter anyway.
-    const code = 'let M = 2\nfunction helper(x) { return x }\n' + ARRANGE
+    //
+    // ⚠ THE EXAMPLE CHANGED IN #1536 AND THE RULE DID NOT. This arm used to
+    // demonstrate itself with `function helper(x) { return x }`, which was an
+    // UNLUCKY CHOICE: a `function` declaration is not a statement the parser
+    // failed to read, it is a statement that could never have sounded however
+    // well it was read. The rule here is about OPACITY, so it is now shown with
+    // something genuinely opaque and genuinely an expression — an unknown
+    // METHOD on a pattern, which a better parser really could learn one day.
+    // (`.kolam()` is the real unrecognised method from archive document
+    // `500/3peRsLXHwJW7`, the one that motivated #1536.)
+    const code = 'let M = 2\ns("bd").kolam()\n' + ARRANGE
     const ir = bothParsers(code)
     expect(tracksOf(ir)).toHaveLength(2)
     expect(census(ir).Arrange).toBe(1)
@@ -373,17 +383,130 @@ describe('#1534 — a declaration in the tail is not a part', () => {
     expect(bothParsers(code).tag).toBe('Track')
   })
 
-  // ⚠ KNOWN NEIGHBOUR, DELIBERATELY NOT COVERED, and it is asserted rather than
-  // described so the asymmetry cannot drift unnoticed. A `function` declaration
-  // is equally not a part, and still takes a silent row (the arm above pins
-  // that as #1096's rule). The filter reads ONE predicate — the same
-  // `BINDING_RE` the substitution engine uses to find its bindings — rather
-  // than growing a second, hand-rolled notion of "declaration" in a file whose
-  // recorded failure mode is exactly that.
-  it('a `function` declaration still takes a silent row — one predicate, not two', () => {
+  // #1536 — THE ASYMMETRY THIS ARM USED TO PIN IS GONE, ON PURPOSE.
+  //
+  // It read: "a `function` declaration still takes a silent row — one
+  // predicate, not two", and it was right to exist: the asymmetry was real and
+  // asserting it stopped it drifting unnoticed. #1536 settled it the other way.
+  // A `function` declaration is not an expression, so it can never be a part,
+  // so it is not a row — the same argument #1534 made for `let`, applied to the
+  // rest of the forms JavaScript calls statements.
+  //
+  // ⚠ STILL ONE PREDICATE. The fear that justified the old answer was growing a
+  // second, hand-rolled notion of "declaration". Nothing here grows one: the
+  // membership test is "does JavaScript call this a statement", and both
+  // parsers read the same exported regex.
+  it('a `function` declaration is not a part, so it is not a row', () => {
     const code = 'let a = 1\nfunction helper(x) { return x }\ns("bd*4")'
     const ir = bothParsers(code)
+    // One row: the `s("bd*4")`. The `let` was already dropped by #1534 and the
+    // `function` is dropped now, which leaves a single surviving expression —
+    // so this lands on the single-Track shape, not a Stack.
+    expect(tracksOf(ir)).toHaveLength(1)
+    expect(census(ir).Code ?? 0).toBe(0)
+    expect(census(ir).Play).toBe(1)
+  })
+})
+
+/**
+ * #1536 — A STATEMENT THAT CANNOT BE AN EXPRESSION CANNOT BE A PART.
+ *
+ * #1534 dropped `let` / `const` / `var` from the row list and stated the reason
+ * in general terms — "a declaration is not an expression at all, and no amount
+ * of parser improvement would ever give it a sound" — then applied it to three
+ * keywords, because widening further would have reversed #1096's arm without
+ * being asked. This is that decision, asked and answered.
+ *
+ * THE LINE IS JAVASCRIPT'S OWN, which is what keeps it from becoming the
+ * hand-rolled category #1534 rightly refused: every keyword below begins a
+ * *statement*, statements are not expressions, and only an expression can
+ * evaluate to a pattern. Nothing here inspects a parse result, so the staged
+ * pipeline mirrors it for free — every arm runs `bothParsers`.
+ *
+ * MEASURED over the 558-document archive (99 bare multi-statement documents,
+ * 494 top-level statements): the widening newly drops 7 statements in 4
+ * documents — 5 `function` declarations and 2 `if` blocks, all helpers or boot
+ * guards — and touches ZERO real parts. The corpus holds no top-level `class`,
+ * `for`, `while`, `switch`, `try` or `do` at all, so those ride on the
+ * syntactic argument rather than on evidence; they get arms anyway, and this
+ * sentence is the honest label on them.
+ */
+describe('#1536 — statement keywords are not parts', () => {
+  /** Two real parts with the candidate between them, so the split branch is taken. */
+  const between = (stmt: string) => `s("bd*4")\n${stmt}\ns("hh*8")`
+
+  it.each([
+    ['function', 'function helper(x) { return x }'],
+    ['async function', 'async function boot() { return 1 }'],
+    ['class', 'class Thing { go() { return 1 } }'],
+    ['if', 'if (!window.ready) { window.ready = true }'],
+    ['for', 'for (let i = 0; i < 3; i++) { noop(i) }'],
+    ['while', 'while (false) { noop() }'],
+    ['switch', 'switch (mode) { case 1: noop(); break }'],
+    ['try', 'try { noop() } catch (e) { noop() }'],
+    ['do', 'do { noop() } while (false)'],
+  ])('a top-level `%s` draws no row', (_label, stmt) => {
+    const ir = bothParsers(between(stmt))
+    // Exactly the two real parts — and asserted as Play count too, because
+    // "two tracks" is also satisfied by two opaque ones.
     expect(tracksOf(ir)).toHaveLength(2)
+    expect(census(ir).Play).toBe(2)
+    expect(census(ir).Code ?? 0).toBe(0)
+  })
+
+  // ⚠ THE CONTROL THAT MAKES THE ARMS ABOVE MEAN SOMETHING. A predicate written
+  // with whitespace instead of a word boundary, or with `startsWith`, passes
+  // every arm above and eats these. They are ordinary expressions — unknown
+  // calls, so they draw OPAQUE rows — and an opaque row is exactly what #1096
+  // says they should get.
+  it.each([
+    ['doubled', 'doubled(2)'],
+    ['iffy', 'iffy(1)'],
+    ['forEach', 'forEachThing(1)'],
+    ['classic', 'classic(3)'],
+    ['letters', 'letters(4)'],
+    ['variation', 'variation(5)'],
+    ['constant', 'constant(6)'],
+  ])('an identifier merely STARTING with a keyword still draws its row (`%s`)', (_l, stmt) => {
+    const ir = bothParsers(between(stmt))
+    expect(tracksOf(ir)).toHaveLength(3)
+    expect(census(ir).Code).toBe(1) // unreadable, so silent — but present
+  })
+
+  // ⚠ THE ONE JUDGEMENT CALL ON THE LINE, ASSERTED SO IT CANNOT DRIFT.
+  //
+  // These cannot sound either, and they are still rows. An assignment is an
+  // ExpressionStatement — `x = s("bd")` has the same shape and CAN sound — so
+  // dropping them would be the first case of hiding something a better parser
+  // could use, which is where #1096's rule genuinely still applies. Measured: 2
+  // such statements in 1 archive document of 558, so the cost of being right
+  // here is two rows in one document.
+  it.each([
+    ['a window assignment', 'window.inited = window.inited ?? false'],
+    ['a prototype assignment', 'Pattern.prototype.kolam = function () { return this }'],
+  ])('%s is an expression statement, so it keeps its row', (_l, stmt) => {
+    const ir = bothParsers(between(stmt))
+    expect(tracksOf(ir)).toHaveLength(3)
     expect(census(ir).Code).toBe(1)
+  })
+
+  // The document that motivated the issue, in miniature — archive
+  // `500/3peRsLXHwJW7`. It drew six rows of which one could sound. It now draws
+  // three, and the two that remain are the assignments above, deliberately.
+  it('the motivating document draws three rows, not six, and the reason is stated', () => {
+    const code = [
+      'if (!window.path) { window.path = 1 }',
+      'function sketch(p) { return p }',
+      'window.inited = window.inited ?? false',
+      'if(!window.inited) { window.inited = true }',
+      'Pattern.prototype.kolam = function () { return this }',
+      'stack(s("bd*4"), s("hh*8"))',
+    ].join('\n')
+    const ir = bothParsers(code)
+    expect(tracksOf(ir)).toHaveLength(3)
+    // The one part really is in there, not merely counted.
+    expect(census(ir).Play).toBe(2)
+    // …and the two survivors are the assignments, still honestly opaque.
+    expect(census(ir).Code).toBe(2)
   })
 })

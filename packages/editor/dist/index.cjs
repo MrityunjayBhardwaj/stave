@@ -2387,7 +2387,7 @@ function stripSideEffectStatements(stmts) {
 }
 __name(stripSideEffectStatements, "stripSideEffectStatements");
 var BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/;
-var DECLARATION_RE = /^(?:let|const|var)\b/;
+var NON_EXPRESSION_HEAD_RE = /^(?:let|const|var|function|class|if|for|while|switch|try|do)\b|^async\s+function\b/;
 function collectTopLevelBindings(body, baseOffset, numbers) {
   const stmts = stripSideEffectStatements(
     splitTopLevelStatements(body, baseOffset)
@@ -2474,7 +2474,7 @@ function parseStrudel(code, _opts) {
       const declaresBinding = bareStmts.some((s) => BINDING_RE.test(s.text));
       const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset, numbers) : null;
       const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
-      const playable = trackStmts.filter((s) => !DECLARATION_RE.test(s.text));
+      const playable = trackStmts.filter((s) => !NON_EXPRESSION_HEAD_RE.test(s.text));
       if (playable.length > 1) {
         return IR.stack(
           ...playable.map(
@@ -3787,7 +3787,7 @@ function runRawStage(input) {
     const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text));
     const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset, docNumbers) : null;
     const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
-    const playable = trackStmts.filter((st) => !DECLARATION_RE.test(st.text));
+    const playable = trackStmts.filter((st) => !NON_EXPRESSION_HEAD_RE.test(st.text));
     if (playable.length > 1) {
       return {
         tag: "Stack",
