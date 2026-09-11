@@ -87,9 +87,14 @@ describe('signal span census over the sweep corpus', () => {
     expect(rateSpelled + rateAbsent + rateAmbiguous).toBe(automations)
 
     expect({ automations, rangeSpelled, rateSpelled, neitherSpelled, noChainEnd, rateAbsent, rateAmbiguous }).toEqual({
-      automations: 200,
-      rangeSpelled: 180,
-      rateSpelled: 128,
+      // #1468 — +4, from exactly TWO documents (`-P5TIfAE` and `1FR3g6BbXIFT`,
+      // both 0 → 2), named rather than counted. Lifting the leading-run rule on
+      // top-level bindings let those documents resolve, so chains that had been
+      // sealed inside an unresolved node became readable. Nothing lost an
+      // automation; the four added are all range-spelled.
+      automations: 204,
+      rangeSpelled: 184,
+      rateSpelled: 130,
       neitherSpelled: 16,
       // Never null on any real document today. The disabled-control path this
       // would trigger is therefore UNEXERCISED, not proven — if this leaves
@@ -97,7 +102,7 @@ describe('signal span census over the sweep corpus', () => {
       noChainEnd: 0,
       // Every automation a rate control cannot replace into is one that spells
       // NO rate at all — insertable at `chainEnd`, which is non-null throughout.
-      rateAbsent: 72,
+      rateAbsent: 74,
       // ZERO. The multi-arm guard in `readChain` protects a tree no real
       // document produces, which is what its own comment claims and this is the
       // evidence for. It stays: the cost is one integer and the failure it

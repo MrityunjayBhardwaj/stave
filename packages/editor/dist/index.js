@@ -2369,13 +2369,13 @@ function collectTopLevelBindings(body, baseOffset) {
   if (stmts.length < 2) return null;
   const descs = [];
   const seen = /* @__PURE__ */ new Set();
-  let tailIdx = -1;
+  const tail = [];
   for (let s = 0; s < stmts.length; s++) {
     const { text, offset } = stmts[s];
     const bm = text.match(BINDING_RE);
     if (!bm) {
-      tailIdx = s;
-      break;
+      tail.push({ text, offset });
+      continue;
     }
     const name = bm[1];
     const rhs = bm[2].trim();
@@ -2385,7 +2385,7 @@ function collectTopLevelBindings(body, baseOffset) {
     const rhsOffset = offset + rhsStartInText;
     descs.push({ name, rhs, rhsOffset });
   }
-  if (tailIdx === -1) return null;
+  if (tail.length === 0) return null;
   if (descs.length === 0) return null;
   const bindings = /* @__PURE__ */ new Map();
   const pending = new Set(descs.map((_, i) => i));
@@ -2407,7 +2407,7 @@ function collectTopLevelBindings(body, baseOffset) {
     if (!progress) break;
   }
   if (bindings.size === 0) return null;
-  return { bindings, tail: stmts.slice(tailIdx) };
+  return { bindings, tail };
 }
 __name(collectTopLevelBindings, "collectTopLevelBindings");
 function buildBindingMap(body, baseOffset) {
