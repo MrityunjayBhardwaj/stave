@@ -136,7 +136,7 @@ statement start, because those are reserved words.
 1x  /^(?:let|const|var)\b/
 ```
 
-### A4 · "is this a `param => bodyvar.chain` arrow, and what is the chain?" — 1 site
+### A4 · "is this a `param => bodyvar.chain` arrow, what is the chain, and WHAT IS THE PARAM CALLED?" — 1 site
 
 `parseTransform:2823`
 
@@ -151,8 +151,16 @@ fresh-expression arrow that rebuilds the pattern from its arg (`x => n("a").set(
 through to the residual `null`, which opaques the whole `.method(args)` call so it round-trips
 verbatim (#969) — no longer a drop.
 
+#1550 — the param is now CAPTURED, because it binds inside the body. The predicate answers a
+third question it always had the information for and used to discard: the name. Every
+occurrence of that name in the chain's arguments denotes the arrow's argument, so both
+document-scope maps are stripped of it before the body is parsed — without which
+`let p = s("bd")` + `.every(2, p => p.cat(p))` cats the body with `s("bd")` instead of with
+itself. Widening a capture group, not the matched language: the set of strings this accepts is
+unchanged, which is why the corpus cannot move on the match and can only move on the shadowing.
+
 ```regex
-1x  /^\(?\s*[A-Za-z_$][\w$]*\s*\)?\s*=>\s*[A-Za-z_$][\w$]*\s*\.(.+)$/
+1x  /^\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*[A-Za-z_$][\w$]*\s*\.(.+)$/
 ```
 
 ### A4b · "is this a bare `name(args)` / `name` transform to wrap opaque?" — 1 site

@@ -525,6 +525,12 @@ function parseRootWithChainMeta(
       unresolvedChain: chain,
       chainOffset,
       ...(bindings ? { unresolvedBindings: bindings } : {}),
+      // #1547 — the NUMERIC map needs its own stash for the same reason the
+      // pattern map has one: CHAIN-APPLIED runs in a later stage and no longer
+      // holds the document. Without it `parseStrudel` resolves an arrange
+      // weight inside a chain argument and this pipeline does not, which is a
+      // divergence on exactly the documents the fix is for.
+      ...(numbers ? { unresolvedNumbers: numbers } : {}),
     } as PatternIR
   }
   return rootIR
@@ -676,6 +682,8 @@ function applyOnTrack(node: PatternIR): PatternIR {
     unresolvedChain?: string
     chainOffset?: number
     unresolvedBindings?: ReadonlyMap<string, PatternIR>
+    // #1547 — stashed by MINI-EXPANDED alongside `unresolvedBindings`.
+    unresolvedNumbers?: ReadonlyMap<string, number>
   }
   if (m.unresolvedChain === undefined) {
     // No chain to apply — but the metadata fields may still exist as
@@ -689,7 +697,7 @@ function applyOnTrack(node: PatternIR): PatternIR {
   // applyChain's output is metadata-free by construction.
   const clean = stripStageMeta(node)
   if (chain.trim()) {
-    return applyChain(clean, chain, chainOffset, m.unresolvedBindings)
+    return applyChain(clean, chain, chainOffset, m.unresolvedBindings, m.unresolvedNumbers)
   }
   return clean
 }
@@ -705,6 +713,7 @@ function stripStageMeta(node: PatternIR): PatternIR {
   if (
     !('unresolvedChain' in n) &&
     !('unresolvedBindings' in n) &&
+    !('unresolvedNumbers' in n) &&
     !('trackBindings' in n) &&
     !('trackNumbers' in n) &&
     !('chainOffset' in n) &&
@@ -717,6 +726,12 @@ function stripStageMeta(node: PatternIR): PatternIR {
   const {
     unresolvedChain: _u,
     unresolvedBindings: _ub,
+    // #1547 — the numeric map's chain-stage stash. Same lifecycle as _ub:
+    // consumed in CHAIN-APPLIED, stripped here so it never reaches FINAL.
+    // ⚠ Missing from EITHER the guard above or this list leaks it onto a
+    // FINAL node and reddens every parity assertion — which is the loud
+    // failure, and the reason both halves are edited together.
+    unresolvedNumbers: _un,
     // #1392 — RAW's document-level binding map. Consumed in MINI-EXPANDED;
     // stripped here so it can never reach a FINAL node body.
     trackBindings: _tb,
