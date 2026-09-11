@@ -773,7 +773,41 @@ export function stripSideEffectStatements(
 export const BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/
 
 /**
- * #1534 — DOES THIS STATEMENT DECLARE, rather than play?
+ * #1534/#1536 — CAN THIS STATEMENT EVER BE A PART?
+ *
+ * ⚠ RENAMED FROM `DECLARATION_RE` IN #1536, AND THE RENAME IS THE POINT. The
+ * old name described the first three keywords and then had to argue, in its own
+ * last paragraph, why `function` and `class` were excluded from a predicate
+ * called "declaration" — which is the shape of a name that has stopped matching
+ * its rule. The question was never "is this a declaration". It is "can this
+ * sound", and JavaScript already answers it: a STATEMENT is not an expression,
+ * and only an expression can evaluate to a pattern.
+ *
+ * ⚠ THIS IS NOT A SECOND, HAND-ROLLED NOTION OF "DECLARATION" — the failure
+ * mode #1534 rightly refused to repeat. It is the same single predicate, and
+ * its membership is a syntactic fact rather than a judgement: every keyword
+ * listed below begins a JavaScript *statement*, so none of them can be an
+ * expression, so none can ever produce a hap no matter how good the parser
+ * gets. That is a different claim from "the parser could not read it", which is
+ * what #1096's show-don't-drop rule is about — see the arms.
+ *
+ * ⚠ ASSIGNMENTS ARE DELIBERATELY OUT, and this is the line's one judgement
+ * call. `window.inited = …` and `Pattern.prototype.kolam = …` are setup and
+ * cannot sound — but they are ExpressionStatements, and `x = s("bd")` is the
+ * same shape and CAN. Dropping them would be the first case of hiding something
+ * a better parser could use, which is exactly where show-don't-drop still
+ * applies. Measured: 2 such statements in 1 archive document of 558. They keep
+ * their rows, on purpose.
+ *
+ * MEASURED BEFORE WIDENING (558-document archive, 99 bare multi-statement
+ * documents, 494 top-level statements): the widening newly drops 7 statements
+ * across 4 documents — 5 `function` declarations and 2 `if` blocks, every one a
+ * helper or a boot guard. ZERO real parts are touched, and the corpus holds no
+ * `class`, `for`, `while`, `switch`, `try` or `do` at top level at all; those
+ * are carried on the syntactic argument above, not on evidence, and have arms
+ * of their own saying so.
+ *
+ * ## What it was, and still is
  *
  * ⚠ A DIFFERENT QUESTION FROM `BINDING_RE`'s, AND CONFLATING THEM IS A DEFECT
  * THIS COMMENT EXISTS BECAUSE OF. That one asks "can I RESOLVE this as
@@ -798,11 +832,12 @@ export const BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]
  * control arm written to justify the whitespace could not have failed either
  * way. It was vacuous, and swapping the predicate is what said so.
  *
- * Deliberately NOT a general grammar for declarations: `function` and `class`
- * are declarations too and still take a silent row (#1096's rule, and its own
- * arm) — widening to them reverses a decision this issue did not ask about.
+ * The word-boundary argument above carries to every keyword added since: `doubled`,
+ * `iffy`, `forEach` and `classic` are all refused for the same reason `letters`
+ * is, and each has an arm.
  */
-export const DECLARATION_RE = /^(?:let|const|var)\b/
+export const NON_EXPRESSION_HEAD_RE =
+  /^(?:let|const|var|function|class|if|for|while|switch|try|do)\b|^async\s+function\b/
 
 /**
  * The leading run of top-level bindings, resolved — the ENGINE half of
@@ -1215,13 +1250,13 @@ export function parseStrudel(
       // calls it to find the LEADING binding run, so teaching it about `let`
       // would remove the very statements the engine is looking for.
       //
-      // ⚠ `DECLARATION_RE`, NOT `BINDING_RE`. The two ask different questions
+      // ⚠ `NON_EXPRESSION_HEAD_RE`, NOT `BINDING_RE`. The two ask different questions
       // and the narrower one leaves `const {movement} = …` drawing a row —
       // see its comment. `playable.length === 0` (a tail that is ALL
       // declarations) needs no arm of its own: it misses both fences below and
       // reaches the whole-document shape, which is the honest answer for a
       // document that declares no parts.
-      const playable = trackStmts.filter((s) => !DECLARATION_RE.test(s.text))
+      const playable = trackStmts.filter((s) => !NON_EXPRESSION_HEAD_RE.test(s.text))
       if (playable.length > 1) {
         return IR.stack(
           ...playable.map((s, i) =>
