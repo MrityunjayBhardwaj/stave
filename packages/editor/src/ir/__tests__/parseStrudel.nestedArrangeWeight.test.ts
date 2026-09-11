@@ -168,12 +168,15 @@ describe('#1522 — a nested arrange() reads an identifier weight', () => {
     expect(census(ir).Builder ?? 0).toBe(0)
   })
 
-  // ── The boundary pin. Not an endorsement of the gap — a tripwire on it.
-  it('PINS #1547: the METHOD-chain half still declines, and must not be widened silently', () => {
+  // ── This arm was a tripwire on the gap this PR deliberately left open, and
+  // #1547 tripped it, which is what it was for. The chain half now resolves
+  // too, and the scoping answer it needed is recorded in
+  // `parseStrudel.chainScopeWeight.test.ts`: an arrow's PARAMETER shadows a
+  // document binding of the same name, so the map reaches a chain argument
+  // but never reaches past a local binder.
+  it('the METHOD-chain half resolves too, since #1547', () => {
     const ir = bothParsers(`let M = 2\n$: s("cp").cat(arrange(${ARMS}))`)
-    // `applyChain` carries no numeric map on either side. When #1547 answers
-    // the lambda-shadowing question and threads one, THIS ARM FAILS — that is
-    // the intent. Update it there, with the scoping decision written down.
-    expect(census(ir).Builder).toBe(1)
+    expect(census(ir).Builder ?? 0).toBe(0)
+    expect(weights(ir)).toContainEqual([2, 2])
   })
 })

@@ -1965,7 +1965,7 @@ export function parseExpression(
     // (pS:861) into applyChain. Byte-unchanged when the caller passed
     // undefined; behaviour-bearing when the pS:544 D-01 entry passes
     // `bound.bindings` — this flow is the WIRE that makes Wave C/D/E reach.
-    const ir = applyChain(rootIR, chain, chainOffset, bindings)
+    const ir = applyChain(rootIR, chain, chainOffset, bindings, numbers)
 
     return ir
   } catch {
@@ -2733,6 +2733,34 @@ export function parseRoot(
  * full code. Used to thread method-arg positions through parseTransform
  * (PRE-01 precursor — P39 / PV25 signature-level threading).
  */
+/**
+ * #1550 — AN ARROW PARAMETER SHADOWS A DOCUMENT-LEVEL BINDING OF THE SAME NAME.
+ *
+ * `parseTransform` accepts `param => param.chain(…)` and recurses into the
+ * chain with the document's maps. Inside that body the parameter name denotes
+ * the arrow's argument, not whatever the document bound it to — so
+ * `let p = s("bd")` + `.every(2, p => p.cat(p))` must cat the every-body with
+ * ITSELF, and used to cat it with `s("bd")` instead. Dropping the name from
+ * the map is the whole rule; it is applied to BOTH document-scope maps,
+ * because the numeric one travels the same path (#1547) and would otherwise
+ * arrive with the identical defect.
+ *
+ * Returns the SAME map when the name is not bound, so the ordinary case — an
+ * arrow whose parameter shadows nothing — allocates nothing and is byte-
+ * identical to before.
+ */
+function shadowParam<V>(
+  map: ReadonlyMap<string, V> | undefined,
+  name: string,
+): ReadonlyMap<string, V> | undefined {
+  if (!map || !map.has(name)) return map
+  const next = new Map(map)
+  next.delete(name)
+  // An emptied map is `undefined`, matching how every collector reports
+  // "nothing to resolve" — so downstream sees one shape, not two.
+  return next.size > 0 ? next : undefined
+}
+
 export function applyChain(
   ir: PatternIR,
   chain: string,
@@ -2745,6 +2773,11 @@ export function applyChain(
   // it (the default) → behaviour identical to pre-20-17 by construction.
   // PV50-safe: the context flows on the stack, never module-level state.
   bindings?: ReadonlyMap<string, PatternIR>,
+  // #1547 — the document's NUMERIC bindings, threaded exactly as `bindings`
+  // so an `arrange` reachable from a chain ARGUMENT (`.cat(arrange([M, …]))`,
+  // a `.slice` index, a transform body) reads its weight instead of declining
+  // the whole arrangement. `undefined` = literal weights only.
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR {
   if (!chain.trim()) return ir
 
@@ -2804,7 +2837,7 @@ export function applyChain(
     // non-leading method) so the precursor test's "non-zero" assertion
     // holds even on chains that mix paren-less and paren-ful methods.
     const argsAbsoluteOffset = argsOffset >= 0 ? remainingOffset + argsOffset : remainingOffset
-    current = applyMethod(current, method, args, argsAbsoluteOffset, callSiteRange, bindings)
+    current = applyMethod(current, method, args, argsAbsoluteOffset, callSiteRange, bindings, numbers)
 
     // Advance remainingOffset by the consumed length (same arithmetic as
     // before — just split across the call to make callSiteRange available).
@@ -2839,6 +2872,10 @@ function applyMethod(
   // applyChain's caller omitted it (the default) → behaviour identical to
   // pre-20-17. PV50-safe: stack-threaded, never module-level state.
   bindings?: ReadonlyMap<string, PatternIR>,
+  // #1547 — the document's numeric bindings, threaded exactly as `bindings`
+  // so an `arrange` inside a method ARGUMENT reads its weight. Already
+  // shadowed by any enclosing arrow's parameter before it arrives (#1550).
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR {
   // Phase 20-22 D-01 (F2 positions 1+2 ONLY) — when `args` is exactly a
   // bound literal ident, `subbedArgs` is its raw RHS text; otherwise it
@@ -2910,7 +2947,7 @@ function applyMethod(
       // baseOffset (the offset of `args[0]` in the user's code).
       const argList = splitArgsWithOffsets(args)
       const moreArms = argList.map(a =>
-        parseExpression(a.value, baseOffset + a.offset, undefined, bindings),
+        parseExpression(a.value, baseOffset + a.offset, undefined, bindings, undefined, numbers),
       )
       if (moreArms.length === 0) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)
       if (method === 'fastcat') {
@@ -2931,7 +2968,7 @@ function applyMethod(
       const n = parseInt(nStr.trim(), 10)
       if (isNaN(n)) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings) : ir
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings, numbers) : ir
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (#969)
       return IR.every(n, transform, ir, tagMeta(method, callSiteRange))
     }
@@ -2939,7 +2976,7 @@ function applyMethod(
     case 'sometimes': {
       // .sometimes(transform) → Choice(0.5, transform(body), body)
       const transform = args.trim()
-        ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings)
+        ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings, numbers)
         : ir
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (#969)
       return IR.choice(0.5, transform, ir, tagMeta(method, callSiteRange))
@@ -2951,7 +2988,7 @@ function applyMethod(
       const p = parseFloat(pStr.trim())
       if (isNaN(p)) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings) : ir
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings, numbers) : ir
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (#969)
       return IR.choice(p, transform, ir, tagMeta(method, callSiteRange))
     }
@@ -2989,7 +3026,7 @@ function applyMethod(
           continue
         }
         const transformOffset = offsetOfSubArg(args, trimmed, baseOffset)
-        const track = parseTransform(trimmed, ir, transformOffset, bindings)
+        const track = parseTransform(trimmed, ir, transformOffset, bindings, numbers)
         // Any track we cannot model as a chain on the body → opaque the whole
         // `.layer(...)` so it round-trips verbatim (D-03, #969). One
         // fresh-expression arrow makes the structural stack unrecoverable.
@@ -3039,7 +3076,7 @@ function applyMethod(
       const n = parseInt(nStr.trim(), 10)
       if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (P33 / PV37)
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings) : ir
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings, numbers) : ir
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (#969)
       return IR.chunk(n, transform, ir, tagMeta(method, callSiteRange))
     }
@@ -3105,7 +3142,7 @@ function applyMethod(
       // baseOffset for the transform-arg position; loc-attribution to
       // non-Play nodes still deferred per RESEARCH §2 Subtlety C.
       const transformed = args.trim()
-        ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings)
+        ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings, numbers)
         : ir
       if (transformed === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)   // D-03 (#969)
       // 19-05 / #74: outer Stack carries .jux(...)'s call-site range +
@@ -3196,7 +3233,7 @@ function applyMethod(
         // userMethod intentionally undefined — synthetic intermediate (D-09).
       })
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
-      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset, bindings) : lateBody
+      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset, bindings, numbers) : lateBody
       // Opaque the WHOLE `.off(t, f)` (on `ir`, the pre-`late` receiver) when
       // the transform can't be modelled, so it round-trips verbatim (D-03, #969).
       if (transformed === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange)
@@ -3265,7 +3302,7 @@ function applyMethod(
       // pickReset=resetJoin); the variant drives collect's inner-cycle
       // timing. `subbedArgs` is carried verbatim as `rawArgs` so toStrudel
       // round-trips byte-identically to the opaque Code it replaces.
-      const namedEntries = parseNamedPickEntries(args, baseOffset, bindings)
+      const namedEntries = parseNamedPickEntries(args, baseOffset, bindings, numbers)
       if (namedEntries && namedEntries.length > 0) {
         return IR.namedPick(ir, namedEntries, method, subbedArgs, tagMeta(method, callSiteRange))
       }
@@ -3286,7 +3323,7 @@ function applyMethod(
         : baseOffset
       const lookup = elements.map(e => {
         const elemOffset = offsetOfSubArg(arrayBody, e.trim(), arrayBodyOffset)
-        return parseArrayLiteralElement(e, 'note', elemOffset, bindings)
+        return parseArrayLiteralElement(e, 'note', elemOffset, bindings, numbers)
       })
       return IR.pick(ir, lookup, tagMeta(method, callSiteRange))
     }
@@ -3429,6 +3466,8 @@ function applyMethod(
             baseOffset + sliceArgs[1].offset,
             undefined,
             bindings,
+            undefined,
+            numbers,
           )
       return IR.slice(sliceN, sliceIndex, ir, tagMeta(method, callSiteRange))
     }
@@ -3628,6 +3667,9 @@ function parseTransform(
   // it (the default) → behaviour identical to pre-20-17 by construction.
   // PV50-safe: the context flows on the stack, never module-level state.
   bindings?: ReadonlyMap<string, PatternIR>,
+  // #1547 — the document's numeric bindings, threaded exactly as `bindings`.
+  // ⚠ Both are SHADOWED by the arrow's parameter below (#1550).
+  numbers?: ReadonlyMap<string, number>,
   // Returns `null` when the transform cannot be expressed as a chain on the
   // body (a fresh-expression arrow, `compose`, …). The caller opaques the
   // whole `.method(args)` call site on `null` so it round-trips verbatim
@@ -3664,13 +3706,24 @@ function parseTransform(
   // (`pp => pp.fast(2)`, `(x) => x.fast(2)`) — all reduce to the same chain
   // applied to the body. A narrower `[a-z]`-only match used to drop those
   // forms to the silent identity below (#963).
-  const arrowMatch = str.match(/^\(?\s*[A-Za-z_$][\w$]*\s*\)?\s*=>\s*[A-Za-z_$][\w$]*\s*\.(.+)$/)
+  //
+  // #1550 — the PARAMETER NAME is now captured, because it binds inside the
+  // body. Every occurrence of it in the chain's arguments refers to the
+  // arrow's argument, so the document's maps must not answer for it.
+  const arrowMatch = str.match(/^\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*[A-Za-z_$][\w$]*\s*\.(.+)$/)
   if (arrowMatch) {
     const dotIdx = str.indexOf('.', str.indexOf('=>'))
     const chainStartInTrimmed = dotIdx >= 0 ? dotIdx : 0
     const leadingWs = transformStr.length - transformStr.trimStart().length
     const chainOffset = baseOffset + leadingWs + chainStartInTrimmed
-    return applyChain(defaultIr, '.' + arrowMatch[1], chainOffset, bindings)
+    const param = arrowMatch[1]
+    return applyChain(
+      defaultIr,
+      '.' + arrowMatch[2],
+      chainOffset,
+      shadowParam(bindings, param),
+      shadowParam(numbers, param),
+    )
   }
 
   // Bare partial-application form the typed arms above did not model —
@@ -3832,6 +3885,9 @@ function parseArrayLiteralElement(
   // omitted it (the default) → behaviour identical to pre-20-17.
   // PV50-safe: stack-threaded, never module-level state.
   bindings?: ReadonlyMap<string, PatternIR>,
+  // #1547 — the numeric map rides alongside, so a `.pick([...])` element that
+  // is an `arrange` reads an identifier weight like anywhere else.
+  numbers?: ReadonlyMap<string, number>,
 ): PatternIR {
   const trimmed = elem.trim()
   const leadingWs = elem.length - elem.trimStart().length
@@ -3853,7 +3909,7 @@ function parseArrayLiteralElement(
     // To compensate, pass a baseOffset that's behind by `receiverContext.length + 1`
     // chars so the absolute innerOffset lands at the user's actual quote+1.
     const wrapperPrefix = receiverContext.length + 1
-    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, undefined, bindings)
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, undefined, bindings, undefined, numbers)
   }
 
   // Bare numeric literal: wrap in note(...) so it parses as a Play. Third and
@@ -3862,11 +3918,11 @@ function parseArrayLiteralElement(
   if (isNumericLiteral(trimmed)) {
     const wrapped = `${receiverContext}("${trimmed}")`
     const wrapperPrefix = receiverContext.length + 1 + 1  // note( + opening quote
-    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, undefined, bindings)
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, undefined, bindings, undefined, numbers)
   }
 
   // Full expression — parse as-is.
-  return parseExpression(trimmed, baseOffset + leadingWs, undefined, bindings)
+  return parseExpression(trimmed, baseOffset + leadingWs, undefined, bindings, undefined, numbers)
 }
 
 /** Index of the first top-level `:` (object key/value separator) in an
@@ -3916,6 +3972,9 @@ function parseNamedPickEntries(
   args: string,
   baseOffset: number,
   bindings?: ReadonlyMap<string, PatternIR>,
+  // #1547 — rides with `bindings` into each entry's value, so a named
+  // `.pick({...})` entry that is an `arrange` reads an identifier weight.
+  numbers?: ReadonlyMap<string, number>,
 ): import('./PatternIR').NamedPickEntry[] | null {
   const trimmed = args.trim()
   if (!(trimmed.startsWith('{') && trimmed.endsWith('}'))) return null
@@ -3955,7 +4014,7 @@ function parseNamedPickEntries(
     const valOffset = shorthand
       ? keyStart
       : baseOffset + bodyOffsetInArgs + part.offset + colon + 1
-    const pattern = parseArrayLiteralElement(rawVal, 'note', valOffset, bindings)
+    const pattern = parseArrayLiteralElement(rawVal, 'note', valOffset, bindings, numbers)
     entries.push({ key, pattern, keyLoc })
   }
   return entries

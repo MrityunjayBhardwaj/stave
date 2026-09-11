@@ -2783,7 +2783,7 @@ function parseExpression(expr, baseOffset = 0, isSampleKey, bindings, opts, numb
       return IR.code(expr);
     }
     const chainOffset = trimmedOffset + root.length;
-    const ir = applyChain(rootIR, chain, chainOffset, bindings);
+    const ir = applyChain(rootIR, chain, chainOffset, bindings, numbers);
     return ir;
   } catch {
     return IR.code(expr);
@@ -3115,7 +3115,14 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings, opts, numbers) {
   return IR.code(trimmed);
 }
 __name(parseRoot, "parseRoot");
-function applyChain(ir, chain, baseOffset = 0, bindings) {
+function shadowParam(map, name) {
+  if (!map || !map.has(name)) return map;
+  const next = new Map(map);
+  next.delete(name);
+  return next.size > 0 ? next : void 0;
+}
+__name(shadowParam, "shadowParam");
+function applyChain(ir, chain, baseOffset = 0, bindings, numbers) {
   if (!chain.trim()) return ir;
   const leadingWs = chain.length - chain.trimStart().length;
   let remaining = chain.trim();
@@ -3136,14 +3143,14 @@ function applyChain(ir, chain, baseOffset = 0, bindings) {
       remainingOffset + consumed
     ];
     const argsAbsoluteOffset = argsOffset >= 0 ? remainingOffset + argsOffset : remainingOffset;
-    current4 = applyMethod(current4, method, args, argsAbsoluteOffset, callSiteRange, bindings);
+    current4 = applyMethod(current4, method, args, argsAbsoluteOffset, callSiteRange, bindings, numbers);
     remainingOffset += consumed;
     remaining = rest;
   }
   return current4;
 }
 __name(applyChain, "applyChain");
-function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], bindings) {
+function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], bindings, numbers) {
   const subbedArgs = substituteBoundIdentInArg(args, bindings);
   switch (method) {
     case "fast": {
@@ -3172,7 +3179,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
     case "fastcat": {
       const argList = splitArgsWithOffsets(args);
       const moreArms = argList.map(
-        (a) => parseExpression(a.value, baseOffset + a.offset, void 0, bindings)
+        (a) => parseExpression(a.value, baseOffset + a.offset, void 0, bindings, void 0, numbers)
       );
       if (moreArms.length === 0) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       if (method === "fastcat") {
@@ -3191,12 +3198,12 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       const n = parseInt(nStr.trim(), 10);
       if (isNaN(n)) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset;
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings) : ir;
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings, numbers) : ir;
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       return IR.every(n, transform, ir, tagMeta(method, callSiteRange));
     }
     case "sometimes": {
-      const transform = args.trim() ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings) : ir;
+      const transform = args.trim() ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings, numbers) : ir;
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       return IR.choice(0.5, transform, ir, tagMeta(method, callSiteRange));
     }
@@ -3205,7 +3212,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       const p = parseFloat(pStr.trim());
       if (isNaN(p)) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset;
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings) : ir;
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings, numbers) : ir;
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       return IR.choice(p, transform, ir, tagMeta(method, callSiteRange));
     }
@@ -3225,7 +3232,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
           continue;
         }
         const transformOffset = offsetOfSubArg(args, trimmed, baseOffset);
-        const track = parseTransform(trimmed, ir, transformOffset, bindings);
+        const track = parseTransform(trimmed, ir, transformOffset, bindings, numbers);
         if (track === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
         tracks.push(track);
       }
@@ -3243,7 +3250,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       const n = parseInt(nStr.trim(), 10);
       if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset;
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings) : ir;
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset, bindings, numbers) : ir;
       if (transform === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       return IR.chunk(n, transform, ir, tagMeta(method, callSiteRange));
     }
@@ -3261,7 +3268,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       return IR.late(t, ir, tagMeta(method, callSiteRange));
     }
     case "jux": {
-      const transformed = args.trim() ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings) : ir;
+      const transformed = args.trim() ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length), bindings, numbers) : ir;
       if (transformed === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       const leftPan = IR.param("pan", -1, "-1", ir);
       const rightPan = IR.param("pan", 1, "1", transformed);
@@ -3292,7 +3299,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
         // userMethod intentionally undefined — synthetic intermediate (D-09).
       });
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset;
-      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset, bindings) : lateBody;
+      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset, bindings, numbers) : lateBody;
       if (transformed === null) return wrapAsOpaque(ir, method, subbedArgs, callSiteRange);
       const [offStart, offEnd] = callSiteRange;
       return {
@@ -3325,7 +3332,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
     case "pickRestart":
     case "pickReset":
     case "pick": {
-      const namedEntries = parseNamedPickEntries(args, baseOffset, bindings);
+      const namedEntries = parseNamedPickEntries(args, baseOffset, bindings, numbers);
       if (namedEntries && namedEntries.length > 0) {
         return IR.namedPick(ir, namedEntries, method, subbedArgs, tagMeta(method, callSiteRange));
       }
@@ -3339,7 +3346,7 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
       const arrayBodyOffset = arrayBodyOffsetInArgs >= 1 ? baseOffset + arrayBodyOffsetInArgs : baseOffset;
       const lookup = elements.map((e) => {
         const elemOffset = offsetOfSubArg(arrayBody, e.trim(), arrayBodyOffset);
-        return parseArrayLiteralElement(e, "note", elemOffset, bindings);
+        return parseArrayLiteralElement(e, "note", elemOffset, bindings, numbers);
       });
       return IR.pick(ir, lookup, tagMeta(method, callSiteRange));
     }
@@ -3390,7 +3397,9 @@ function applyMethod(ir, method, args, baseOffset = 0, callSiteRange = [0, 0], b
         sliceArgs[1].value,
         baseOffset + sliceArgs[1].offset,
         void 0,
-        bindings
+        bindings,
+        void 0,
+        numbers
       );
       return IR.slice(sliceN, sliceIndex, ir, tagMeta(method, callSiteRange));
     }
@@ -3443,7 +3452,7 @@ function asControlParam(method, args, baseOffset, ir, callSiteRange) {
   return IR.param(canonical, parsed.value, args, ir, tagMeta(method, callSiteRange));
 }
 __name(asControlParam, "asControlParam");
-function parseTransform(transformStr, defaultIr, baseOffset = 0, bindings) {
+function parseTransform(transformStr, defaultIr, baseOffset = 0, bindings, numbers) {
   const str = transformStr.trim();
   const trimmedStart = baseOffset + (transformStr.length - transformStr.trimStart().length);
   const callSiteRange = [trimmedStart, trimmedStart + str.length];
@@ -3457,13 +3466,20 @@ function parseTransform(transformStr, defaultIr, baseOffset = 0, bindings) {
     const n = parseFloat(slowMatch[1]);
     if (!isNaN(n)) return IR.slow(n, defaultIr, tagMeta("slow", callSiteRange));
   }
-  const arrowMatch = str.match(/^\(?\s*[A-Za-z_$][\w$]*\s*\)?\s*=>\s*[A-Za-z_$][\w$]*\s*\.(.+)$/);
+  const arrowMatch = str.match(/^\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*[A-Za-z_$][\w$]*\s*\.(.+)$/);
   if (arrowMatch) {
     const dotIdx = str.indexOf(".", str.indexOf("=>"));
     const chainStartInTrimmed = dotIdx >= 0 ? dotIdx : 0;
     const leadingWs = transformStr.length - transformStr.trimStart().length;
     const chainOffset = baseOffset + leadingWs + chainStartInTrimmed;
-    return applyChain(defaultIr, "." + arrowMatch[1], chainOffset, bindings);
+    const param = arrowMatch[1];
+    return applyChain(
+      defaultIr,
+      "." + arrowMatch[2],
+      chainOffset,
+      shadowParam(bindings, param),
+      shadowParam(numbers, param)
+    );
   }
   const bareCall = str.match(/^([A-Za-z_$][\w$]*)\s*(?:\(([\s\S]*)\))?\s*$/);
   if (bareCall) return wrapAsOpaque(defaultIr, bareCall[1], bareCall[2] ?? "", callSiteRange);
@@ -3493,21 +3509,21 @@ function parseParamArg(args, isSampleKey, argsOffsetAbs) {
   return null;
 }
 __name(parseParamArg, "parseParamArg");
-function parseArrayLiteralElement(elem, receiverContext, baseOffset = 0, bindings) {
+function parseArrayLiteralElement(elem, receiverContext, baseOffset = 0, bindings, numbers) {
   const trimmed = elem.trim();
   const leadingWs = elem.length - elem.trimStart().length;
   if (!trimmed) return IR.pure();
   if (trimmed.startsWith('"') && trimmed.endsWith('"') || trimmed.startsWith("'") && trimmed.endsWith("'")) {
     const wrapped = `${receiverContext}(${trimmed})`;
     const wrapperPrefix = receiverContext.length + 1;
-    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, void 0, bindings);
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, void 0, bindings, void 0, numbers);
   }
   if (isNumericLiteral(trimmed)) {
     const wrapped = `${receiverContext}("${trimmed}")`;
     const wrapperPrefix = receiverContext.length + 1 + 1;
-    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, void 0, bindings);
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix, void 0, bindings, void 0, numbers);
   }
-  return parseExpression(trimmed, baseOffset + leadingWs, void 0, bindings);
+  return parseExpression(trimmed, baseOffset + leadingWs, void 0, bindings, void 0, numbers);
 }
 __name(parseArrayLiteralElement, "parseArrayLiteralElement");
 function topLevelColonIndex(s) {
@@ -3541,7 +3557,7 @@ function normalizePickKey(rawKey) {
   return t;
 }
 __name(normalizePickKey, "normalizePickKey");
-function parseNamedPickEntries(args, baseOffset, bindings) {
+function parseNamedPickEntries(args, baseOffset, bindings, numbers) {
   const trimmed = args.trim();
   if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) return null;
   const braceOpen = args.indexOf("{");
@@ -3563,7 +3579,7 @@ function parseNamedPickEntries(args, baseOffset, bindings) {
     const keyStart = baseOffset + bodyOffsetInArgs + part.offset;
     const keyLoc = { start: keyStart, end: keyStart + rawKey.trim().length };
     const valOffset = shorthand ? keyStart : baseOffset + bodyOffsetInArgs + part.offset + colon + 1;
-    const pattern = parseArrayLiteralElement(rawVal, "note", valOffset, bindings);
+    const pattern = parseArrayLiteralElement(rawVal, "note", valOffset, bindings, numbers);
     entries3.push({ key: key2, pattern, keyLoc });
   }
   return entries3;
@@ -3975,7 +3991,13 @@ function parseRootWithChainMeta(expr, baseOffset, bindings, numbers) {
       ...rootIR,
       unresolvedChain: chain,
       chainOffset,
-      ...bindings ? { unresolvedBindings: bindings } : {}
+      ...bindings ? { unresolvedBindings: bindings } : {},
+      // #1547 — the NUMERIC map needs its own stash for the same reason the
+      // pattern map has one: CHAIN-APPLIED runs in a later stage and no longer
+      // holds the document. Without it `parseStrudel` resolves an arrange
+      // weight inside a chain argument and this pipeline does not, which is a
+      // divergence on exactly the documents the fix is for.
+      ...numbers ? { unresolvedNumbers: numbers } : {}
     };
   }
   return rootIR;
@@ -4035,19 +4057,25 @@ function applyOnTrack(node) {
   const chainOffset = m.chainOffset ?? 0;
   const clean = stripStageMeta(node);
   if (chain.trim()) {
-    return applyChain(clean, chain, chainOffset, m.unresolvedBindings);
+    return applyChain(clean, chain, chainOffset, m.unresolvedBindings, m.unresolvedNumbers);
   }
   return clean;
 }
 __name(applyOnTrack, "applyOnTrack");
 function stripStageMeta(node) {
   const n = node;
-  if (!("unresolvedChain" in n) && !("unresolvedBindings" in n) && !("trackBindings" in n) && !("trackNumbers" in n) && !("chainOffset" in n) && !("dollarStart" in n) && !("dollarEnd" in n) && !("trackLabel" in n)) {
+  if (!("unresolvedChain" in n) && !("unresolvedBindings" in n) && !("unresolvedNumbers" in n) && !("trackBindings" in n) && !("trackNumbers" in n) && !("chainOffset" in n) && !("dollarStart" in n) && !("dollarEnd" in n) && !("trackLabel" in n)) {
     return node;
   }
   const {
     unresolvedChain: _u,
     unresolvedBindings: _ub,
+    // #1547 — the numeric map's chain-stage stash. Same lifecycle as _ub:
+    // consumed in CHAIN-APPLIED, stripped here so it never reaches FINAL.
+    // ⚠ Missing from EITHER the guard above or this list leaks it onto a
+    // FINAL node and reddens every parity assertion — which is the loud
+    // failure, and the reason both halves are edited together.
+    unresolvedNumbers: _un,
     // #1392 — RAW's document-level binding map. Consumed in MINI-EXPANDED;
     // stripped here so it can never reach a FINAL node body.
     trackBindings: _tb,
