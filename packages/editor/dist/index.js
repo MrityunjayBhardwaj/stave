@@ -2362,7 +2362,7 @@ function stripSideEffectStatements(stmts) {
 __name(stripSideEffectStatements, "stripSideEffectStatements");
 var BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/;
 var NON_EXPRESSION_HEAD_RE = /^(?:let|const|var|function|class|if|for|while|switch|try|do)\b|^async\s+function\b/;
-function collectTopLevelBindings(body, baseOffset) {
+function collectTopLevelBindings(body, baseOffset, numbers) {
   const stmts = stripSideEffectStatements(
     splitTopLevelStatements(body, baseOffset)
   );
@@ -2393,7 +2393,7 @@ function collectTopLevelBindings(body, baseOffset) {
     let progress = false;
     for (const i of [...pending]) {
       const d = descs[i];
-      const parsed = parseExpression(d.rhs, d.rhsOffset, void 0, bindings);
+      const parsed = parseExpression(d.rhs, d.rhsOffset, void 0, bindings, void 0, numbers);
       const lit = classifyLiteralRhs(d.rhs);
       const parsedIsBareCode = parsed.tag === "Code" && parsed.via === void 0;
       const ir = parsedIsBareCode ? lit ?? parsed : parsed;
@@ -2410,8 +2410,8 @@ function collectTopLevelBindings(body, baseOffset) {
   return { bindings, tail };
 }
 __name(collectTopLevelBindings, "collectTopLevelBindings");
-function buildBindingMap(body, baseOffset) {
-  const got = collectTopLevelBindings(body, baseOffset);
+function buildBindingMap(body, baseOffset, numbers) {
+  const got = collectTopLevelBindings(body, baseOffset, numbers);
   if (!got || got.tail.length !== 1) return null;
   return {
     bindings: got.bindings,
@@ -2425,8 +2425,8 @@ function parseStrudel(code, _opts) {
   const opts = _opts;
   try {
     const tracks = extractTracks(code);
-    const trackBindings = tracks.length > 0 ? collectTopLevelBindings(code, 0)?.bindings ?? void 0 : void 0;
     const numbers = collectNumericBindings(code);
+    const trackBindings = tracks.length > 0 ? collectTopLevelBindings(code, 0, numbers)?.bindings ?? void 0 : void 0;
     if (tracks.length === 0) {
       const stripped = stripParserPrelude(code);
       if (!stripped.body.trim()) {
@@ -2434,7 +2434,7 @@ function parseStrudel(code, _opts) {
       }
       const bodyTrimStart = stripped.body.search(/\S/);
       const innerOffset = stripped.offset + (bodyTrimStart >= 0 ? bodyTrimStart : 0);
-      const bound = buildBindingMap(stripped.body, stripped.offset);
+      const bound = buildBindingMap(stripped.body, stripped.offset, numbers);
       if (bound) {
         const inner2 = parseExpression(bound.finalExpr, bound.finalOffset, void 0, bound.bindings, opts, numbers);
         const innerIsBareCode = inner2.tag === "Code" && inner2.via === void 0;
@@ -2446,7 +2446,7 @@ function parseStrudel(code, _opts) {
         splitTopLevelStatements(stripped.body, stripped.offset)
       );
       const declaresBinding = bareStmts.some((s) => BINDING_RE.test(s.text));
-      const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
+      const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset, numbers) : null;
       const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
       const playable = trackStmts.filter((s) => !NON_EXPRESSION_HEAD_RE.test(s.text));
       if (playable.length > 1) {
@@ -2857,7 +2857,7 @@ function parseArrangeArm(raw, absOffset, bindings, opts, numbers) {
   const weight = evalWeightExpression(parts[0].value.trim(), numbers);
   if (weight == null) return null;
   const patPart = parts[1];
-  const pattern = parseExpression(patPart.value, innerAbs + patPart.offset, void 0, bindings, opts);
+  const pattern = parseExpression(patPart.value, innerAbs + patPart.offset, void 0, bindings, opts, numbers);
   return { weight, pattern, loc: [{ start: absOffset + lb, end: absOffset + rb + 1 }] };
 }
 __name(parseArrangeArm, "parseArrangeArm");
@@ -2875,7 +2875,7 @@ function parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts, n
   const nodeLoc = { start: nodeStart, end: nodeStart + closeIdx + 1 };
   if (fn === "fastcat") {
     const children = args.map(
-      (a) => parseExpression(a.value, innerAbs + a.offset, void 0, bindings, opts)
+      (a) => parseExpression(a.value, innerAbs + a.offset, void 0, bindings, opts, numbers)
     );
     if (children.length === 1) return children[0];
     return { tag: "Seq", children, loc: [nodeLoc], userMethod: "fastcat" };
@@ -2890,7 +2890,7 @@ function parseTimeSequenceRoot(trimmed, baseOffset, leadingWs, bindings, opts, n
       const armStart = innerAbs + a.offset;
       arms.push({
         weight: 1,
-        pattern: parseExpression(a.value, armStart, void 0, bindings, opts),
+        pattern: parseExpression(a.value, armStart, void 0, bindings, opts, numbers),
         loc: [{ start: armStart, end: armStart + a.value.length }]
       });
     }
@@ -2995,7 +2995,8 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings, opts, numbers) {
           innerAbsOffset,
           callerIsSample,
           bindings,
-          opts
+          opts,
+          numbers
         );
         const innerIsBareCode = innerIR.tag === "Code" && innerIR.via === void 0;
         if (!innerIsBareCode) {
@@ -3013,7 +3014,7 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings, opts, numbers) {
       const innerAbsOffset = baseOffset + leadingWs + openIdx + 1;
       const argsWithOffsets = splitArgsWithOffsets(inner);
       const tracks = argsWithOffsets.map(
-        (a) => parseExpression(a.value, innerAbsOffset + a.offset, void 0, bindings, opts)
+        (a) => parseExpression(a.value, innerAbsOffset + a.offset, void 0, bindings, opts, numbers)
       );
       if (tracks.length === 0) return IR.pure();
       if (tracks.length === 1) return tracks[0];
@@ -3758,7 +3759,7 @@ function runRawStage(input) {
       splitTopLevelStatements(stripped.body, stripped.offset)
     );
     const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text));
-    const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset) : null;
+    const collected = declaresBinding ? collectTopLevelBindings(stripped.body, stripped.offset, docNumbers) : null;
     const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts;
     const playable = trackStmts.filter((st) => !NON_EXPRESSION_HEAD_RE.test(st.text));
     if (playable.length > 1) {
@@ -3819,7 +3820,7 @@ function runRawStage(input) {
       ...numberMeta
     };
   }
-  const docBindings = collectTopLevelBindings(code, 0)?.bindings;
+  const docBindings = collectTopLevelBindings(code, 0, docNumbers)?.bindings;
   const bindingMeta = { ...docBindings ? { trackBindings: docBindings } : {}, ...numberMeta };
   if (tracks.length === 1) {
     const t = tracks[0];
@@ -3887,7 +3888,7 @@ function runMiniExpandedStage(input) {
     }, "withTrackMeta");
     if (!input.code.trim()) return withTrackMeta(IR.pure());
     if (cMeta.trackLabel === void 0 && cMeta.dollarStart === void 0) {
-      const bound = buildBindingMap(input.code, base);
+      const bound = buildBindingMap(input.code, base, cMeta.trackNumbers);
       if (bound) {
         const boundParsed = parseRootWithChainMeta(
           bound.finalExpr,
