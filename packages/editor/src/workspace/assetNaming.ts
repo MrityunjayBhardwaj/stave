@@ -38,6 +38,16 @@
  * the shape that slice will persist, defined here so the naming and dedup
  * decisions that produce it are testable now.
  */
+/**
+ * Where a record's audio came from (#1541).
+ *
+ * ⚠ ABSENT means recorded, and that is a fact about this code's history rather
+ * than a default: until #1541 there was no way to bring a file in, so every
+ * record any project already holds was made by `saveTake`. New records always
+ * say which they are.
+ */
+export type AssetOrigin = 'recorded' | 'imported'
+
 export interface AssetRecord {
   /** Stable per-reference id. Minted, never derived from content — #1499. */
   readonly id: string
@@ -49,6 +59,8 @@ export interface AssetRecord {
   readonly mime: string
   /** Decoded length in seconds, when it could be measured. */
   readonly duration?: number
+  /** Recorded here, or brought in. Absent on records written before #1541. */
+  readonly origin?: AssetOrigin
 }
 
 /** The fallback name for a filename with nothing usable left after sanitising. */
@@ -152,6 +164,8 @@ export interface AssetImportInput {
   readonly mime: string
   /** Decoded length in seconds, when it could be measured. */
   readonly duration?: number
+  /** Recorded here, or brought in. */
+  readonly origin?: AssetOrigin
 }
 
 /**
@@ -183,6 +197,7 @@ export function planAssetImport(
     blobHash: input.blobHash,
     mime: input.mime,
     ...(input.duration != null ? { duration: input.duration } : {}),
+    ...(input.origin != null ? { origin: input.origin } : {}),
   }
   return {
     record,

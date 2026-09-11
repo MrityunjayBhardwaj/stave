@@ -1,3 +1,5 @@
+import type { AssetOrigin } from "@stave/editor";
+
 import type { Asset, AssetPreviewHandle, AssetProvider } from "./types";
 
 /**
@@ -21,6 +23,7 @@ export interface SampleRecord {
   readonly blobHash: string;
   readonly mime: string;
   readonly duration?: number;
+  readonly origin?: AssetOrigin;
 }
 
 export interface SamplesProviderDeps {
@@ -30,6 +33,19 @@ export interface SamplesProviderDeps {
   startPreview: (name: string) => AssetPreviewHandle;
   /** Round-trip the sample into code at the cursor. */
   onInsert: (name: string) => void;
+}
+
+/**
+ * The searchable word for where this audio came from (#1541).
+ *
+ * ⚠ Absent origin reads as "recorded", and that is a fact rather than a
+ * default: until #1541 there was no way to bring a file in, so every record a
+ * project already holds was made by recording. Tags feed a free-text search
+ * (`filter.ts`), so a row that answered to "recorded" when it was imported
+ * would be a lie the user could act on.
+ */
+function originTag(origin: AssetOrigin | undefined): string {
+  return origin === "imported" ? "imported" : "recorded";
 }
 
 /** `1.5` → `1.5s`; absent duration contributes no tag rather than "unknown". */
@@ -64,7 +80,7 @@ export function recordsToAssets(
       // What Copy puts on the clipboard, and what `s()` addresses — the name,
       // never the id. The id is a row key; it means nothing in code.
       code: record.name,
-      tags: ["sample", "recorded", ...durationTag(record.duration)],
+      tags: ["sample", originTag(record.origin), ...durationTag(record.duration)],
       group: "Your audio",
       preview: () => deps.startPreview(record.name),
       insert: () => deps.onInsert(record.name),

@@ -65,6 +65,31 @@ describe("recordsToAssets", () => {
     expect(asset.tags).toEqual(["sample", "recorded"]);
   });
 
+  it("tags an imported sound as imported, not as recorded", () => {
+    // Tags feed a free-text search, so a brought-in file answering to
+    // "recorded" is a lie the user could act on.
+    const [asset] = recordsToAssets(
+      [record({ origin: "imported", duration: undefined })],
+      deps,
+    );
+    expect(asset.tags).toEqual(["sample", "imported"]);
+  });
+
+  it("tags a recorded sound as recorded", () => {
+    const [asset] = recordsToAssets(
+      [record({ origin: "recorded", duration: undefined })],
+      deps,
+    );
+    expect(asset.tags).toEqual(["sample", "recorded"]);
+  });
+
+  it("reads an absent origin as recorded — a fact about history, not a default", () => {
+    // Until #1541 there was no way to bring a file in, so every record a
+    // project already holds was made by recording.
+    const [asset] = recordsToAssets([record({ duration: undefined })], deps);
+    expect(asset.tags).toEqual(["sample", "recorded"]);
+  });
+
   it("sorts by name so the list does not reshuffle as takes arrive", () => {
     const assets = recordsToAssets(
       [record({ id: "b", name: "take_2" }), record({ id: "a", name: "take_1" })],

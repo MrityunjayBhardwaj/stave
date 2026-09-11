@@ -49,7 +49,7 @@
 import { samples } from '@strudel/webaudio'
 
 import { openIdbWithTimeout } from '../idb'
-import type { AssetImportPlan, AssetRecord } from './assetNaming'
+import type { AssetImportPlan, AssetOrigin, AssetRecord } from './assetNaming'
 import { planAssetImport } from './assetNaming'
 
 /**
@@ -375,6 +375,7 @@ export async function importAsset(
   filename: string,
   existing: readonly AssetRecord[] = [],
   deps: ImportAssetDeps = {},
+  origin?: AssetOrigin,
 ): Promise<ImportAssetResult> {
   const put = await putAsset(blob, deps.digest ?? sha256Hex)
   // A measurer that throws must not fail the import: the bytes are already
@@ -389,7 +390,7 @@ export async function importAsset(
     duration = undefined
   }
   const plan = planAssetImport(
-    { blobHash: put.hash, filename, mime: blob.type, duration },
+    { blobHash: put.hash, filename, mime: blob.type, duration, origin },
     existing,
     deps.mintId ?? (() => crypto.randomUUID()),
   )
