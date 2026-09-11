@@ -95,9 +95,13 @@ export function AssetLibraryPanel({ onClose }: { onClose?: () => void }) {
   // #1541 — one owner for both ways audio arrives: the picker and a drop
   // anywhere on the panel.
   const audio = useAudioImport();
+  // ⚠ Depends on `importFiles`, not on `audio`. The hook returns a fresh object
+  // literal every render, so `[audio]` would rebuild this callback on every
+  // render and defeat the memo entirely — the per-render-new-dependency trap.
+  // `importFiles` is itself memoised with no deps, so this is stable.
   const onFiles = useCallback(
     (files: readonly File[]) => void audio.importFiles(files),
-    [audio],
+    [audio.importFiles],
   );
   const drop = useAudioDrop(onFiles);
 
