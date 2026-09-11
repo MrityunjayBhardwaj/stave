@@ -844,6 +844,12 @@ export const DECLARATION_RE = /^(?:let|const|var)\b/
 export function collectTopLevelBindings(
   body: string,
   baseOffset: number,
+  // #1522 — the document's NUMERIC bindings, threaded exactly as the pattern
+  // map is everywhere else (optional trailing STACK param, PV50). A binding's
+  // RHS is an ordinary document-scope expression, so `let p = arrange([M, …])`
+  // must read `M` for the same reason the final expression does. `undefined`
+  // = literal weights only, which is what every caller passed before.
+  numbers?: ReadonlyMap<string, number>,
 ):
   | { bindings: ReadonlyMap<string, PatternIR>; tail: readonly { text: string; offset: number }[] }
   | null {
@@ -939,7 +945,7 @@ export function collectTopLevelBindings(
     let progress = false
     for (const i of [...pending]) {
       const d = descs[i]
-      const parsed = parseExpression(d.rhs, d.rhsOffset, undefined, bindings)
+      const parsed = parseExpression(d.rhs, d.rhsOffset, undefined, bindings, undefined, numbers)
       // D-1a provenance: classifyLiteralRhs is the NAMED helper defined
       // in Wave D (D-1a). E-1 consumes it POST-PARSE so a bare literal
       // RHS becomes the structured {literal:true;raw} Code-with-via node
@@ -1011,10 +1017,12 @@ export function collectTopLevelBindings(
 export function buildBindingMap(
   body: string,
   baseOffset: number,
+  // #1522 — pass-through to `collectTopLevelBindings`; see there.
+  numbers?: ReadonlyMap<string, number>,
 ):
   | { bindings: ReadonlyMap<string, PatternIR>; finalExpr: string; finalOffset: number }
   | null {
-  const got = collectTopLevelBindings(body, baseOffset)
+  const got = collectTopLevelBindings(body, baseOffset, numbers)
   if (!got || got.tail.length !== 1) return null
   return {
     bindings: got.bindings,
@@ -1048,6 +1056,20 @@ export function parseStrudel(
     // char offset of `expr[0]` within `code` so parseMini can attach
     // `loc` (source ranges) to Play nodes.
     const tracks = extractTracks(code)
+    // #1468 A — the OTHER thing an identifier can mean at document scope: a
+    // number. Resolved once, here, for the same reason `trackBindings` is —
+    // `var M = 1` is a property of the document, not of one arrange arm. A
+    // separate map because `collectTopLevelBindings` resolves to PATTERNS, and
+    // because it must survive that collector declining: a document whose
+    // pattern bindings don't resolve can still have a readable `var M = 1`.
+    //
+    // #1522 — and it is resolved BEFORE the pattern map, because the pattern
+    // map now takes it: a binding's own right-hand side is an ordinary
+    // document-scope expression, so `let p = arrange([M, …])` must read `M`
+    // for the same reason the final expression does. The two maps are built
+    // from the same text and neither reads the other's output, so this order
+    // is free to be the one that works.
+    const numbers = collectNumericBindings(code)
     // #1392 — WHAT AN IDENTIFIER MEANS IS A PROPERTY OF THE DOCUMENT, so it is
     // resolved ONCE, here, above the track dispatch. It used to be computed
     // inside the no-`$:` branch alone, which meant every `$:`-declared track —
@@ -1060,15 +1082,8 @@ export function parseStrudel(
     // engine rejects), which is exactly the `undefined` these branches passed
     // before — so a document without bindings is byte-identical.
     const trackBindings = tracks.length > 0
-      ? (collectTopLevelBindings(code, 0)?.bindings ?? undefined)
+      ? (collectTopLevelBindings(code, 0, numbers)?.bindings ?? undefined)
       : undefined
-    // #1468 A — the OTHER thing an identifier can mean at document scope: a
-    // number. Resolved once, here, for the same reason `trackBindings` is —
-    // `var M = 1` is a property of the document, not of one arrange arm. A
-    // separate map because `collectTopLevelBindings` resolves to PATTERNS, and
-    // because it must survive that collector declining: a document whose
-    // pattern bindings don't resolve can still have a readable `var M = 1`.
-    const numbers = collectNumericBindings(code)
     if (tracks.length === 0) {
       // No $: prefix — parse as a single expression and wrap in a
       // synthetic Track('d1', ...). 20-11 D-04 option (a): every parseStrudel
@@ -1106,7 +1121,7 @@ export function parseStrudel(
       // "bindings* then one expr" shape) → fall through to the existing
       // whole-program parse below (topology-preserving; use-before-def is
       // handled at the substitution site, never a throw).
-      const bound = buildBindingMap(stripped.body, stripped.offset)
+      const bound = buildBindingMap(stripped.body, stripped.offset, numbers)
       if (bound) {
         const inner = parseExpression(bound.finalExpr, bound.finalOffset, undefined, bound.bindings, opts, numbers)
         // P67: if the final expression resolved to bare Code (the binding
@@ -1189,7 +1204,7 @@ export function parseStrudel(
       // decided a statement the parser cannot read should do.
       const declaresBinding = bareStmts.some(s => BINDING_RE.test(s.text))
       const collected = declaresBinding
-        ? collectTopLevelBindings(stripped.body, stripped.offset)
+        ? collectTopLevelBindings(stripped.body, stripped.offset, numbers)
         : null
       // A binding-bearing document whose bindings the ENGINE declines (a cycle,
       // a duplicate name, no leading binding at all) keeps the existing
@@ -2067,7 +2082,9 @@ function parseArrangeArm(
   const weight = evalWeightExpression(parts[0].value.trim(), numbers)
   if (weight == null) return null
   const patPart = parts[1]
-  const pattern = parseExpression(patPart.value, innerAbs + patPart.offset, undefined, bindings, opts)
+  // #1522 — `numbers` travels with `bindings`. Without it an `arrange` nested
+  // inside an ARM of another `arrange` could not read an identifier weight.
+  const pattern = parseExpression(patPart.value, innerAbs + patPart.offset, undefined, bindings, opts, numbers)
   return { weight, pattern, loc: [{ start: absOffset + lb, end: absOffset + rb + 1 }] }
 }
 
@@ -2108,7 +2125,7 @@ function parseTimeSequenceRoot(
   // so the proven Seq collect / round-trip applies; NOT a clip producer.
   if (fn === 'fastcat') {
     const children = args.map(a =>
-      parseExpression(a.value, innerAbs + a.offset, undefined, bindings, opts),
+      parseExpression(a.value, innerAbs + a.offset, undefined, bindings, opts, numbers),
     )
     if (children.length === 1) return children[0]
     return { tag: 'Seq', children, loc: [nodeLoc], userMethod: 'fastcat' }
@@ -2125,7 +2142,7 @@ function parseTimeSequenceRoot(
       const armStart = innerAbs + a.offset
       arms.push({
         weight: 1,
-        pattern: parseExpression(a.value, armStart, undefined, bindings, opts),
+        pattern: parseExpression(a.value, armStart, undefined, bindings, opts, numbers),
         loc: [{ start: armStart, end: armStart + a.value.length }],
       })
     }
@@ -2434,6 +2451,7 @@ export function parseRoot(
           callerIsSample,
           bindings,
           opts,
+          numbers,
         )
         const innerIsBareCode =
           innerIR.tag === 'Code' &&
@@ -2479,7 +2497,7 @@ export function parseRoot(
       // whole-expression Code fallback (D-02 topology-preserving, no
       // throw). Substituted subtrees keep definition-site loc (R6).
       const tracks = argsWithOffsets.map((a) =>
-        parseExpression(a.value, innerAbsOffset + a.offset, undefined, bindings, opts),
+        parseExpression(a.value, innerAbsOffset + a.offset, undefined, bindings, opts, numbers),
       )
       if (tracks.length === 0) return IR.pure()
       if (tracks.length === 1) return tracks[0]

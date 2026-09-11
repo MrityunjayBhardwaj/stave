@@ -140,7 +140,9 @@ export function runRawStage(input: PatternIR): PatternIR {
     // existing `trackBindings` channel, exactly as a labelled track's does.
     const declaresBinding = bareStmts.some((st) => BINDING_RE.test(st.text))
     const collected = declaresBinding
-      ? collectTopLevelBindings(stripped.body, stripped.offset)
+      // #1522 — the numeric map reaches the pattern collector here too, so a
+      // binding whose RHS is `arrange([M, …])` reads its weight on both sides.
+      ? collectTopLevelBindings(stripped.body, stripped.offset, docNumbers)
       : null
     const trackStmts = collected ? collected.tail : declaresBinding ? [] : bareStmts
     // #1534 — the mirror of parseStrudel.ts's declaration filter. A `let` in
@@ -234,7 +236,7 @@ export function runRawStage(input: PatternIR): PatternIR {
   // document, so this is the only place the map can be built — it then travels
   // as stage-meta on each lift, exactly as `trackLabel` and `dollarStart` do.
   // Stripped from FINAL by `stripStageMeta` with the rest of the meta.
-  const docBindings = collectTopLevelBindings(code, 0)?.bindings
+  const docBindings = collectTopLevelBindings(code, 0, docNumbers)?.bindings
   // #1514 — `numberMeta` rides alongside; both are document-scope and both are
   // stripped by `stripStageMeta` before FINAL.
   const bindingMeta = { ...(docBindings ? { trackBindings: docBindings } : {}), ...numberMeta }
@@ -374,7 +376,12 @@ export function runMiniExpandedStage(input: PatternIR): PatternIR {
     // correctness. `parseStrudel` resolves them for every branch now, and so
     // does this pipeline.
     if (cMeta.trackLabel === undefined && cMeta.dollarStart === undefined) {
-      const bound = buildBindingMap(input.code, base)
+      // #1522 — the numeric map reaches the pattern collector on THIS branch
+      // too. `parseStrudel` now passes it to its own `buildBindingMap`, so a
+      // bare document binding `let p = arrange([M, …])` resolves there; without
+      // the same argument here the two parsers answer differently on exactly
+      // the documents this change is for.
+      const bound = buildBindingMap(input.code, base, cMeta.trackNumbers)
       if (bound) {
         const boundParsed = parseRootWithChainMeta(
           bound.finalExpr,
