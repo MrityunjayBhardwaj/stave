@@ -81,6 +81,12 @@ import { TrackSwatchPopover } from './TrackSwatchPopover'
 import { useRulerUnits } from '../state/rulerUnits'
 import { useDisplayMeter } from '../state/displayMeter'
 import {
+  useLoopState,
+  setLoopRange as setLoopRangeStore,
+  toggleLoopEnabled,
+  type LoopRange,
+} from '../state/loopRange'
+import {
   applyStableVoiceOrder,
   EMPTY_VOICE_ORDER,
   type VoiceOrderByLane,
@@ -129,6 +135,13 @@ const USER_SCROLL_GUARD_MS = 1200
 const CONTROLS_HEIGHT = 26
 const TOPBAR_HEIGHT = 28
 const GUTTER_WIDTH = 90
+// #1570 — the loop strip's band of the ruler. Tall enough to hit without
+// aiming, short enough to leave the tick labels below it readable.
+const LOOP_STRIP_HEIGHT = 9
+/** How near an edge counts as grabbing it rather than drawing a new loop. */
+const LOOP_EDGE_GRAB_PX = 5
+/** Under this much travel a pointerdown/up is a click, not a drag. */
+const LOOP_CLICK_SLOP_PX = 3
 /** Height of an expanded ("accordion") lane — tall enough for the read-only
  *  note detail (pitch spread + per-beat grid) to be legible (#422, design §4.5). */
 const EXPANDED_ROW_HEIGHT = 96
@@ -869,13 +882,27 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // The ruler and grid share the grid's scrollLeft and the same left edge, so a
   // click anywhere resolves through the grid's rect: viewport-x + scrollLeft is
   // the content-x, inverted against contentWidth.
-  const handleSeekAtClientX = React.useCallback(
-    (clientX: number) => {
+  //
+  // Where a screen pixel lands in the song. ONE inversion, shared by the seek
+  // surface and the loop strip above it (#1570): two spellings of "which cycle
+  // is under the pointer" is how the two gestures would drift apart, and the
+  // drift would be invisible until a loop landed a bar off from where it was
+  // drawn.
+  const cycleAtClientX = React.useCallback(
+    (clientX: number): number | null => {
       const el = areaRef.current
-      if (!el) return
+      if (!el) return null
       const rect = el.getBoundingClientRect()
       const contentX = clientX - rect.left + scrollLeftRef.current
-      const cycle = xToSongCycle(contentX, songWindow, dragAwareContentWidth(rect.width))
+      return xToSongCycle(contentX, songWindowRef.current, dragAwareContentWidth(rect.width))
+    },
+    [dragAwareContentWidth],
+  )
+
+  const handleSeekAtClientX = React.useCallback(
+    (clientX: number) => {
+      const cycle = cycleAtClientX(clientX)
+      if (cycle == null) return
       // A manual seek is user navigation — suspend follow briefly so it doesn't
       // immediately yank the view back as the sought playhead resumes. Clamp to
       // the true song end so a click in the transient extend room (past the song)
@@ -886,8 +913,117 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       // the end of a paged window back to the start of the song.
       onSeek(clampSeekToWindow(cycle, loopWindow))
     },
-    [displayCycles, songOriginCycles, loopCycles, dragAwareContentWidth, onSeek],
+    [cycleAtClientX, loopWindow, onSeek],
   )
+
+  // ── Loop locators (#1570) ────────────────────────────────────────────────
+  // The strip along the top of the ruler, and the three gestures both grounded
+  // DAWs share: drag an empty stretch to draw a loop, drag an edge to resize,
+  // drag the middle to move. Logic puts exactly this in "the top part of the
+  // ruler" and arms Cycle mode the moment you draw one; Ableton's loop brace
+  // behaves the same. It sits ABOVE the seek surface rather than over it
+  // because the whole ruler is already click-to-seek, and one pixel cannot
+  // serve both gestures.
+  const loopState = useLoopState()
+  // The band while the pointer is still down. Held LOCAL and committed on
+  // pointerup rather than written to the store per move — every store write
+  // reaches the transport, and the transport RE-EVALUATES. A store write per
+  // pointermove would hot-swap the whole document on every frame of the drag.
+  const [loopDraft, setLoopDraft] = React.useState<LoopRange | null>(null)
+  const loopDragRef = React.useRef<{
+    mode: 'new' | 'move' | 'resize-left' | 'resize-right'
+    anchorCycle: number
+    origin: LoopRange
+    startClientX: number
+    moved: boolean
+  } | null>(null)
+
+  const clampToSong = React.useCallback(
+    (cycle: number) => Math.max(0, clampSeekToWindow(cycle, loopWindowRef.current)),
+    [],
+  )
+
+  const handleLoopPointerDown = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // The ruler underneath is a seek surface; without this, drawing a loop
+      // would also jump the transport to wherever the drag began.
+      e.stopPropagation()
+      const cycle = cycleAtClientX(e.clientX)
+      if (cycle == null) return
+      const range = loopState.range
+      const edgeCycles = pxPerCycle > 0 ? LOOP_EDGE_GRAB_PX / pxPerCycle : 0
+      let mode: 'new' | 'move' | 'resize-left' | 'resize-right' = 'new'
+      const origin: LoopRange = range ?? { startCycle: cycle, cycles: 0 }
+      if (range) {
+        const end = range.startCycle + range.cycles
+        if (Math.abs(cycle - range.startCycle) <= edgeCycles) mode = 'resize-left'
+        else if (Math.abs(cycle - end) <= edgeCycles) mode = 'resize-right'
+        else if (cycle > range.startCycle && cycle < end) mode = 'move'
+      }
+      loopDragRef.current = { mode, anchorCycle: cycle, origin, startClientX: e.clientX, moved: false }
+      setLoopDraft(range)
+      // Optional-chained on the METHOD, the idiom every other gesture in this
+      // file already uses: jsdom ships no pointer capture, and a hard call makes
+      // the whole handler throw there.
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+    },
+    [cycleAtClientX, loopState.range, pxPerCycle],
+  )
+
+  const handleLoopPointerMove = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = loopDragRef.current
+      if (!drag) return
+      const cycle = cycleAtClientX(e.clientX)
+      if (cycle == null) return
+      if (Math.abs(e.clientX - drag.startClientX) > LOOP_CLICK_SLOP_PX) drag.moved = true
+      if (!drag.moved) return
+
+      const { origin } = drag
+      let next: LoopRange
+      if (drag.mode === 'move') {
+        const delta = cycle - drag.anchorCycle
+        next = { startCycle: clampToSong(origin.startCycle + delta), cycles: origin.cycles }
+      } else {
+        // Every other mode is "one edge follows the pointer, the other stays
+        // put", which also lets a drag cross over its own anchor and keep
+        // meaning something.
+        const fixed =
+          drag.mode === 'resize-left'
+            ? origin.startCycle + origin.cycles
+            : drag.mode === 'resize-right'
+              ? origin.startCycle
+              : drag.anchorCycle
+        const moving = clampToSong(cycle)
+        next = { startCycle: Math.min(fixed, moving), cycles: Math.abs(moving - fixed) }
+      }
+      setLoopDraft(next)
+    },
+    [cycleAtClientX, clampToSong],
+  )
+
+  const handleLoopPointerUp = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = loopDragRef.current
+      loopDragRef.current = null
+      if (drag) e.currentTarget.releasePointerCapture?.(e.pointerId)
+      const draft = loopDraft
+      setLoopDraft(null)
+      if (!drag) return
+      if (!drag.moved) {
+        // A click, not a drag — the Cycle button of both grounded DAWs, in the
+        // place Logic also puts it. No locators yet means nothing to toggle.
+        toggleLoopEnabled()
+        return
+      }
+      // Committed once, here. This is the write that reaches the transport.
+      setLoopRangeStore(draft)
+    },
+    [loopDraft],
+  )
+
+  // What to draw: the drag in progress if there is one, otherwise what is set.
+  const loopBand = loopDraft ?? loopState.range
 
   // Canvas scene: per-lane density (from analysis) + capped mini-note marks
   // (collected app-side from the IR over the display span). Memoised so the
@@ -2310,6 +2446,26 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                   {t.label != null && <span style={styles.tickLabel}>{t.label}</span>}
                 </div>
               ))}
+            {/* #1570 — the looped span. Inside ruler-content, so it rides the
+                shared scroll transform exactly like the ticks do. */}
+            {loopBand && loopBand.cycles > 0 && (
+              <div
+                data-full-song="loop-band"
+                data-loop-enabled={loopState.enabled || loopDraft != null ? 'true' : 'false'}
+                style={{
+                  ...styles.loopBand,
+                  left: songCycleToX(loopBand.startCycle, songWindow, contentWidth),
+                  width: Math.max(
+                    2,
+                    songCycleToX(loopBand.startCycle + loopBand.cycles, songWindow, contentWidth) -
+                      songCycleToX(loopBand.startCycle, songWindow, contentWidth),
+                  ),
+                  // Switched off keeps the locators visible but quiet — the
+                  // whole point of holding the range and the flag separately.
+                  opacity: loopState.enabled || loopDraft != null ? 1 : 0.3,
+                }}
+              />
+            )}
             {playheadVisible && (
               <div
                 data-full-song="ruler-playhead-arrow"
@@ -2317,6 +2473,18 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
               />
             )}
           </div>
+          {/* The gesture surface. Fixed to the viewport rather than the scrolling
+              content, so a drag resolves through the same rect the seek surface
+              uses — and drawn last so it sits above the band it edits. */}
+          <div
+            data-full-song="loop-strip"
+            title="Drag to set a loop · click to switch it off and on"
+            style={styles.loopStrip}
+            onPointerDown={handleLoopPointerDown}
+            onPointerMove={handleLoopPointerMove}
+            onPointerUp={handleLoopPointerUp}
+            onPointerCancel={handleLoopPointerUp}
+          />
         </div>
       </div>
 
@@ -2933,6 +3101,26 @@ const styles = {
     paddingLeft: 3,
     paddingBottom: 2,
     color: 'var(--text-tertiary, rgba(255,255,255,0.5))',
+  },
+  // #1570 — the loop strip: the top band of the ruler, where both grounded DAWs
+  // put this gesture. Transparent, so the ticks below read normally.
+  loopStrip: {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    height: LOOP_STRIP_HEIGHT,
+    cursor: 'ew-resize' as const,
+    touchAction: 'none' as const,
+  },
+  loopBand: {
+    position: 'absolute' as const,
+    top: 0,
+    height: LOOP_STRIP_HEIGHT,
+    background: 'var(--accent, #f5c451)',
+    borderRadius: 2,
+    // The surface above owns every pointer event in this band.
+    pointerEvents: 'none' as const,
   },
   playheadArrow: {
     position: 'absolute' as const,

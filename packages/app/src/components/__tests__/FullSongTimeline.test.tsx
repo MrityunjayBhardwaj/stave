@@ -14,6 +14,11 @@ import * as React from 'react'
 import { act, render, cleanup, fireEvent } from '@testing-library/react'
 import type { SongAnalysis } from '@stave/editor'
 import { setRulerUnits } from '../../state/rulerUnits'
+import {
+  getLoopState,
+  subscribeLoopState,
+  __resetLoopStateForTests,
+} from '../../state/loopRange'
 
 // FullSongTimeline now pulls the editor runtime (collectCycles/laneKeyOf, via
 // timelineMarks) into its import graph; the real module drags in a CJS dep
@@ -1197,5 +1202,151 @@ describe('FullSongTimeline — trim a REGION (drag a mark edge → .begin/.end, 
     fireEvent.pointerDown(grid, { clientX: MARK_X, clientY: MARK_Y, pointerId: 1 })
     fireEvent.pointerMove(grid, { clientX: MARK_X + 80, clientY: MARK_Y, pointerId: 1 })
     expect(container.querySelector('[data-full-song="region-edge"]')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Loop locators (#1570) — the strip along the top of the ruler
+// ---------------------------------------------------------------------------
+// Grounded on Logic's cycle area and Ableton's loop brace: drag in the top part
+// of the ruler to draw a loop, which arms immediately; drag an edge to resize;
+// drag the middle to move; click to switch it off and back on without losing
+// where the locators are.
+//
+// ⚠ jsdom reports a zero-width rect, which would collapse every cycle to 0 and
+// make each assertion below pass against any implementation. So the ruler's rect
+// is stubbed to a real width — without it these are not tests, they are shapes.
+describe('FullSongTimeline loop locators (#1570)', () => {
+  const RULER_WIDTH = 800
+
+  beforeEach(() => {
+    __resetLoopStateForTests()
+  })
+
+  /** Render, then give the ruler area a real rect so x→cycle means something. */
+  async function renderWithRuler() {
+    const utils = renderFull()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const strip = utils.container.querySelector('[data-full-song="loop-strip"]') as HTMLElement
+    // ⚠ THE GRID, not the ruler. Both the seek and the loop inversion resolve
+    // through the GRID's rect — the ruler and grid share a left edge and a
+    // scrollLeft, and the component's own comment says so. Stubbing the ruler's
+    // rect instead leaves every cycle at 0, which reads as "the gesture does
+    // nothing" rather than as a mis-aimed stub.
+    const area = utils.container.querySelector('[data-full-song="grid"]') as HTMLElement
+    area.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: RULER_WIDTH, height: 28, right: RULER_WIDTH, bottom: 28, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    // The fixture song is 4 cycles wide over 800px → 200px per cycle.
+    return { ...utils, strip, area }
+  }
+
+  it('renders the strip, and no band until a loop is drawn', async () => {
+    const { container, strip } = await renderWithRuler()
+    expect(strip).not.toBeNull()
+    expect(container.querySelector('[data-full-song="loop-band"]')).toBeNull()
+  })
+
+  it('a drag draws a loop, and arms it immediately', async () => {
+    const { container, strip } = await renderWithRuler()
+    fireEvent.pointerDown(strip, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+
+    // 200px → cycle 1, 600px → cycle 3, over a 4-cycle song in 800px.
+    expect(getLoopState().range).toEqual({ startCycle: 1, cycles: 2 })
+    expect(getLoopState().enabled).toBe(true) // "Cycle mode is automatically turned on"
+    expect(container.querySelector('[data-full-song="loop-band"]')).not.toBeNull()
+  })
+
+  it('draws the same loop dragged right-to-left', async () => {
+    const { strip } = await renderWithRuler()
+    fireEvent.pointerDown(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 200, pointerId: 1 })
+    expect(getLoopState().range).toEqual({ startCycle: 1, cycles: 2 })
+  })
+
+  // THE arm that decides the shape of the gesture. Every store write reaches the
+  // transport, and the transport re-evaluates the document — so a drag that
+  // committed per pointermove would hot-swap the audio on every frame.
+  it('commits ONCE on release, not on every move', async () => {
+    await renderWithRuler()
+    let writes = 0
+    const stop = subscribeLoopState(() => {
+      writes++
+    })
+    const strip = document.querySelector('[data-full-song="loop-strip"]') as HTMLElement
+
+    fireEvent.pointerDown(strip, { clientX: 200, pointerId: 1 })
+    for (let x = 220; x <= 600; x += 20) {
+      fireEvent.pointerMove(strip, { clientX: x, pointerId: 1 })
+    }
+    expect(writes).toBe(0) // twenty frames of drag, nothing written
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+    expect(writes).toBe(1)
+    stop()
+  })
+
+  it('does not seek while drawing a loop', async () => {
+    const { strip, onSeek } = await renderWithRuler()
+    fireEvent.pointerDown(strip, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+    // The ruler underneath is a seek surface; the strip has to stop the event
+    // or drawing a loop would also jump the transport to where the drag began.
+    expect(onSeek).not.toHaveBeenCalled()
+  })
+
+  it('still seeks when the ruler itself is clicked (the control)', async () => {
+    const { container, onSeek } = await renderWithRuler()
+    const area = container.querySelector('[data-full-song="ruler-area"]') as HTMLElement
+    fireEvent.pointerDown(area, { clientX: 400, pointerId: 1 })
+    expect(onSeek).toHaveBeenCalledTimes(1)
+  })
+
+  it('a click toggles looping off and on, keeping the locators', async () => {
+    const { strip } = await renderWithRuler()
+    fireEvent.pointerDown(strip, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+
+    fireEvent.pointerDown(strip, { clientX: 400, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 400, pointerId: 1 })
+    expect(getLoopState().enabled).toBe(false)
+    expect(getLoopState().range).toEqual({ startCycle: 1, cycles: 2 }) // still drawn
+
+    fireEvent.pointerDown(strip, { clientX: 400, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 400, pointerId: 1 })
+    expect(getLoopState().enabled).toBe(true)
+  })
+
+  it('dragging an edge resizes, leaving the other end where it was', async () => {
+    const { strip } = await renderWithRuler()
+    fireEvent.pointerDown(strip, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+
+    // Grab the RIGHT edge (600px = cycle 3) and pull it in to cycle 2.
+    fireEvent.pointerDown(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 400, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 400, pointerId: 1 })
+    expect(getLoopState().range).toEqual({ startCycle: 1, cycles: 1 })
+  })
+
+  it('dragging the middle moves the loop without changing its length', async () => {
+    const { strip } = await renderWithRuler()
+    fireEvent.pointerDown(strip, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+
+    // Grab the middle (400px, clear of both edges) and shove it one cycle right.
+    fireEvent.pointerDown(strip, { clientX: 400, pointerId: 1 })
+    fireEvent.pointerMove(strip, { clientX: 600, pointerId: 1 })
+    fireEvent.pointerUp(strip, { clientX: 600, pointerId: 1 })
+    const range = getLoopState().range!
+    expect(range.cycles).toBe(2) // length preserved — the arm that separates move from resize
+    expect(range.startCycle).toBe(2)
   })
 })

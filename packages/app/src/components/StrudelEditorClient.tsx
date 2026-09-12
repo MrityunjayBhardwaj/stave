@@ -104,6 +104,7 @@ import {
   type SongExtent,
 } from "@stave/editor";
 import { reportWriteRefusal } from "../lib/writeRefusal";
+import { effectiveLoopRange, subscribeLoopState } from "../state/loopRange";
 import { createSongCollector } from "./musicalTimeline/songCollector";
 import { measureSongLength, type BounceSizing } from "./songLength";
 import {
@@ -1750,6 +1751,30 @@ export default function StrudelEditorClient({
   // switches because `play` / `stop` / error events mutate runtimeStates
   // without changing the active tab.
   const activeFileIdRef = useRef<string | null>(null);
+
+  // #1570 — THE ONE PLACE the loop locators reach the transport.
+  //
+  // Every writer — the ruler strip, a toggle, anything later — writes the store
+  // and nothing else; this effect is the only thing that pushes. Done the other
+  // way round (an `onSetLoopRange` accessor beside `onSeek`) it would have to be
+  // spelled in BOTH accessor builders below, and then a second writer would have
+  // to remember to call it as well as write the store: two sources of truth for
+  // one span, diverging the first time someone adds a keyboard shortcut.
+  //
+  // Re-runs on active-file swap AND on runtimeStates changes, because a runtime
+  // is created lazily — at the moment the tab activates there may be nothing to
+  // push to, and the entry appearing is the signal that there now is. The
+  // runtime ignores a push that changes nothing, so paying for this repeatedly
+  // costs one comparison rather than a re-evaluate.
+  useEffect(() => {
+    const push = () => {
+      const fid = activeFileIdRef.current;
+      if (!fid) return;
+      void runtimesRef.current.get(fid)?.setLoopRange?.(effectiveLoopRange());
+    };
+    push();
+    return subscribeLoopState(push);
+  }, [watchedFileId, runtimeStates]);
 
   // #1346 — publish the bounce handle to StaveApp. Both reads go through refs
   // (`activeFileIdRef`, `runtimesRef`) rather than state, so the handle stays
