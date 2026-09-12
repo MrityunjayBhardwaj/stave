@@ -10,6 +10,8 @@ import {
   aggregateLaneItems,
   structuralWalk,
   wholeWalkWindow,
+  rootStackArms,
+  armSourceSpan,
   type LaneItem,
   type WalkWindow,
 } from '../../../../../editor/src/ir/structuralWalk'
@@ -18,7 +20,12 @@ import type { IREvent } from '../../../../../editor/src/ir/IREvent'
 // `wholeWalkWindow` is re-exported because production calls it (the bare-song
 // probe), and a barrel mock that omits it hands the component `undefined` —
 // which tsc cannot see, since a `vi.mock` factory is untyped.
-export { structuralWalk, wholeWalkWindow }
+// `rootStackArms`/`armSourceSpan` join them for the same reason, and #1553 is
+// the case that proves the reason: `declaredTrackAnchors` derives a comma
+// stack's per-arm anchors from them, so a barrel mock that omits them anchors
+// every arm at 0 and folds the lanes back together — the exact #950 failure,
+// reintroduced by the mock rather than by the code under test.
+export { structuralWalk, wholeWalkWindow, rootStackArms, armSourceSpan }
 
 /**
  * Reduce collect-style events to lane skeletons exactly as `structuralWalk` aggregates its own

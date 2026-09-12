@@ -21,6 +21,11 @@ export {
   walkLeafItems,
   walkLeafItemsInWindow,
   wholeWalkWindow,
+  // #1553 — the per-arm lane rule, shared with the app's containment-anchor
+  // map so the lane SKELETON and the eval MARKS cannot disagree about what a
+  // lane is.
+  rootStackArms,
+  armSourceSpan,
 } from './structuralWalk'
 export type { LaneSkeleton, LaneItem, WalkWindow } from './structuralWalk'
 // Node identity — content-addressed irNodeIds for IR nodes (a structural

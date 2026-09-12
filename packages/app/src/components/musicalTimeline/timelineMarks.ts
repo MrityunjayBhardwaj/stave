@@ -13,7 +13,7 @@ import type { IREvent, PatternIR } from '@stave/editor'
 
 import type { SampleRegion } from './waveformLane'
 import { positionalSectionName } from './sectionLabel'
-import { structuralWalk, wholeWalkWindow } from '@stave/editor'
+import { structuralWalk, wholeWalkWindow, rootStackArms, armSourceSpan } from '@stave/editor'
 import { extractPitch } from './pitch'
 import { containingAnchor } from './laneIdentity'
 import type { SongWindow } from './songAxis'
@@ -82,6 +82,30 @@ export function readEventsInBand(
  * inner voices share their track's `trackId` (one lane), so no recursion.
  */
 function declaredTrackAnchors(ir: PatternIR): Array<[string, number]> {
+  // #1553 — a SINGLE-track document whose pattern is a top-level comma draws
+  // one lane per arm, and those lanes need anchors of their own or every hap
+  // resolves to the one track wrapper and piles onto the first arm (#950).
+  //
+  // ⚠ THE ARMS ARE NOT `Track` WRAPPERS ANY MORE, and that is the point. The
+  // staged parser used to fabricate one per arm purely so this function would
+  // see them — a presentation concern reshaping the parse tree — and it cost
+  // the chain: with the arms wrapped, whatever wrapped THEM had nowhere to go,
+  // so `.gain()`/`.sound()` applied to the whole stack were dropped outright.
+  // The parse now states the source's own shape and the arm lanes are derived
+  // here, from `rootStackArms` — the SAME rule `structuralWalk` keys its lane
+  // skeleton from, so the skeleton and these marks cannot disagree about what
+  // a lane is.
+  const arms = rootStackArms(ir)
+  if (arms) {
+    const armAnchors: Array<[string, number]> = []
+    for (const { arm, laneId } of arms) {
+      const span = armSourceSpan(arm)
+      if (span && Number.isFinite(span.start)) armAnchors.push([laneId, span.start])
+    }
+    // All-or-nothing: a partial map would anchor some arms and silently fold
+    // the rest into their neighbour, which is the failure this replaces.
+    if (armAnchors.length === arms.length) return armAnchors
+  }
   const tracks = ir.tag === 'Stack' ? ir.tracks : [ir]
   const out: Array<[string, number]> = []
   for (const t of tracks) {

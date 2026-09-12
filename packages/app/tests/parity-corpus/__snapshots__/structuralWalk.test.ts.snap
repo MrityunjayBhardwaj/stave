@@ -70,7 +70,10 @@ exports[`structuralWalk anchors are frozen over the corpus (#973) > bakery-143-g
 
 exports[`structuralWalk anchors are frozen over the corpus (#973) > bakery-144-paren-root: lane anchors match the committed snapshot 1`] = `
 {
-  "d1": "{"dollarPos":null,"sourceOffset":2,"arrangeOffset":2,"leafIndex":0,"armByCycle":null,"armLabels":null}",
+  "d1": "{"dollarPos":2,"sourceOffset":2,"arrangeOffset":3,"leafIndex":0,"armByCycle":null,"armLabels":null}",
+  "d2": "{"dollarPos":7,"sourceOffset":7,"arrangeOffset":2,"leafIndex":1,"armByCycle":null,"armLabels":null}",
+  "d3": "{"dollarPos":12,"sourceOffset":12,"arrangeOffset":2,"leafIndex":2,"armByCycle":null,"armLabels":null}",
+  "d4": "{"dollarPos":17,"sourceOffset":17,"arrangeOffset":2,"leafIndex":3,"armByCycle":null,"armLabels":null}",
 }
 `;
 
@@ -184,7 +187,8 @@ exports[`structuralWalk anchors are frozen over the corpus (#973) > bakery-G2-se
 
 exports[`structuralWalk anchors are frozen over the corpus (#973) > bakery-G3-backtick: lane anchors match the committed snapshot 1`] = `
 {
-  "d1": "{"dollarPos":0,"sourceOffset":12,"arrangeOffset":10,"leafIndex":0,"armByCycle":null,"armLabels":null}",
+  "d1": "{"dollarPos":11,"sourceOffset":12,"arrangeOffset":0,"leafIndex":0,"armByCycle":null,"armLabels":null}",
+  "d2": "{"dollarPos":56,"sourceOffset":64,"arrangeOffset":0,"leafIndex":1,"armByCycle":null,"armLabels":null}",
 }
 `;
 
@@ -206,7 +210,9 @@ exports[`structuralWalk anchors are frozen over the corpus (#973) > bakery-chord
 
 exports[`structuralWalk anchors are frozen over the corpus (#973) > barryHarris: lane anchors match the committed snapshot 1`] = `
 {
-  "d1": "{"dollarPos":null,"sourceOffset":42,"arrangeOffset":42,"leafIndex":0,"armByCycle":null,"armLabels":null}",
+  "d1": "{"dollarPos":42,"sourceOffset":42,"arrangeOffset":55,"leafIndex":0,"armByCycle":null,"armLabels":null}",
+  "d2": "{"dollarPos":44,"sourceOffset":44,"arrangeOffset":42,"leafIndex":1,"armByCycle":null,"armLabels":null}",
+  "d3": "{"dollarPos":46,"sourceOffset":47,"arrangeOffset":42,"leafIndex":2,"armByCycle":null,"armLabels":null}",
 }
 `;
 

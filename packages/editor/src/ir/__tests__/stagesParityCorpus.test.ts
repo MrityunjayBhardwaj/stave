@@ -26,18 +26,32 @@
  *   #1383  discriminated a structured `Code` wrapper from  → 20 → 5, A 9 → 0
  *          the parse's give-up fallback                        C 6 → 0
  *   #1384  kept a COMMENTED track's label and range        →  5 → 3, D 2 → 0
+ *   #1553  stopped CHAIN-APPLIED dropping a chain applied  →  9 → 0, B 9 → 0,
+ *          over a comma pattern, and moved the comma-arm         tag 6 → 0
+ *          lane split out of the parser into the lane layer
  *
- * ⚠ ALL THREE SURVIVORS ARE `B-track-count`, and every one of them is FALSE
- * BY DESIGN (see below). On every corpus document where the contract is
- * actually meant to hold, it now does.
+ * ⚠ THERE ARE NO SURVIVORS. The contract holds on every document in the
+ * archive — not "every document where it is meant to", which is the weaker
+ * claim this line used to make and which is what let a real defect live inside
+ * a deliberate-looking exception.
+ *
+ * ⚠⚠ THAT SENTENCE WAS ALSO TRUE OF THE NINE, AND IT WAS WRONG ABOUT SIX OF
+ * THEM. Between #1524's widening and #1553 this class held 9, described here
+ * as deliberate by design; 6 were a chain being deleted at CHAIN-APPLIED —
+ * `sound`, `gain`, `room`, `lpf` gone, one document down from 66 notes to 7 —
+ * and they sat inside this green gate for exactly as long as the sentence went
+ * unchecked. The claim is only worth what its most recent MECHANISM check is
+ * worth, so when this class next grows, re-earn it: for each new member ask
+ * whether any method survived the staged parse, which is the question that
+ * separates a re-parenting from a deletion. The shape signature cannot.
  *
  * #1375's body quotes 17, measured before #1376 landed. That reading is the
- * weakest of the three: it counts a
- * document only when the very top node changed, so a document whose structure
- * is wrong three levels down does not appear in it at all. The contract the file
- * actually states is byte-identity, and by that measure **3 of 150 (2%)**
- * diverge, all three deliberately. All three are pinned below so no fix can improve one while quietly
- * worsening another.
+ * weakest of the three: it counts a document only when the very top node
+ * changed, so a document whose structure is wrong three levels down does not
+ * appear in it at all. The contract the file actually states is byte-identity,
+ * and by that measure **0 of 558** now diverge. Every row is still pinned
+ * INCLUDING the matching ones, so no fix can improve one while quietly
+ * worsening another, and no document can leave the sweep unnoticed.
  *
  * A gate is only as wide as its fixture list. This is the third bug of the class
  * — #113 (a prelude lifted as opaque Code → empty timeline), #671 (labelled
@@ -78,13 +92,19 @@
  * returned before reading the metadata RAW had threaded through — so a track
  * named `PR` renamed itself to `d1` the moment it was commented out (#1384).
  *
- * ⚠ The 3 remaining `B-track-count` documents are NOT a bug to be fixed by
- * making the staged path match `parseStrudel`. They are #950's deliberate
- * behaviour: a top-level comma expands to separate Track lanes in the staged
- * path so the timeline can anchor marks per arm, while `parseStrudel` keeps one
- * Track containing a Stack. For those documents the contract at
- * `parseStrudelStages.ts:6` is false BY DESIGN, and reconciling it is a
- * decision about #950, not a defect to patch here.
+ * `B-track-count` is empty as of #1553, and HOW it emptied is the part worth
+ * keeping. This paragraph used to say its documents were "not a bug to be fixed
+ * by making the staged path match `parseStrudel`" — that they were #950's
+ * deliberate per-arm lanes, so the contract was false BY DESIGN and reconciling
+ * it was "a decision about #950, not a defect to patch here".
+ *
+ * The lanes were real; the conclusion was not. Expanding a comma into separate
+ * `Track` lanes was the PARSER doing presentation's job, and it silently cost
+ * the chain applied to the stack. Moving the per-arm derivation to the lane
+ * layer kept every lane and took the divergence to zero — so the trade this
+ * paragraph accepted as necessary never had to be made. When a divergence is
+ * defended as the price of a feature, check first whether the feature is being
+ * produced in the right place.
  *
  * ⚠ The `Stack→Seq` and `Param→Stack` rows deserve more alarm than the
  * `→Code` ones. An opaque blob is visibly nothing and fails loudly downstream;
@@ -138,13 +158,44 @@ const CORPUS_SIZE = 558
  */
 // #1524 — 3 / 3 / 2 over 150 rows became 9 / 9 / 6 over 558 documents when the
 // population was widened from 3 archive files to all of them. ⚠ READ THAT AS A
-// RATE, NOT A REGRESSION: 2.0% of 150 rows diverged before, 1.6% of 558 now,
-// and every one of the 6 newly-visible documents is the SAME class as the 3
-// that were already pinned. Nothing changed its verdict — the diff is purely
-// additive apart from 8 rows that were the same document under a second name.
-const DEEP_DIVERGENCE = 9
-const SHAPE_DIVERGENCE = 9
-const TAG_DIVERGENCE = 6
+// RATE, NOT A REGRESSION: 2.0% of 150 rows diverged before, 1.6% of 558 now.
+//
+// ⚠⚠ AND THE CLAIM MADE HERE AT THAT WIDENING — that "every one of the 6
+// newly-visible documents is the SAME class as the 3 that were already pinned"
+// — WAS WRONG, which is the part worth keeping. The 6 shared the 3's shape
+// SIGNATURE (`parseStrudel` keeps one `Track→…`, the staged path lifts each
+// comma arm to its own `Stack→[Track→…]`) and were checked against exactly
+// that. They did not share its mechanism. The 3 are the deliberate lane split;
+// the 6 were `runChainAppliedStage` DROPPING the whole chain, so `.sound()`,
+// `.gain()`, `.room()` and `.lpf()` ceased to exist and one document kept 7 of
+// its 66 notes (#1553). Both produce "more tracks on the staged side", and the
+// signature cannot tell a re-parenting from a deletion.
+//
+// The lesson is about the instrument, not the arithmetic: a class whose
+// membership test is a SHAPE will absorb any defect that happens to deform the
+// shape the same way, and pinning it then holds the defect in place with the
+// full authority of a green gate. `classifyDivergence` groups by shape; the
+// names are still a hypothesis about mechanism (as the note below already
+// warned) and 6 of 9 members falsified it. When a class grows, check the new
+// members against the MECHANISM — here, "did any method survive?" — and not
+// only against the signature that put them in the bucket.
+//
+// 9 / 9 / 6 → 0 / 0 / 0 with #1553 fixed. The staged pipeline is byte-identical
+// to `parseStrudel` on every document in the archive — the contract
+// `parseStrudelStages.ts:6` has stated since #1375, met in full for the first
+// time. 6 of the 9 were the dropped chains; the other 3 were the comma-arm lane
+// split, which is no longer a DIVERGENCE because it is no longer done by the
+// parser at all: the parse states the source's shape and the per-arm lanes are
+// derived in the lane layer (`rootStackArms`). The lanes are unchanged — what
+// changed is that producing them no longer requires the two parsers to disagree.
+//
+// ⚠ ZERO IS A STRONGER PIN THAN ANY OTHER NUMBER, SO GUARD IT AS ONE. A future
+// divergence cannot now hide inside an existing allowance; it has to move this
+// literal off 0, and the per-document report names it. Do not re-baseline a
+// non-zero number here without writing down which document and which mechanism.
+const DEEP_DIVERGENCE = 0
+const SHAPE_DIVERGENCE = 0
+const TAG_DIVERGENCE = 0
 
 /**
  * The measured mechanisms behind what remains — see `classifyDivergence`.
@@ -156,10 +207,20 @@ const TAG_DIVERGENCE = 6
  * the class come back without the literal moving, which is the drift this
  * whole file exists to prevent.
  *
- * The one survivor is understood and is not a defect in this file's sense:
- * `B-track-count` is #950's deliberate comma-arm lane split (see above).
- * Matching `parseStrudel` on those three would REVERT #950, so this number is
- * a floor, not a backlog.
+ * ⚠ THIS FILE USED TO CARRY A STANDING EXCUSE, AND THE EXCUSE IS THE LESSON.
+ * It read: the survivors are #950's deliberate comma-arm lane split, matching
+ * `parseStrudel` on them would REVERT #950, so the number is "a floor, not a
+ * backlog". That was measured against 3 documents. It then stayed on the page
+ * unaltered while #1524's widening took the class to 9 — vouching for 6
+ * documents it had never been measured against, every one of them a real loss
+ * (#1553). A sentence that explains away a number has to be re-earned every
+ * time the number moves, or it becomes a place for defects to live.
+ *
+ * It turned out the premise was wrong too: matching `parseStrudel` did NOT
+ * require reverting #950. The lane split was never the parser's to make, and
+ * once it moved to the lane layer the lanes survived and the divergence went to
+ * zero. "We must diverge in order to keep X" deserves the same suspicion —
+ * check whether X is being kept in the right place before accepting the cost.
  */
 const BY_CLASS: Record<string, number> = {
   'A-opaque-collapse': 0,
@@ -170,7 +231,14 @@ const BY_CLASS: Record<string, number> = {
   // (`parseStrudel` keeps one `Track→…`, the staged path lifts each comma arm
   // to its own `Stack→[Track→…]`). Control: 364 documents carry a comma inside
   // a string and match anyway, so the signature is not just "has a comma".
-  'B-track-count': 9,
+  // #1553 — 9 → 0, and the class is now empty for TWO different reasons, which
+  // is worth keeping straight. 6 members were never this mechanism at all: a
+  // chain dropped wholesale at CHAIN-APPLIED, wearing this class's shape
+  // signature. The remaining 3 were the real comma-arm lane split — and they
+  // left not because the lanes changed but because the parser stopped being the
+  // thing that produced them. Same lanes, derived in the lane layer, so the two
+  // parsers no longer have to disagree to draw them.
+  'B-track-count': 0,
   'D-metadata': 0,
 }
 

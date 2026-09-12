@@ -555,53 +555,49 @@ function parseRootWithChainMeta(
  *
  * D-06.c: output has NO orphan unresolvedChain/chainOffset on any node.
  */
-/**
- * The source span an arm of a mini-expanded stack occupies (#950).
- *
- * Used as the arm's `Track` anchor when it has no `$:` statement of its own.
- * It is the MINIMUM start and MAXIMUM end over the arm's whole subtree, not the
- * top node's own `loc` — two shapes make the top node the wrong answer:
- *
- *   - a combinator's `loc` covers its OPERATOR, not its content: `bd*2` gives
- *     `Fast` at [8,10] while the `bd` it plays is at [6,8]. Anchoring on 8 puts
- *     the anchor AFTER the haps it must catch, so they fall through to the
- *     previous arm — the very fold this fixes.
- *   - a multi-element arm has no `loc` at all: `~ sd` is a `Seq` with
- *     `loc: undefined` over located children.
- *
- * Taking the extremes of the subtree is the same reasoning `timelineMarks.ts`
- * already applies when it picks the minimum start for the outer combinator.
- * Returns `undefined` when nothing in the subtree is located, so a genuinely
- * unlocated arm stays unanchored rather than claiming a wrong span.
- */
-function armSourceSpan(node: PatternIR): { start: number; end: number } | undefined {
-  let start: number | undefined
-  let end: number | undefined
-  const visit = (n: unknown): void => {
-    if (!n || typeof n !== 'object') return
-    const rec = n as Record<string, unknown>
-    const locs = rec.loc as Array<{ start?: number; end?: number }> | undefined
-    if (Array.isArray(locs)) {
-      for (const l of locs) {
-        if (typeof l?.start === 'number' && Number.isFinite(l.start) && (start === undefined || l.start < start)) {
-          start = l.start
-        }
-        if (typeof l?.end === 'number' && Number.isFinite(l.end) && (end === undefined || l.end > end)) {
-          end = l.end
-        }
-      }
-    }
-    for (const v of Object.values(rec)) {
-      if (Array.isArray(v)) v.forEach(visit)
-      else if (v && typeof v === 'object') visit(v)
-    }
-  }
-  visit(node)
-  return start !== undefined && end !== undefined ? { start, end } : undefined
-}
-
 export function runChainAppliedStage(input: PatternIR): PatternIR {
-  if (input.tag === 'Stack' && input.userMethod === undefined) {
+  // #1553 — TWO different things arrive here as a `Stack`, and only one of
+  // them is several tracks.
+  //
+  //   several STATEMENTS            → Stack, one child per statement
+  //   ONE statement whose pattern
+  //   holds a top-level comma       → Stack, one child per comma ARM
+  //
+  // Only the first is a multi-track document. The second is one track whose
+  // root happens to be a stack, and its chain is parked on the STACK itself —
+  // `parseRootWithChainMeta` stashes it by spreading onto whatever `parseRoot`
+  // returned. Treating it as multi-track mapped `applyOnTrack` over the ARMS,
+  // none of which carries a chain, so every call took its
+  // `unresolvedChain === undefined` early return and the chain was discarded
+  // with nothing recording it had existed. Not degraded, not opaque:
+  // `.sound()`, `.gain()`, `.room()` and `.lpf()` ceased to exist while the
+  // document still parsed into a plausible tree. Measured on the archive, 6
+  // documents lost every method in their chain; one kept 7 of its 66 notes.
+  //
+  // THE DISCRIMINATOR IS STATEMENT PROVENANCE, and it is exact rather than
+  // heuristic. RAW threads `dollarStart` onto the children of a stack it built
+  // from statements — for labelled, named AND bare multi-statement documents
+  // (#1376) alike — and never onto comma arms, which RAW never saw because
+  // they appear only when `parseRoot` expands the mini. Over 558 documents:
+  // 299 stacks where EVERY child carries `dollarStart`, 165 where NO child
+  // does, and 0 mixed. A statement that itself contains a comma nests, so the
+  // outer children still carry their own statement offsets.
+  //
+  // ⚠ THIS RETIRES #950's COMMA-ARM TRACK SPLIT ON PURPOSE. That split existed
+  // so the song timeline could attribute marks per arm, and it bought that by
+  // having the PARSER fabricate top-level `Track` wrappers the source never
+  // declared — a presentation concern reshaping the parse tree. It is also why
+  // the chain went missing: once arms are wrappers, the thing wrapping them has
+  // nowhere to go. Structure is the parse's to state and marks are the eval
+  // layer's to attribute, so the per-arm anchoring now lives where it belongs,
+  // in `timelineMarks.ts`, deriving arm anchors from this same `Stack` via the
+  // exported `armSourceSpan`. The parse says what the user wrote; the timeline
+  // decides how to draw it.
+  const kids = input.tag === 'Stack' ? input.tracks : []
+  const fromStatements =
+    kids.length > 0 &&
+    kids.every((k) => (k as unknown as { dollarStart?: number }).dollarStart !== undefined)
+  if (input.tag === 'Stack' && input.userMethod === undefined && fromStatements) {
     // Multi-track from MINI-EXPANDED — applyChain per track, then
     // rebuild the outer Stack via IR.stack so the FINAL shape matches
     // today's parseStrudel (`IR.stack(...tracks.map(parseExpression))`
@@ -641,13 +637,14 @@ export function runChainAppliedStage(input: PatternIR): PatternIR {
         // which is the same containment rule the statement case already uses —
         // one granularity finer. Statement locs still win when present, so the
         // real-`$:` path is byte-identical.
-        const armLoc = armSourceSpan(applied)
+        // Every child reaching this branch came from a STATEMENT (that is the
+        // guard above), so the statement range is always the anchor. #950's
+        // arm-span fallback lived here and has moved to `timelineMarks.ts`
+        // with the rest of the per-arm anchoring.
         const meta =
           tMeta.dollarStart !== undefined && tMeta.dollarEnd !== undefined
             ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] }
-            : armLoc !== undefined
-              ? { loc: [armLoc] }
-              : undefined
+            : undefined
         // #671/#737 — a real `name:` label becomes the trackId (mirrors
         // parseStrudel.ts:876); `$:` (bare label '$', incl. a muted `_$:`)
         // keeps the synthetic `d{i+1}`. The `_` mute marker is stripped so

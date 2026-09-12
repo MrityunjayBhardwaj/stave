@@ -556,6 +556,26 @@ function safeCountLeaves(node) {
   }
 }
 __name(safeCountLeaves, "safeCountLeaves");
+var VOICE_PRESERVING_WRAPPERS = /* @__PURE__ */ new Set([
+  "Param",
+  "Fast",
+  "Slow",
+  "Elongate",
+  "Late",
+  "Degrade",
+  "Ply",
+  "Struct",
+  "Swing",
+  "Shuffle",
+  "Scramble",
+  "Chop",
+  "Range",
+  "Slice",
+  "When",
+  "Every",
+  "Loop",
+  "Ramp"
+]);
 function countLeavesInIR(node) {
   if (node.tag === "Stack") {
     if (node.userMethod === void 0 || node.userMethod === "stack") {
@@ -568,34 +588,10 @@ function countLeavesInIR(node) {
   if (node.tag === "Code" && node.via && !("literal" in node.via) && node.via.inner) {
     return countLeavesInIR(node.via.inner);
   }
-  switch (node.tag) {
-    case "Param":
-    case "Fast":
-    case "Slow":
-    case "Elongate":
-    case "Late":
-    case "Degrade":
-    case "Ply":
-    case "Struct":
-    case "Swing":
-    case "Shuffle":
-    case "Scramble":
-    case "Chop":
-    // #1481 — `range` rescales a signal's VALUES; it neither adds nor removes
-    // events, so the leaf count is exactly the body's.
-    case "Range":
-    // #1352 — `slice` carves the BODY into ranges; the leaves are the body's,
-    // exactly as for `chop`. The index pattern chooses the ORDER those leaves
-    // play in, which is a projection question rather than a leaf-count one.
-    case "Slice":
-    case "When":
-    case "Every":
-    case "Loop":
-    case "Ramp":
-      return countLeavesInIR(node.body);
-    default:
-      return 1;
+  if (VOICE_PRESERVING_WRAPPERS.has(node.tag)) {
+    return countLeavesInIR(node.body);
   }
+  return 1;
 }
 __name(countLeavesInIR, "countLeavesInIR");
 function walkCycle(ir, ctx) {
@@ -668,7 +664,14 @@ function walkCycle(ir, ctx) {
       if (isVoiceDefining) {
         let leafIdx = ctx.leafIndex ?? 0;
         for (const track of ir.tracks) {
-          out.push(...recurse(track, { ...ctx, leafIndex: leafIdx }));
+          const armLane = ctx.armLaneOf?.get(track);
+          out.push(
+            ...recurse(track, {
+              ...ctx,
+              leafIndex: leafIdx,
+              ...armLane !== void 0 ? { trackId: armLane } : {}
+            })
+          );
           leafIdx += safeCountLeaves(track);
         }
       } else {
@@ -815,6 +818,52 @@ function walkCycle(ir, ctx) {
   }
 }
 __name(walkCycle, "walkCycle");
+function armSourceSpan(node) {
+  let start;
+  let end;
+  const visit = /* @__PURE__ */ __name((n) => {
+    if (!n || typeof n !== "object") return;
+    const rec = n;
+    const locs = rec.loc;
+    if (Array.isArray(locs)) {
+      for (const l of locs) {
+        if (typeof l?.start === "number" && Number.isFinite(l.start) && (start === void 0 || l.start < start)) {
+          start = l.start;
+        }
+        if (typeof l?.end === "number" && Number.isFinite(l.end) && (end === void 0 || l.end > end)) {
+          end = l.end;
+        }
+      }
+    }
+    for (const v of Object.values(rec)) {
+      if (Array.isArray(v)) v.forEach(visit);
+      else if (v && typeof v === "object") visit(v);
+    }
+  }, "visit");
+  visit(node);
+  return start !== void 0 && end !== void 0 ? { start, end } : void 0;
+}
+__name(armSourceSpan, "armSourceSpan");
+function rootStackArms(ir) {
+  if (ir.tag !== "Track") return null;
+  let node = ir.body;
+  for (; ; ) {
+    if (VOICE_PRESERVING_WRAPPERS.has(node.tag)) {
+      node = node.body;
+      continue;
+    }
+    if (node.tag === "Code" && node.via && !("literal" in node.via) && node.via.inner) {
+      node = node.via.inner;
+      continue;
+    }
+    break;
+  }
+  if (node.tag !== "Stack") return null;
+  if (node.userMethod !== void 0) return null;
+  if (node.tracks.length < 2) return null;
+  return node.tracks.map((arm, i) => ({ arm, laneId: `d${i + 1}` }));
+}
+__name(rootStackArms, "rootStackArms");
 function walkLeafItems(ir, nCycles) {
   return walkLeafItemsInWindow(ir, wholeWalkWindow(nCycles));
 }
@@ -822,9 +871,11 @@ __name(walkLeafItems, "walkLeafItems");
 function walkLeafItemsInWindow(ir, window2) {
   const { origin, span } = normalizeWindow(window2);
   const items = [];
+  const arms = rootStackArms(ir);
+  const armLaneOf = arms ? new Map(arms.map((a) => [a.arm, a.laneId])) : void 0;
   for (let c = origin; c < origin + span; c++) {
     try {
-      items.push(...walkCycle(ir, { cycle: c, outputCycle: c, params: {} }));
+      items.push(...walkCycle(ir, { cycle: c, outputCycle: c, params: {}, ...armLaneOf ? { armLaneOf } : {} }));
     } catch {
     }
   }
@@ -4010,40 +4061,15 @@ function parseRootWithChainMeta(expr, baseOffset, bindings, numbers) {
   return rootIR;
 }
 __name(parseRootWithChainMeta, "parseRootWithChainMeta");
-function armSourceSpan(node) {
-  let start;
-  let end;
-  const visit = /* @__PURE__ */ __name((n) => {
-    if (!n || typeof n !== "object") return;
-    const rec = n;
-    const locs = rec.loc;
-    if (Array.isArray(locs)) {
-      for (const l of locs) {
-        if (typeof l?.start === "number" && Number.isFinite(l.start) && (start === void 0 || l.start < start)) {
-          start = l.start;
-        }
-        if (typeof l?.end === "number" && Number.isFinite(l.end) && (end === void 0 || l.end > end)) {
-          end = l.end;
-        }
-      }
-    }
-    for (const v of Object.values(rec)) {
-      if (Array.isArray(v)) v.forEach(visit);
-      else if (v && typeof v === "object") visit(v);
-    }
-  }, "visit");
-  visit(node);
-  return start !== void 0 && end !== void 0 ? { start, end } : void 0;
-}
-__name(armSourceSpan, "armSourceSpan");
 function runChainAppliedStage(input) {
-  if (input.tag === "Stack" && input.userMethod === void 0) {
+  const kids = input.tag === "Stack" ? input.tracks : [];
+  const fromStatements = kids.length > 0 && kids.every((k) => k.dollarStart !== void 0);
+  if (input.tag === "Stack" && input.userMethod === void 0 && fromStatements) {
     return IR.stack(
       ...input.tracks.map((t, i) => {
         const tMeta = t;
         const applied = applyOnTrack(t);
-        const armLoc = armSourceSpan(applied);
-        const meta = tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0 ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] } : armLoc !== void 0 ? { loc: [armLoc] } : void 0;
+        const meta = tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0 ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] } : void 0;
         const trackId = trackIdFromLabel(tMeta.trackLabel, i);
         return IR.track(trackId, applied, meta, isMutedLabel(tMeta.trackLabel));
       })
@@ -47209,6 +47235,7 @@ exports.applyPersistedTheme = applyPersistedTheme;
 exports.applyPersistedUiIconSize = applyPersistedUiIconSize;
 exports.applyPersistedVizQuality = applyPersistedVizQuality;
 exports.applyTheme = applyTheme;
+exports.armSourceSpan = armSourceSpan;
 exports.auditionSound = auditionSound;
 exports.backdropQualityFactor = backdropQualityFactor;
 exports.banksFromDrumMachineManifest = banksFromDrumMachineManifest;
@@ -47506,6 +47533,7 @@ exports.restoreSnapshot = restoreSnapshot;
 exports.revealLineInFile = revealLineInFile;
 exports.revealOffsetInFile = revealOffsetInFile;
 exports.revertFileToSeed = revertFileToSeed;
+exports.rootStackArms = rootStackArms;
 exports.routeSurface = routeSurface;
 exports.runChainAppliedStage = runChainAppliedStage;
 exports.runFinalStage = runFinalStage;
