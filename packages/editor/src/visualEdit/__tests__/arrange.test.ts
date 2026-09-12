@@ -23,6 +23,8 @@ import {
   materializeBareDelete,
   materializeBareSplit,
   splitArm,
+  setArmPattern,
+  listArrangeSectionParts,
   applyEdits,
 } from '../index'
 import { parseStrudel } from '../../ir'
@@ -438,5 +440,125 @@ describe('insertSilenceArm (#1461)', () => {
     const reparsed = detectArrangeAt(out, 0)
     expect(reparsed).not.toBeNull()
     expect(reparsed!.arms).toHaveLength(3)
+  })
+})
+
+describe('setArmPattern — point a section at a different part (#1560)', () => {
+  const doc = 'let bass = s("bd")\nlet lead = s("hh")\narrange([2, bass], [4, lead])'
+  const call = () => detectArrangeAt(doc, doc.indexOf('arrange'))!
+
+  it('rewrites ONLY the clicked arm\'s pattern, keeping its weight', () => {
+    expect(applyEdits(doc, setArmPattern(doc, call(), 1, 'bass'))).toBe(
+      'let bass = s("bd")\nlet lead = s("hh")\narrange([2, bass], [4, bass])',
+    )
+  })
+
+  it('leaves a returning section alone — this is not the rename', () => {
+    // Two arms name `bass`; pointing the FIRST at `lead` must not move the second.
+    const twice = 'let bass = s("bd")\nlet lead = s("hh")\narrange([2, bass], [4, bass])'
+    expect(applyEdits(twice, setArmPattern(twice, detectArrangeAt(twice, twice.indexOf('arrange'))!, 0, 'lead'))).toBe(
+      'let bass = s("bd")\nlet lead = s("hh")\narrange([2, lead], [4, bass])',
+    )
+  })
+
+  it('writes into a cat arm, which has no weight wrapper to keep', () => {
+    const cat = 'let bass = s("bd")\ncat(s("hh"), s("sd"))'
+    expect(applyEdits(cat, setArmPattern(cat, detectArrangeAt(cat, cat.indexOf('cat'))!, 0, 'bass'))).toBe(
+      'let bass = s("bd")\ncat(bass, s("sd"))',
+    )
+  })
+
+  it('replaces an inline expression, which is what the gesture means', () => {
+    // 62 of 123 corpus arms are expressions rather than names. The expression is
+    // overwritten, not preserved — one undo step, and the chooser is what warns.
+    const expr = 'let bass = s("bd")\narrange([2, stack(s("hh"), s("cp"))], [4, bass])'
+    expect(applyEdits(expr, setArmPattern(expr, detectArrangeAt(expr, expr.indexOf('arrange'))!, 0, 'bass'))).toBe(
+      'let bass = s("bd")\narrange([2, bass], [4, bass])',
+    )
+  })
+
+  it('declines an arm that names nothing', () => {
+    expect(setArmPattern(doc, call(), 9, 'bass')).toEqual([])
+    expect(setArmPattern(doc, call(), -1, 'bass')).toEqual([])
+  })
+
+  it('declines a blank source rather than emptying the section', () => {
+    // `[2, ]` is a syntax error, and the document would stop sounding entirely.
+    expect(setArmPattern(doc, call(), 0, '')).toEqual([])
+    expect(setArmPattern(doc, call(), 0, '   ')).toEqual([])
+  })
+
+  it('declines the part the section already plays', () => {
+    expect(setArmPattern(doc, call(), 0, 'bass')).toEqual([])
+  })
+
+  it('re-parses with the SECOND section now playing the first one\'s pattern', () => {
+    // ⚠ Asserting only "it still parses as an arrangement" would pass on an op
+    // that wrote nothing at all — the unedited document parses too. The arm has
+    // to read the section's CONTENT back out, which is the thing that moved.
+    const out = applyEdits(doc, setArmPattern(doc, call(), 1, 'bass'))
+    const after = detectArrangeAt(out, out.indexOf('arrange'))!
+    expect(after.arms).toHaveLength(2)
+    const text = (k: number) => out.slice(after.arms[k].patternRange[0], after.arms[k].patternRange[1])
+    expect(text(0)).toBe('bass')
+    expect(text(1)).toBe('bass')
+    expect(asArrange(out.slice(out.indexOf('arrange'))).arms).toHaveLength(2)
+  })
+})
+
+describe('listSectionParts — what a section may be pointed at (#1560)', () => {
+  it('lists top-level bindings in source order', () => {
+    const doc = 'let bass = s("bd")\nlet lead = s("hh")\narrange([2, bass])'
+    expect(listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)).toEqual([
+      'bass',
+      'lead',
+    ])
+  })
+
+  it('NEVER offers the binding the call is being written into', () => {
+    // `let song = arrange([8, song])` parses, and recurses forever. Nothing
+    // downstream can catch it, so it must be absent from the list.
+    const doc = 'let bass = s("bd")\nlet song = arrange([2, bass], [4, bass])'
+    const parts = listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)
+    expect(parts).toEqual(['bass'])
+    expect(parts).not.toContain('song')
+  })
+
+  it('drops a number — the corpus weight-multiplier idiom is not a part', () => {
+    const doc = 'let M = 8\nlet bass = s("bd")\narrange([M*2, bass])'
+    expect(listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)).toEqual([
+      'bass',
+    ])
+  })
+
+  it('drops a function — arranging a transform plays nothing', () => {
+    const doc = 'let f = (p) => p.fast(2)\nlet bass = s("bd")\narrange([2, bass])'
+    expect(listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)).toEqual([
+      'bass',
+    ])
+  })
+
+  it('KEEPS a string — it is a pattern in Strudel\'s own reading', () => {
+    const doc = 'let riff = "bd sd"\nlet bass = s("bd")\narrange([2, bass])'
+    expect(listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)).toEqual([
+      'riff',
+      'bass',
+    ])
+  })
+
+  it('drops a part declared AFTER the call — it is in its dead zone there', () => {
+    // ⚠ Also the mutual-recursion case the enclosing-declarator guard misses:
+    // two arrangements pointed at each other, where the second is always the
+    // later declaration.
+    const doc = 'let bass = s("bd")\nlet song = arrange([2, bass])\nlet later = s("hh")'
+    const parts = listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)
+    expect(parts).toEqual(['bass'])
+    expect(parts).not.toContain('later')
+  })
+
+  it('offers nothing when the document does not parse', () => {
+    const good = 'let bass = s("bd")\narrange([2, bass])'
+    const call = detectArrangeAt(good, good.indexOf('arrange'))!
+    expect(listArrangeSectionParts('let bass = s("bd"', call)).toEqual([])
   })
 })

@@ -199,6 +199,10 @@
     "runs": "gate",
     "why": "collected by the gate \u2014 it runs the whole chromium project"
   },
+  "full-song-assign-part.spec.ts": {
+    "runs": "gate",
+    "why": "point a section at a different part (#1560) \u2014 the primitives are unit-covered, but whether a musician can reach them at all is only observable in the running app"
+  },
   "full-song-region-trim.spec.ts": {
     "runs": "gate",
     "why": "collected by the gate \u2014 it runs the whole chromium project"

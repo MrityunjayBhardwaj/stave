@@ -93,6 +93,76 @@ export function silenceArm(doc: string, control: PickControl, i: number): Offset
   return [{ range: arm.headRange, text: '~' }]
 }
 
+/**
+ * A section name safe to write into the selector string. The head sits inside a
+ * JS string literal AND inside mini-notation, so anything outside this shape
+ * either breaks the literal (a quote) or means something else to the mini parser
+ * (a digit, `@`, `!`, brackets). The object may legally hold such a key —
+ * `{"my part": …}` parses fine as JS — and this is exactly the case where the
+ * section is unreachable from the selector and the op must decline.
+ */
+const SELECTOR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+/**
+ * #1560 — point section `i` at a different PART: rewrite the arm's head to name
+ * another section of this call's own object, keeping its `@weight` and every
+ * other arm verbatim.
+ *
+ *   `"<verse@8 chorus@4>"`  →  `"<verse@8 verse@4>"`
+ *
+ * ⚠ ONLY THE CLICKED ARM MOVES, which is what makes this the counterpart of the
+ * arrange op and not of the rename. A section that returns later in the selector
+ * keeps naming what it named — the rename pair is the one where touching a name
+ * necessarily moves every arm that uses it.
+ *
+ * ⚠ MEMBERSHIP IS VERIFIED HERE, and the arrange side deliberately does not do
+ * the same. A pick head is a NAME that has to resolve against the call's section
+ * object; a head naming no key is not an error the user can see — it is a
+ * section that silently plays nothing. An arrange arm is an expression slot with
+ * no vocabulary to check against, so there the check would be a guess.
+ *
+ * Declines, each returning no edits: no such arm; the call passes no object
+ * literal (the array form `pick([a, b])` names nothing); the key is not one of
+ * this call's sections; the key cannot be spelled in the selector; the section
+ * already plays it.
+ */
+export function setArmHead(
+  doc: string,
+  control: PickControl,
+  i: number,
+  key: string,
+): OffsetEdit[] {
+  const arm = control.arms[i]
+  if (!arm) return []
+  const next = key.trim()
+  if (!SELECTOR_NAME.test(next)) return []
+  if (!control.entries.some((e) => e.key === next)) return []
+  if (headText(doc, control, i) === next) return []
+  return [{ range: arm.headRange, text: next }]
+}
+
+/**
+ * The sections of this call that an arm may be pointed at (#1560) — the pick
+ * spelling's answer to `arrange/parts.listSectionParts`.
+ *
+ * ⚠ IT LIVES BESIDE `setArmHead` ON PURPOSE. The list and the op share one
+ * predicate, so what a chooser offers and what the write accepts cannot drift
+ * apart — the failure that would put a name in front of a user and then decline
+ * it silently when they picked it.
+ *
+ * Object order, not selector order: the object is where a section is defined,
+ * and the selector is only where it is used (#1467). A key the selector cannot
+ * spell is dropped rather than shown, for the reason `SELECTOR_NAME` gives.
+ */
+export function listSectionParts(control: PickControl): string[] {
+  const names: string[] = []
+  for (const entry of control.entries) {
+    if (!SELECTOR_NAME.test(entry.key)) continue
+    if (!names.includes(entry.key)) names.push(entry.key)
+  }
+  return names
+}
+
 
 /**
  * #1461 — INSERT SILENCE: a new, empty section after arm `i`, as wide as it is.

@@ -414,6 +414,37 @@ export interface FullSongTimelineProps {
     armIndex: number
     newName: string
   }) => void
+  /** Point a section at a different PART (#1560). Fired on `P` with a clip
+   *  selected, committed from a chooser drawn over the clip's own rect.
+   *
+   *  ⚠ THIS IS NOT THE RENAME, AND THE DIFFERENCE IS WHICH ARMS MOVE. A rename
+   *  touches a NAME, so every section using that name moves with it. This points
+   *  ONE arm somewhere else and leaves a returning section exactly where it was.
+   *
+   *  ⚠ IT IS ALSO NOT A DAW GESTURE. A DAW clip contains its content; here a
+   *  section REFERENCES a part defined elsewhere, which is a tracker's pattern
+   *  order list. So the affordance is a chooser over the entry, not a drag of
+   *  content into it, and the key is ours rather than a convention.
+   *
+   *  Real arms only — a bare track's implicit clip references nothing. Optional. */
+  readonly onAssignSectionPart?: (req: {
+    sourceOffset: number | null
+    armIndex: number
+    part: string
+  }) => void
+  /** What this clip's section may be pointed at (#1560) — the document's other
+   *  parts, in source order.
+   *
+   *  ⚠ ASKED WHEN THE CHOOSER OPENS, never assembled here. Which names are
+   *  offerable is a question about the document (a binding that encloses the
+   *  call would recurse; a number is a weight multiplier, not a part), and the
+   *  parent is the only side that can see the document to answer it. Returns an
+   *  empty list when there is nothing to offer, which the chooser SAYS rather
+   *  than opening onto nothing. Optional; without it no chooser opens. */
+  readonly sectionParts?: (req: {
+    sourceOffset: number | null
+    armIndex: number
+  }) => string[]
   /** How many sections a rename of this clip would move (#1417).
    *
    *  ⚠ ASKED BEFORE THE WRITE, WHICH IS THE POINT. A returning chorus is ONE
@@ -1366,7 +1397,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // remove. Selection is keyed by lane + arm; the highlight rect is re-derived
   // in render from the live scene/layout so it tracks zoom, scroll, and re-eval.
   const { onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip } = props
-  const { onRenameSection, sectionArmCount } = props
+  const { onRenameSection, sectionArmCount, onAssignSectionPart, sectionParts } = props
   const [selected, setSelected] = useState<{
     laneKey: string
     armIndex: number
@@ -1410,6 +1441,36 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       onRenameSection({ sourceOffset: hit.sourceOffset, armIndex: hit.armIndex, newName: next })
     },
     [editingSection, onRenameSection],
+  )
+
+  // #1560 — the part chooser. `parts` and `current` are captured when it OPENS,
+  // for the same reason the rename hint is: the document can change under an
+  // open chooser, and a list that silently re-computed would offer names the
+  // commit was never going to write.
+  const [choosingPart, setChoosingPart] = useState<{
+    laneKey: string
+    armIndex: number
+    sourceOffset: number | null
+    current: string
+    parts: string[]
+  } | null>(null)
+  const commitSectionPart = React.useCallback(
+    (value: string): void => {
+      const hit = choosingPart
+      setChoosingPart(null)
+      // Keyed by `sourceOffset` + `armIndex`, and the write moves offsets — so
+      // the selection is cleared whether or not the write lands, exactly as
+      // rename, duplicate and split clear it.
+      setSelected(null)
+      if (!hit || !onAssignSectionPart) return
+      // ⚠ The unchanged choice returns without calling. The primitive declines a
+      // no-op anyway, but a decline is REPORTED — and "you picked what was
+      // already playing" is not something to tell a user about in a warning
+      // channel meant for writes that were refused.
+      if (value === '' || value === hit.current) return
+      onAssignSectionPart({ sourceOffset: hit.sourceOffset, armIndex: hit.armIndex, part: value })
+    },
+    [choosingPart, onAssignSectionPart],
   )
 
   // #649 — the clip-selection (`selected`) and the caret lane-selection
@@ -1856,7 +1917,23 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         // Not a clip edge. A press on a clip BODY begins a PENDING gesture that
         // resolves on pointer-up: a MOVE drag if the pointer travelled, else a
         // click (select + seek). A press off any clip clears selection + seeks.
-        const interactive = !!(onDeleteClip || onMoveClip || onDuplicateClip || onSplitClip)
+        // ⚠ EVERY CLIP GESTURE COUNTS HERE, not the four that existed when this
+        // line was written. A clip is selectable when the host offers ANYTHING to
+        // do with it, and selection is the precondition for every keyed gesture —
+        // so a handler missing from this list is a gesture that cannot be reached
+        // at all, which looks exactly like a gesture that declined. Ripple delete,
+        // insert silence and rename all shipped without being added (#1561), and
+        // only the app passing every handler at once kept that invisible.
+        const interactive = !!(
+          onDeleteClip ||
+          onMoveClip ||
+          onDuplicateClip ||
+          onSplitClip ||
+          onRippleDeleteClip ||
+          onInsertSilenceClip ||
+          onRenameSection ||
+          onAssignSectionPart
+        )
         // Include the bare clip: it's selectable (#489). It won't move — a bare
         // press has no reorder target (armSpansNow is empty) and the move commit
         // no-ops for armIndex < 0, so the gesture resolves to a select on pointer-up.
@@ -1914,7 +1991,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       const cw = dragAwareContentWidth(areaRef.current!.getBoundingClientRect().width)
       setTrimEdgeX(songCycleToX(hit.clip.endCycle, songWindow, cw))
     },
-    [editableCaptionAt, clipEdgeAt, regionEdgeAtClient, applyRegionTrim, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip],
+    [editableCaptionAt, clipEdgeAt, regionEdgeAtClient, applyRegionTrim, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip, onRenameSection, onAssignSectionPart],
   )
 
   const handleGridPointerMove = React.useCallback(
@@ -2208,6 +2285,31 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       // rename landed on trunk with zero callers, so a musician could not rename
       // anything; a second primitive without a gesture would just have doubled
       // the unreachable code.
+      // `P` opens the part chooser over the selected clip (#1560) — "which part
+      // does this section play". A bare letter like `S`, and unmodified, because
+      // the tracker order list this mirrors has no standard chord to borrow and
+      // inventing a modifier combination would only make it harder to find.
+      //
+      // ⚠ IT OPENS EVEN WHEN THERE IS NOTHING TO OFFER, and that is the point of
+      // asking for the list here rather than refusing on an empty one. A song
+      // with a single part has nowhere to point a section, and a chooser that
+      // says so is the difference between a gesture that declined and a gesture
+      // that appears not to exist.
+      if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (!onAssignSectionPart || !sectionParts || bareClip) return
+        const lane = sceneRef.current.lanes.find((l) => l.laneKey === selected.laneKey)
+        const clip = lane?.clips.find((c) => c.armIndex === selected.armIndex)
+        if (!clip) return
+        e.preventDefault()
+        setChoosingPart({
+          laneKey: selected.laneKey,
+          armIndex: selected.armIndex,
+          sourceOffset: selected.sourceOffset,
+          current: clip.sectionName,
+          parts: sectionParts({ sourceOffset: selected.sourceOffset, armIndex: selected.armIndex }),
+        })
+        return
+      }
       if ((e.key === 'F2' || e.key === 'Enter') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (!onRenameSection || bareClip) return
         const lane = sceneRef.current.lanes.find((l) => l.laneKey === selected.laneKey)
@@ -2298,7 +2400,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setSelected(null)
       }
     },
-    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip, onRenameSection, sectionArmCount],
+    [selected, onDeleteClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip, onRenameSection, sectionArmCount, onAssignSectionPart, sectionParts],
   )
 
   // The selection highlight rect, derived from the LIVE scene + layout so it
@@ -2913,6 +3015,60 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                     </div>
                   )}
                 </>
+              )}
+              {choosingPart && selectionRect && (
+                <select
+                  data-full-song="section-part"
+                  autoFocus
+                  aria-label="Section part"
+                  defaultValue={choosingPart.parts.includes(choosingPart.current) ? choosingPart.current : ''}
+                  style={{
+                    ...styles.sectionInput,
+                    left: selectionRect.left - scrollLeft + 2,
+                    top: selectionRect.top + 2,
+                    width: Math.max(selectionRect.width - 4, 84),
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    // ⚠ THE GUARD, not a belt over a brace — the same one the
+                    // rename input needs. This control is a DOM DESCENDANT of the
+                    // element carrying `handleGridKeyDown` and React's onKeyDown
+                    // BUBBLES, so without this a Backspace pressed while choosing
+                    // would reach the clip-delete branch and destroy the clip
+                    // whose part was being chosen.
+                    e.stopPropagation()
+                    if (e.key === 'Escape') {
+                      setChoosingPart(null)
+                      setSelected(null)
+                    }
+                  }}
+                  onChange={(e) => commitSectionPart(e.currentTarget.value)}
+                  // Closing on blur WITHOUT committing: a select commits by
+                  // choosing, so a blur here is someone clicking away from an
+                  // open list, which is an abandonment rather than a decision.
+                  onBlur={() => {
+                    setChoosingPart(null)
+                    setSelected(null)
+                  }}
+                >
+                  {!choosingPart.parts.includes(choosingPart.current) && (
+                    // The section plays an inline expression, which has no name
+                    // to preselect. Naming it `§n` is the same ordinal the clip
+                    // already draws — never a guess at what the expression is.
+                    <option value="">{`${choosingPart.current} (expression)`}</option>
+                  )}
+                  {choosingPart.parts.length === 0 && (
+                    <option value="" disabled>
+                      no other parts in this song
+                    </option>
+                  )}
+                  {choosingPart.parts.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
               )}
               {trimEdgeX != null && (
                 <div data-full-song="trim-edge" style={{ ...styles.trimEdge, left: trimEdgeX - scrollLeft }} />

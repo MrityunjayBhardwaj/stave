@@ -19,6 +19,8 @@ import {
   insertSilenceArm,
   renameSection,
   countSectionArms,
+  setArmHead,
+  listSectionParts,
 } from '../serialize'
 import { normalizeEdits, type OffsetEdit } from '../../writeback'
 
@@ -380,5 +382,93 @@ describe('insertSilenceArm (#1461)', () => {
     const reparsed = detectPickControlAt(out, CTRL_POS)
     expect(reparsed).not.toBeNull()
     expect(reparsed!.arms).toHaveLength(4)
+  })
+})
+
+describe('setArmHead — point a section at a different part (#1560)', () => {
+  const ctl = () => detectPickControlAt(SONG, CTRL_POS)!
+
+  it('rewrites ONLY the clicked arm, keeping its weight', () => {
+    expect(apply(SONG, setArmHead(SONG, ctl(), 1, 'chorus'))).toBe(
+      '"<~@2 chorus@2 chorus@2>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+  })
+
+  it('leaves a returning section alone — this is not the rename', () => {
+    // Arms 1 and 2 both name a section; pointing arm 2 elsewhere must not touch
+    // arm 1. The rename is the op where one name necessarily moves every arm.
+    expect(apply(SONG, setArmHead(SONG, ctl(), 2, 'verse'))).toBe(
+      '"<~@2 verse@2 verse@2>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+  })
+
+  it('points a REST at a real section, which is how a gap is refilled', () => {
+    expect(apply(SONG, setArmHead(SONG, ctl(), 0, 'verse'))).toBe(
+      '"<verse@2 verse@2 chorus@2>".pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+  })
+
+  it('leaves the section object byte-verbatim while the SELECTOR moves', () => {
+    // ⚠ The verbatim half alone passes on an op that writes nothing, so the
+    // selector half is what makes this arm say anything.
+    const out = apply(SONG, setArmHead(SONG, ctl(), 1, 'chorus'))
+    expect(out.slice(out.indexOf('.pickRestart'))).toBe(
+      '.pickRestart({verse: s("bd"), chorus: s("hh")})',
+    )
+    expect(out.slice(0, out.indexOf('.pickRestart'))).toBe('"<~@2 chorus@2 chorus@2>"')
+  })
+
+  it('declines a key this call does not define', () => {
+    // ⚠ The decline that matters most: a head naming no key is not an error the
+    // user can see — it is a section that silently plays nothing.
+    expect(setArmHead(SONG, ctl(), 1, 'bridge')).toEqual([])
+  })
+
+  it('declines a key the selector cannot spell', () => {
+    const quoted = '"<a@2 b@2>".pickRestart({"my part": s("bd"), a: s("hh"), b: s("cp")})'
+    const c = detectPickControlAt(quoted, 5)!
+    expect(setArmHead(quoted, c, 0, 'my part')).toEqual([])
+  })
+
+  it('declines the part the section already plays', () => {
+    expect(setArmHead(SONG, ctl(), 1, 'verse')).toEqual([])
+  })
+
+  it('declines an arm that names nothing', () => {
+    expect(setArmHead(SONG, ctl(), 9, 'verse')).toEqual([])
+    expect(setArmHead(SONG, ctl(), -1, 'verse')).toEqual([])
+  })
+
+  it('re-detects with the arm now naming the other section', () => {
+    const out = apply(SONG, setArmHead(SONG, ctl(), 1, 'chorus'))
+    const after = detectPickControlAt(out, CTRL_POS)!
+    expect(after.arms).toHaveLength(3)
+    expect(out.slice(after.arms[1].headRange[0], after.arms[1].headRange[1])).toBe('chorus')
+    expect(after.arms[1].weight).toBe(2)
+  })
+})
+
+describe('listSectionParts — what a pick section may be pointed at (#1560)', () => {
+  it('lists the call\'s own sections, in object order', () => {
+    expect(listSectionParts(detectPickControlAt(SONG, CTRL_POS)!)).toEqual(['verse', 'chorus'])
+  })
+
+  it('offers exactly what setArmHead accepts — no name it would decline', () => {
+    // ⚠ The list and the op share one predicate for this reason: a chooser that
+    // offers a name the write refuses declines silently after the user picked it.
+    const quoted = '"<a@2 b@2>".pickRestart({"my part": s("bd"), a: s("hh"), b: s("cp")})'
+    const c = detectPickControlAt(quoted, 5)!
+    const parts = listSectionParts(c)
+    expect(parts).toEqual(['a', 'b'])
+    for (const name of parts) {
+      if (name === 'a') continue
+      expect(setArmHead(quoted, c, 0, name).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('offers nothing when the call names nothing — the array form', () => {
+    const arr = '"<0@2 1@2>".pickRestart([s("bd"), s("hh")])'
+    const c = detectPickControlAt(arr, 5)
+    expect(c ? listSectionParts(c) : []).toEqual([])
   })
 })
