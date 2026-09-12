@@ -79,6 +79,9 @@ export type { SongExtent } from './songExtent'
 // `@stave/app` could not serve (the dependency only runs app -> editor).
 export { signalAutomations, signalCarryingParamKeys } from './signalAutomation'
 export type { SignalAutomation, SignalKind, SignalSpans } from './signalAutomation'
+// Stepped automation (#1463) — the per-cycle class beside #1464's continuous one.
+export { steppedAutomations, stepIndexAtCycle, stepValueEdit } from './steppedAutomation'
+export type { SteppedAutomation, SteppedStep } from './steppedAutomation'
 
 // Event identity (#1102) — exported so the NEXT consumer asking "are these two
 // events the same sound" finds the one answer instead of curating its own field

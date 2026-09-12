@@ -1590,6 +1590,118 @@ function songExtent(ir) {
 }
 __name(songExtent, "songExtent");
 
+// src/ir/steppedAutomation.ts
+var NUMBER = /^-?(?:\d+\.?\d*|\.\d+)$/;
+function readSteps(param) {
+  const value = param.value;
+  if (!value || typeof value !== "object" || value.tag !== "Cycle") return null;
+  const raw = param.rawArgs.trim();
+  const quote = raw[0];
+  if (quote !== '"' && quote !== "`" && quote !== "'" || raw.indexOf(quote, 1) !== raw.length - 1) {
+    return null;
+  }
+  const steps = [];
+  let at = 0;
+  for (const item of value.items) {
+    let weight = 1;
+    let body = item;
+    if (item.tag === "Elongate") {
+      if (!Number.isInteger(item.factor) || item.factor < 1) return null;
+      weight = item.factor;
+      body = item.body;
+    }
+    if (body.tag !== "Play") return null;
+    const text = String(body.note);
+    if (!NUMBER.test(text)) return null;
+    const span = body.loc?.[0];
+    if (!span || !Number.isFinite(span.start) || !Number.isFinite(span.end)) return null;
+    steps.push({ value: Number(text), weight, startCycle: at, valueSpan: span });
+    at += weight;
+  }
+  return steps.length > 0 ? steps : null;
+}
+__name(readSteps, "readSteps");
+var SKIP_KEYS2 = /* @__PURE__ */ new Set(["loc", "keyLoc", "callSiteRange"]);
+function childNodes2(node) {
+  const out = [];
+  const visit = /* @__PURE__ */ __name((value, depth) => {
+    if (!value || typeof value !== "object" || depth > 12) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value.tag === "string") {
+      out.push(value);
+      return;
+    }
+    for (const [key2, child] of Object.entries(value)) {
+      if (SKIP_KEYS2.has(key2)) continue;
+      visit(child, depth + 1);
+    }
+  }, "visit");
+  for (const [key2, value] of Object.entries(node)) {
+    if (SKIP_KEYS2.has(key2)) continue;
+    visit(value, 0);
+  }
+  return out;
+}
+__name(childNodes2, "childNodes");
+function collect(trackId, node, overridden, out, seen) {
+  if (!node || typeof node !== "object" || seen.has(node)) return;
+  seen.add(node);
+  let passDown = overridden;
+  if (node.tag === "Param") {
+    if (!overridden.has(node.key)) {
+      const steps = readSteps(node);
+      if (steps) {
+        const start = node.loc?.[0]?.start;
+        out.push({
+          trackId,
+          paramKey: node.key,
+          method: node.userMethod ?? node.key,
+          steps,
+          periodCycles: steps.reduce((sum, s) => sum + s.weight, 0),
+          offset: typeof start === "number" && Number.isFinite(start) ? start : null
+        });
+      }
+    }
+    passDown = new Set(overridden).add(node.key);
+  }
+  for (const child of childNodes2(node)) {
+    if (child.tag === "Track") continue;
+    collect(trackId, child, passDown, out, seen);
+  }
+}
+__name(collect, "collect");
+function steppedAutomations(ir) {
+  if (!ir) return [];
+  const roots = ir.tag === "Stack" ? ir.tracks : [ir];
+  const out = [];
+  for (const node of roots) {
+    if (node?.tag !== "Track") continue;
+    const id = node.trackId;
+    if (typeof id !== "string" || id.length === 0) continue;
+    collect(id, node, /* @__PURE__ */ new Set(), out, /* @__PURE__ */ new Set());
+  }
+  return out;
+}
+__name(steppedAutomations, "steppedAutomations");
+function stepIndexAtCycle(a, cycle) {
+  const period = a.periodCycles;
+  const pos = (Math.floor(cycle) % period + period) % period;
+  for (let k = a.steps.length - 1; k >= 0; k--) {
+    if (pos >= a.steps[k].startCycle) return k;
+  }
+  return 0;
+}
+__name(stepIndexAtCycle, "stepIndexAtCycle");
+function stepValueEdit(a, index, value) {
+  const step = a.steps[index];
+  if (!step || !Number.isFinite(value) || value === step.value) return null;
+  return { range: [step.valueSpan.start, step.valueSpan.end], text: String(value) };
+}
+__name(stepValueEdit, "stepValueEdit");
+
 // src/ir/serialize.ts
 var PATTERN_IR_SCHEMA_VERSION = "1.0";
 function patternToJSON(ir, pretty) {
@@ -47824,6 +47936,9 @@ exports.startAudition = startAudition;
 exports.startHistoryDriver = startHistoryDriver;
 exports.startSampleSound = startSampleSound;
 exports.statementOffsetForSource = statementOffsetForSource;
+exports.stepIndexAtCycle = stepIndexAtCycle;
+exports.stepValueEdit = stepValueEdit;
+exports.steppedAutomations = steppedAutomations;
 exports.stopSampleSound = stopSampleSound;
 exports.structuralWalk = structuralWalk;
 exports.subscribeCapture = subscribeCapture;
