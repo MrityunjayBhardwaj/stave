@@ -1875,7 +1875,25 @@ export function skipWhitespaceAndLineComments(src: string, pos: number): number 
       if (i < src.length && src[i] === '\n') i++
       continue
     }
-    // Neither whitespace nor a `//` comment at the cursor — done.
+    // 3. #1548 — a `/* … */` BLOCK comment. This walker knew one comment form
+    //    while the statement splitter knew two, and the gap was not cosmetic:
+    //    an argument list ending `…, /* [4, s("x")] */` kept the block's raw
+    //    text as an argument, and `[4, s("x")]` inside it still looked like a
+    //    tuple to the arm parser — so a COMMENTED-OUT ARM WAS PLAYED. Every
+    //    walker that scans for a comment must know every comment form the
+    //    language has, or none of them should.
+    //
+    //    An UNTERMINATED block consumes to end of input, matching how `//`
+    //    behaves at EOF and what a real parser does with it: in valid JS an
+    //    unterminated block comment is a syntax error and everything after
+    //    the opener is comment. A bounded scan cannot report a delimiter it
+    //    never reaches, so there is no third answer to give here.
+    if (src[i] === '/' && src[i + 1] === '*') {
+      const close = src.indexOf('*/', i + 2)
+      i = close < 0 ? src.length : close + 2
+      continue
+    }
+    // Neither whitespace nor a comment at the cursor — done.
     // (`${`, `/x`, and any non-ws char fall here and are NOT consumed.)
     break
   }
@@ -4268,8 +4286,27 @@ function splitArgsWithOffsets(
     // Trailing whitespace is still trimmed (parity with the old
     // `current.trim()`); trailing trim never moves the START offset.
     const consumed = skipWhitespaceAndLineComments(current, 0)
+    const value = current.slice(consumed).trimEnd()
+    // #1548 — AN ARGUMENT THAT IS ONLY A COMMENT IS NOT AN ARGUMENT.
+    //
+    // The guard at the top of this function drops a whitespace-only argument
+    // (`stack(a, , b)`), because it runs on the raw text. A COMMENT-only one
+    // passes it — `// [4, s("x")]` is not blank — and then the skip above
+    // empties it, so what got pushed was an argument whose value is ''. Each
+    // combinator then made its own mistake with the same phantom: `arrange`
+    // saw an arm with no `[`, returned null, and declined the WHOLE
+    // arrangement; `cat`/`stack`/`fastcat` parsed '' as `Pure` and silently
+    // grew a member the user never wrote.
+    //
+    // Commenting an arm out while leaving its comma is the most ordinary edit
+    // there is, which is why this was reachable from the corpus.
+    //
+    // Tested AFTER the skip rather than before, because only the skip knows
+    // what counts as a comment — and the guard above cannot be moved here: it
+    // must run before `consumed` is computed on an empty buffer.
+    if (value.length === 0) return
     args.push({
-      value: current.slice(consumed).trimEnd(),
+      value,
       offset: currentStart + consumed,
     })
   }
