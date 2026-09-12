@@ -1589,10 +1589,6 @@ describe('bounce rewinds to the top of the song (#1371)', () => {
     const engine = createMockEngine()
     let offset = 0
     const anyEngine = engine as unknown as Record<string, unknown>
-    anyEngine.record = vi.fn(async () => {
-      engine.callLog.push('record')
-      return new Blob([new Uint8Array(8)])
-    })
     anyEngine.waitUntilQuiet = vi.fn(async () => {
       engine.callLog.push('waitUntilQuiet')
       return true
@@ -1602,7 +1598,28 @@ describe('bounce rewinds to the top of the song (#1371)', () => {
       offset = Number.isFinite(o) ? o : 0
     })
     anyEngine.getTransportOffset = () => offset
-    return { engine, getOffset: () => offset }
+    // #1570 — the loop range travels the same path as the offset, and for the
+    // same reason. `loopAtCapture` is snapshotted at the instant the recorder
+    // opens, because that is the only moment the answer matters: what the take
+    // contains is decided by the frame in force THEN, not before or after.
+    let loop: { startCycle: number; cycles: number } | null = null
+    anyEngine.setLoopRange = vi.fn((r: { startCycle: number; cycles: number } | null) => {
+      engine.callLog.push(`setLoopRange(${r ? `${r.startCycle},${r.cycles}` : 'null'})`)
+      loop = r
+    })
+    anyEngine.getLoopRange = () => loop
+    let loopAtCapture: { startCycle: number; cycles: number } | null | undefined
+    anyEngine.record = vi.fn(async () => {
+      engine.callLog.push('record')
+      loopAtCapture = loop
+      return new Blob([new Uint8Array(8)])
+    })
+    return {
+      engine,
+      getOffset: () => offset,
+      getLoop: () => loop,
+      getLoopAtCapture: () => loopAtCapture,
+    }
   }
 
   it('rewinds BEFORE the capture opens, when the transport was already playing', async () => {
@@ -1656,6 +1673,51 @@ describe('bounce rewinds to the top of the song (#1371)', () => {
     // scheduler and leave the PATTERN shifted by 7 cycles — the same bug wearing
     // a different hat.
     expect(getOffset()).toBe(0)
+    runtime.dispose()
+  })
+
+  // #1570 — the loop range is the second thing that decides what the take
+  // contains, and it fails in exactly the shape #1371 already fixed once: a
+  // bounce with a loop armed captures the looped span repeating instead of the
+  // song. Silent in the same way too — the file is valid, full-length and not
+  // silent, so nothing surfaces it but listening.
+  it('bounces the SONG, not the loop, when a loop is armed', async () => {
+    const { engine, getLoopAtCapture } = makeRecordEngine()
+    const runtime = new LiveCodingRuntime('rec-loop-1', engine, () => 'code')
+    await runtime.play()
+    await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+
+    await runtime.record(1)
+
+    // What the frame was at the instant the recorder opened — the only moment
+    // that decides what is in the file.
+    expect(getLoopAtCapture()).toBeNull()
+    runtime.dispose()
+  })
+
+  it('gives the loop back afterwards, so the bounce does not disarm the user', async () => {
+    const { engine, getLoop } = makeRecordEngine()
+    const runtime = new LiveCodingRuntime('rec-loop-2', engine, () => 'code')
+    await runtime.play()
+    await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+
+    await runtime.record(1)
+
+    // The locators are the user's, not the recorder's. Clearing the seek is a
+    // rewind the user asked for; silently clearing their loop is not.
+    expect(getLoop()).toEqual({ startCycle: 3, cycles: 2 })
+    runtime.dispose()
+  })
+
+  it('touches nothing when no loop was armed (the control)', async () => {
+    const { engine, getLoop, getLoopAtCapture } = makeRecordEngine()
+    const runtime = new LiveCodingRuntime('rec-loop-3', engine, () => 'code')
+    await runtime.play()
+
+    await runtime.record(1)
+
+    expect(getLoopAtCapture()).toBeNull()
+    expect(getLoop()).toBeNull()
     runtime.dispose()
   })
 

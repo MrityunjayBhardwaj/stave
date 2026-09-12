@@ -683,6 +683,8 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       record?: (s: number, sig?: AbortSignal) => Promise<Blob>
       waitUntilQuiet?: () => Promise<boolean>
       setTransportOffset?: (offset: number) => void
+      getLoopRange?: () => LoopRange | null
+      setLoopRange?: (range: LoopRange | null) => void
     }
     if (this.isDisposed || typeof engine.record !== 'function') return null
 
@@ -703,6 +705,18 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     // Clear any earlier seek, so song cycle 0 is scheduler cycle 0.
     engine.setTransportOffset?.(0)
 
+    // #1572 — and clear the LOOP, which is the second thing that decides what
+    // the take contains. The recorder taps the master analyser in real time, so
+    // a bounce with a loop armed over bars 3–5 would capture those two bars
+    // repeating for the whole duration instead of the song — the same silent
+    // failure the offset reset above was written to end (#1371), one field
+    // later: the file is valid, full-length and not silent.
+    //
+    // Restored in the `finally` below, not left cleared: rewinding is what the
+    // user asked for, disarming their locators is not.
+    const loopBeforeBounce = engine.getLoopRange?.() ?? null
+    if (loopBeforeBounce) engine.setLoopRange?.(null)
+
     const { error } = await this.play()
     if (error) throw error
 
@@ -713,6 +727,9 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       return await engine.record(seconds, signal)
     } finally {
       this.stop()
+      // Give the locators back — including when the capture threw or was
+      // aborted, which is why this sits with the stop rather than after it.
+      if (loopBeforeBounce) engine.setLoopRange?.(loopBeforeBounce)
     }
   }
 

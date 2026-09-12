@@ -41587,6 +41587,8 @@ var _LiveCodingRuntime = class _LiveCodingRuntime {
     this.stop();
     await engine.waitUntilQuiet?.();
     engine.setTransportOffset?.(0);
+    const loopBeforeBounce = engine.getLoopRange?.() ?? null;
+    if (loopBeforeBounce) engine.setLoopRange?.(null);
     const { error } = await this.play();
     if (error) throw error;
     try {
@@ -41594,6 +41596,7 @@ var _LiveCodingRuntime = class _LiveCodingRuntime {
       return await engine.record(seconds, signal);
     } finally {
       this.stop();
+      if (loopBeforeBounce) engine.setLoopRange?.(loopBeforeBounce);
     }
   }
   stop() {
