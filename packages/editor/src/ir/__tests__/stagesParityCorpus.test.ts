@@ -126,7 +126,12 @@ import {
   loadEveryCorpusDocument,
   CORPUS_RESTORE_HINT,
 } from '../../visualEdit/miniSource/__tests__/evalHarness'
-import { parityRow, type ParityRow } from './helpers/stagesParity'
+import {
+  parityRow,
+  divergenceDetail,
+  shapesEqualWarning,
+  type ParityRow,
+} from './helpers/stagesParity'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BASELINE = path.join(HERE, 'STAGES-PARITY-BASELINE.json')
@@ -276,10 +281,16 @@ describe('staged pipeline vs parseStrudel — corpus parity baseline (#1375)', (
         const e = expected[name]
         const a = actual[name]
         if (!a) { missing.push(name); continue }
-        if (e.match && !a.match) lost.push(`  ${name}  ${a.direct}  !=  ${a.staged}`)
-        else if (!e.match && a.match) gained.push(`  ${name}  now matches (was ${e.direct} != ${e.staged})`)
+        if (e.match && !a.match) lost.push(`  ${name}  ${a.direct}  !=  ${a.staged}${divergenceDetail(a)}${shapesEqualWarning(a)}`)
+        else if (!e.match && a.match) gained.push(
+            `  ${name}  now matches (was ${e.direct} != ${e.staged}${divergenceDetail(e)})` +
+              `${shapesEqualWarning(e)}`,
+          )
         else if (!e.match && !a.match && (e.direct !== a.direct || e.staged !== a.staged)) {
-          reshaped.push(`  ${name}\n    was  ${e.direct} != ${e.staged}\n    now  ${a.direct} != ${a.staged}`)
+          reshaped.push(
+            `  ${name}\n    was  ${e.direct} != ${e.staged}${divergenceDetail(e)}` +
+              `\n    now  ${a.direct} != ${a.staged}${divergenceDetail(a)}${shapesEqualWarning(a)}`,
+          )
         }
       }
       const added = Object.keys(actual).filter((n) => !(n in expected))

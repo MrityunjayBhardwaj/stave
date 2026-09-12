@@ -243,6 +243,53 @@ export interface ParityRow {
 }
 
 /**
+ * Render the actionable half of a divergence row — the part the corpus gate's
+ * enumeration used to drop on the floor (#1525).
+ *
+ * ⚠ `displayShape` CANNOT RENDER EVERY DIVERGENCE CLASS, AND WAS SILENTLY THE
+ * WRONG RENDERER FOR ONE OF THEM. `C-via-vs-blob` is by definition a difference
+ * that shape does not show: both sides are a `Code` node, and they differ in
+ * whether `via` carries the parsed chain or the node is the parse's give-up
+ * fallback. So the gate printed
+ *
+ *     250/1qReIiYTCTb-  Track→[Code]  !=  Track→[Code]
+ *
+ * — two identical strings joined by `!=`. A reader's first conclusion is that
+ * the instrument is broken, not that a document regressed.
+ *
+ * ⚠⚠ AND THAT IS THE ONE CLASS A REAL REGRESSION REFILLS. It is pinned at 0, so
+ * the uninformative rendering was reserved for precisely the case that has to be
+ * read on sight, by someone who did not write it, on the day it goes red.
+ *
+ * `cls` and `at` were already measured by `parityRow` and already on the row.
+ * This is a formatting change, not new measurement — which is why it can be
+ * unit-tested off a plain object.
+ */
+export function divergenceDetail(r: ParityRow): string {
+  const bits = [r.cls, r.at ? `at ${r.at}` : ''].filter(Boolean)
+  return bits.length ? `  (${bits.join(' ')})` : ''
+}
+
+/**
+ * The ⚠ line, emitted ONLY when the two rendered shapes are byte-equal.
+ *
+ * Kept separate from `divergenceDetail` because the caller decides where it
+ * goes: the detail belongs beside the shapes (inside the `(was …)` parens on a
+ * FIXED row), the warning belongs on its own line after them. Composing them
+ * into one string put a two-line warning inside a parenthesis.
+ *
+ * ⚠ Emitted only for the shapes-equal case on purpose. A warning printed on
+ * every row trains the reader to skip it, and this is the line that must not be
+ * skipped.
+ */
+export function shapesEqualWarning(r: ParityRow): string {
+  return r.direct !== undefined && r.direct === r.staged
+    ? `\n      ⚠ SHAPES RENDER EQUAL — the difference is NOT structural, so the two` +
+      `\n        sides above are meant to look identical. Read the class in brackets.`
+    : ''
+}
+
+/**
  * Compare one document. Throwing is NOT a match: a document that makes either
  * side throw is recorded as a divergence carrying the error, so it can never
  * shrink the denominator silently.
