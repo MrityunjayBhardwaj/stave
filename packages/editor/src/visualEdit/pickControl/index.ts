@@ -22,4 +22,6 @@ export {
   duplicateArm,
   renameSection,
   countSectionArms,
+  setArmHead,
+  listSectionParts,
 } from './serialize'

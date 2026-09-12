@@ -31906,13 +31906,13 @@ function useLiftResolution(steps, slotState2, onScaleTo, onResolution, effect) {
   }, [onResolution]);
 }
 __name(useLiftResolution, "useLiftResolution");
-function useViewProver(mini, parse5) {
+function useViewProver(mini, parse6) {
   const cacheRef = React36__namespace.useRef({
     mini: null,
     answers: /* @__PURE__ */ new Map()
   });
-  const parseRef = React36__namespace.useRef(parse5);
-  parseRef.current = parse5;
+  const parseRef = React36__namespace.useRef(parse6);
+  parseRef.current = parse6;
   const key2 = mini ?? null;
   return React36__namespace.useCallback(
     (scale) => {
@@ -46363,6 +46363,10 @@ function armText(doc, call, i) {
   return doc.slice(call.arms[i].armRange[0], call.arms[i].armRange[1]);
 }
 __name(armText, "armText");
+function patternText(doc, call, i) {
+  return doc.slice(call.arms[i].patternRange[0], call.arms[i].patternRange[1]);
+}
+__name(patternText, "patternText");
 function setWeight(doc, call, i, weight) {
   const w = asWeight(weight);
   const arm = call.arms[i];
@@ -46430,6 +46434,15 @@ function silenceArm(doc, call, i) {
   return [{ range: arm.patternRange, text: "silence" }];
 }
 __name(silenceArm, "silenceArm");
+function setArmPattern(doc, call, i, source) {
+  const arm = call.arms[i];
+  if (!arm) return [];
+  const next = source.trim();
+  if (next === "") return [];
+  if (patternText(doc, call, i).trim() === next) return [];
+  return [{ range: arm.patternRange, text: next }];
+}
+__name(setArmPattern, "setArmPattern");
 function wrapBare(patternRange, leadingWeight, patternWeight) {
   const lead = asWeight(leadingWeight);
   const pw = asWeight(patternWeight);
@@ -46579,7 +46592,6 @@ function analyze(doc, oldName, newName) {
   return references;
 }
 __name(analyze, "analyze");
-var PICK_METHODS2 = /* @__PURE__ */ new Set(["pick", "pickRestart", "pickReset"]);
 function parseProgram3(doc) {
   try {
     return acorn.parse(doc, { ecmaVersion: "latest", allowAwaitOutsideFunction: true });
@@ -46588,6 +46600,39 @@ function parseProgram3(doc) {
   }
 }
 __name(parseProgram3, "parseProgram");
+function isArrangeable(init) {
+  if (!init) return false;
+  if (init.type === "Literal" && typeof init.value === "number") return false;
+  if (init.type === "FunctionExpression" || init.type === "ArrowFunctionExpression") return false;
+  return true;
+}
+__name(isArrangeable, "isArrangeable");
+function listSectionParts(doc, call) {
+  const program = parseProgram3(doc);
+  if (!program) return [];
+  const [callStart, callEnd] = call.callRange;
+  const names = [];
+  for (const stmt of program.body ?? []) {
+    if (stmt.type !== "VariableDeclaration") continue;
+    for (const decl of stmt.declarations ?? []) {
+      if (decl.id?.type !== "Identifier") continue;
+      if (!isArrangeable(decl.init)) continue;
+      if (decl.start <= callStart && decl.end >= callEnd) continue;
+      if (!names.includes(decl.id.name)) names.push(decl.id.name);
+    }
+  }
+  return names;
+}
+__name(listSectionParts, "listSectionParts");
+var PICK_METHODS2 = /* @__PURE__ */ new Set(["pick", "pickRestart", "pickReset"]);
+function parseProgram4(doc) {
+  try {
+    return acorn.parse(doc, { ecmaVersion: "latest", allowAwaitOutsideFunction: true });
+  } catch {
+    return null;
+  }
+}
+__name(parseProgram4, "parseProgram");
 function isPickCall(node) {
   return node && node.type === "CallExpression" && node.callee?.type === "MemberExpression" && node.callee.property?.type === "Identifier" && PICK_METHODS2.has(node.callee.property.name) && node.callee.object?.type === "Literal" && typeof node.callee.object.value === "string";
 }
@@ -46708,7 +46753,7 @@ function buildControl(doc, node) {
 }
 __name(buildControl, "buildControl");
 function detectPickControlAt(doc, pos) {
-  const program = parseProgram3(doc);
+  const program = parseProgram4(doc);
   if (!program) return null;
   let best = null;
   walk4(program, (n) => {
@@ -46720,7 +46765,7 @@ function detectPickControlAt(doc, pos) {
 }
 __name(detectPickControlAt, "detectPickControlAt");
 function detectAllPickControls(doc) {
-  const program = parseProgram3(doc);
+  const program = parseProgram4(doc);
   if (!program) return [];
   const nodes = [];
   walk4(program, (n) => {
@@ -46771,6 +46816,26 @@ function silenceArm2(doc, control, i) {
   return [{ range: arm.headRange, text: "~" }];
 }
 __name(silenceArm2, "silenceArm");
+var SELECTOR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function setArmHead(doc, control, i, key2) {
+  const arm = control.arms[i];
+  if (!arm) return [];
+  const next = key2.trim();
+  if (!SELECTOR_NAME.test(next)) return [];
+  if (!control.entries.some((e) => e.key === next)) return [];
+  if (headText(doc, control, i) === next) return [];
+  return [{ range: arm.headRange, text: next }];
+}
+__name(setArmHead, "setArmHead");
+function listSectionParts2(control) {
+  const names = [];
+  for (const entry of control.entries) {
+    if (!SELECTOR_NAME.test(entry.key)) continue;
+    if (!names.includes(entry.key)) names.push(entry.key);
+  }
+  return names;
+}
+__name(listSectionParts2, "listSectionParts");
 function insertSilenceArm2(doc, control, i) {
   const arm = control.arms[i];
   if (!arm) return [];
@@ -47557,6 +47622,7 @@ exports.knobRangeFor = knobRangeFor;
 exports.laneKeyOf = laneKeyOf;
 exports.languageForRenderer = languageForRenderer;
 exports.levenshtein = levenshtein;
+exports.listArrangeSectionParts = listSectionParts;
 exports.listAssetRecords = listAssetRecords;
 exports.listAssets = listAssets;
 exports.listBottomPanelTabs = listBottomPanelTabs;
@@ -47623,9 +47689,11 @@ exports.pickCountSectionArms = countSectionArms2;
 exports.pickDuplicateArm = duplicateArm;
 exports.pickInsertArm = insertArm2;
 exports.pickInsertSilenceArm = insertSilenceArm2;
+exports.pickListSectionParts = listSectionParts2;
 exports.pickRemoveArm = removeArm2;
 exports.pickRenameSection = renameSection2;
 exports.pickReorderArm = reorderArm2;
+exports.pickSetArmHead = setArmHead;
 exports.pickSetWeight = setWeight2;
 exports.pickSilenceArm = silenceArm2;
 exports.pickSplitArm = splitArm2;
@@ -47706,6 +47774,7 @@ exports.serializeShellState = serializeShellState;
 exports.serializeStepGrid = serializeStepGrid;
 exports.setActiveHistoryFile = setActiveHistoryFile;
 exports.setAdaptivePerfEnabled = setAdaptivePerfEnabled;
+exports.setArmPattern = setArmPattern;
 exports.setBackdropOpacity = setBackdropOpacity;
 exports.setBackdropQuality = setBackdropQuality;
 exports.setBackdropVizSpan = setBackdropVizSpan;

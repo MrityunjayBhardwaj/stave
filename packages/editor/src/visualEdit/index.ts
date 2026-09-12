@@ -39,6 +39,8 @@ export {
   materializeBareDelete,
   materializeBareSplit,
   splitArm,
+  setArmPattern,
+  listSectionParts as listArrangeSectionParts,
 } from './arrange'
 export type { ArrangeCall, ArrangeArmRange, ArrangeMode } from './arrange'
 
@@ -57,6 +59,8 @@ export {
   duplicateArm as pickDuplicateArm,
   renameSection as pickRenameSection,
   countSectionArms as pickCountSectionArms,
+  setArmHead as pickSetArmHead,
+  listSectionParts as pickListSectionParts,
 } from './pickControl'
 
 export {

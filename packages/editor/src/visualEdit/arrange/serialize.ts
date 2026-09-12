@@ -177,6 +177,47 @@ export function silenceArm(doc: string, call: ArrangeCall, i: number): OffsetEdi
 }
 
 /**
+ * #1560 — point section `i` at a different PART: replace the arm's pattern
+ * expression, keeping its `[n, …]` weight wrapper and every other arm verbatim.
+ *
+ *   `[8, bass]`  →  `[8, bassWithMelody]`     (width 8 kept)
+ *   `pat` (cat arm)  →  `other`               (implicit width 1 kept)
+ *
+ * ⚠ THIS IS `silenceArm` WITH THE PATTERN CHOSEN BY THE CALLER, and that is the
+ * whole implementation — `silenceArm` is this op with `'silence'` hard-coded. A
+ * gap and a reassignment are the same edit to the document and differ only in
+ * what the user meant, so they share the shape rather than each inventing one.
+ *
+ * ⚠ THE SOURCE IS WRITTEN VERBATIM AND IS NOT VALIDATED HERE, deliberately. An
+ * arrange arm is an EXPRESSION slot — `bass`, `stack(a, b)` and `"<c e g>"` are
+ * all legal there — so there is no vocabulary to check against, and a primitive
+ * that guessed at one would refuse documents the language allows. What a gesture
+ * may OFFER is a narrower question with a different answer, and it is asked in
+ * `listSectionParts` (`arrange/parts.ts`), which knows the call's own position in
+ * the document and can therefore exclude the names that would recurse. The pick
+ * spelling's counterpart does check, because there a head is a NAME that must
+ * resolve inside the call rather than an expression.
+ *
+ * Declines, each returning no edits rather than a rewrite that means something
+ * else: no such arm; an empty or blank source (which would delete the section's
+ * content and leave a syntax error); the part it already plays (a no-op write
+ * that would still cost an undo step and a re-eval).
+ */
+export function setArmPattern(
+  doc: string,
+  call: ArrangeCall,
+  i: number,
+  source: string,
+): OffsetEdit[] {
+  const arm = call.arms[i]
+  if (!arm) return []
+  const next = source.trim()
+  if (next === '') return []
+  if (patternText(doc, call, i).trim() === next) return []
+  return [{ range: arm.patternRange, text: next }]
+}
+
+/**
  * §2.1 "introduce the combinator". A bare steady pattern has no `arrange` to
  * edit; the first time it is placed in time it must be WRAPPED:
  *   `pattern`  →  `arrange([leadingWeight, silence], [patternWeight, pattern])`
