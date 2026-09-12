@@ -1878,11 +1878,15 @@ export default function StrudelEditorClient({
       error: st.error ? st.error.message : null,
       getCycle: () =>
         runtimesRef.current.get(accessorFid)?.getCurrentCycle?.() ?? null,
-      getCps: () => {
-        const bpm = runtimesRef.current.get(accessorFid)?.getBpm?.();
-        // cps = bpm / (60 sec/min * 4 beats/cycle).
-        return bpm != null && Number.isFinite(bpm) ? bpm / 240 : null;
-      },
+      // The tempo the SCHEDULER is running at — never `getBpm()` in other units
+      // (#1564). That readout is `extractBpmFromCode`, a regex that matches a
+      // literal `setcps(...)`, so it is undefined for a document that sets no
+      // tempo (Strudel's default 0.5 cps), one that uses `setcpm(...)`, and one
+      // that changes cps mid-pattern — none of which mean "no tempo". Both
+      // consumers convert cycles to SECONDS (the LCD readout, and the waveform
+      // lane's region widths), which is exactly what the runtime's own note on
+      // `getCps` says must not be done from the readout.
+      getCps: () => runtimesRef.current.get(accessorFid)?.getCps?.() ?? null,
       getHapStream: () =>
         runtimesRef.current.get(accessorFid)?.getHapStream?.() ?? null,
       // #861 — evaluated timeline events for the full-song DISPLAY marks.
@@ -2058,12 +2062,9 @@ export default function StrudelEditorClient({
             runtimesRef.current
               .get(accessorFid)
               ?.getCurrentCycle?.() ?? null,
-          getCps: () => {
-            const bpm = runtimesRef.current
-              .get(accessorFid)
-              ?.getBpm?.();
-            return bpm != null && Number.isFinite(bpm) ? bpm / 240 : null;
-          },
+          // The scheduler's tempo, not the source-text readout — see the note on
+          // the sibling call above (#1564).
+          getCps: () => runtimesRef.current.get(accessorFid)?.getCps?.() ?? null,
           getHapStream: () =>
             runtimesRef.current
               .get(accessorFid)
