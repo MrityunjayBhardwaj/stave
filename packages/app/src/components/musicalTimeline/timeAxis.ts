@@ -1,6 +1,8 @@
 /**
- * timeAxis — pure cycle ↔ pixel math + bar/beat formatting + cps↔bpm
- * conversion for the MusicalTimeline (slice β).
+ * timeAxis — pure cycle ↔ pixel math + bar/beat formatting for the
+ * MusicalTimeline (slice β). The meter those bars and beats are read in,
+ * and the cps→BPM conversion that used to live here, belong to
+ * `lib/meter` — one owner for every readout in the app (#1565).
  *
  * Every helper is total: null / NaN / non-finite inputs map to a safe
  * default (0 px, empty string, null bpm) so the React render path never
@@ -25,13 +27,10 @@
 
 import type { IREvent } from '@stave/editor'
 
+import { BEATS_PER_BAR, barNumber } from '../../lib/meter'
+
 /** 2-cycle window (D-05). Slice β fixed; pan/zoom is a follow-up. */
 export const WINDOW_CYCLES = 2
-
-/** Default beat resolution per cycle (D-05). 4 beats per cycle is
- *  the typical drum/bar interpretation; cps adjusts musical tempo
- *  but the BEATS_PER_CYCLE multiplier stays fixed for slice β. */
-export const BEATS_PER_CYCLE = 4
 
 /** Minimum visible note-block width in px (D-05). Events shorter than
  *  this still render at 4 px so the user can see + hover them; the
@@ -112,9 +111,12 @@ export function cycleToPlayheadX(
  * whether to render a fallback like `STOPPED_STATUS_COPY`.
  *
  * Bar is 1-indexed (musicians count from 1); beat is 1-indexed within
- * the bar and goes up to (but not including) `BEATS_PER_CYCLE + 1`.
+ * the bar and goes up to (but not including) `BEATS_PER_BAR + 1`. Both
+ * readings come from `lib/meter`, which owns the display meter (#1565) —
+ * this is a FRACTIONAL beat, which is why it reads the constant rather
+ * than calling `barBeatTick`.
  *
- * Examples (BEATS_PER_CYCLE = 4):
+ * Examples (BEATS_PER_BAR = 4):
  *   - 0     → 'bar 1 / beat 1.00'
  *   - 0.5   → 'bar 1 / beat 3.00'
  *   - 1.0   → 'bar 2 / beat 1.00'
@@ -123,19 +125,6 @@ export function cycleToPlayheadX(
 export function formatBarBeat(cycle: number | null | undefined): string {
   if (cycle == null || !Number.isFinite(cycle)) return ''
   const safeCycle = cycle < 0 ? 0 : cycle
-  const bar = Math.floor(safeCycle) + 1
-  const beat = (safeCycle % 1) * BEATS_PER_CYCLE + 1
-  return `bar ${bar} / beat ${beat.toFixed(2)}`
-}
-
-/**
- * Convert cycles-per-second → BPM rounded to nearest integer for
- * display. `null` / non-finite → `null`. Allows the caller to choose
- * whether to render `(stopped)` or hide the BPM segment.
- *
- * BPM = cps * 60 sec/min * BEATS_PER_CYCLE beats/cycle.
- */
-export function cpsToBpm(cps: number | null | undefined): number | null {
-  if (cps == null || !Number.isFinite(cps)) return null
-  return Math.round(cps * 60 * BEATS_PER_CYCLE)
+  const beat = (safeCycle % 1) * BEATS_PER_BAR + 1
+  return `bar ${barNumber(safeCycle)} / beat ${beat.toFixed(2)}`
 }

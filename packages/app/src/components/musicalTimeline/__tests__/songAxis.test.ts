@@ -13,10 +13,10 @@ import {
   MIN_ZOOM,
   MAX_ZOOM,
   MAX_RESTORE_ZOOM,
-  BEATS_PER_BAR,
   MAX_TICKS,
   wholeSongWindow,
 } from '../songAxis'
+import { BEATS_PER_BAR } from '../../../lib/meter'
 
 /** Terse window literal for the origin-0 arms — every pre-#1108 case is a
  *  window anchored at cycle 0, so these read exactly as they did before. */

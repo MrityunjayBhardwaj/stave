@@ -24,7 +24,8 @@
 import type { TimelineScene, SceneLane, SceneNote, SceneClip } from './timelineScene'
 import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
-import { BEATS_PER_BAR, songCycleToXUnclamped, type SongWindow } from './songAxis'
+import { BEATS_PER_BAR } from '../../lib/meter'
+import { songCycleToXUnclamped, type SongWindow } from './songAxis'
 import type { SignalAutomation } from '@stave/editor'
 import { automationColorOnLane } from './colors'
 import {

@@ -27,9 +27,10 @@
 
 import * as React from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { BEATS_PER_BAR } from '../../lib/meter'
+
 import {
   WINDOW_CYCLES,
-  BEATS_PER_CYCLE,
   cycleToPlayheadX,
 } from './timeAxis'
 
@@ -76,9 +77,9 @@ export function Ruler(props: RulerProps): React.ReactElement {
   const minorTicks: ReadonlyArray<{ key: string; x: number }> =
     rulerAreaWidth >= MINOR_TICK_HIDE_THRESHOLD
       ? Array.from({ length: WINDOW_CYCLES }).flatMap((_, cycleIdx) =>
-          Array.from({ length: BEATS_PER_CYCLE - 1 }).map((__, beatIdxMinusOne) => {
-            const beatIdx = beatIdxMinusOne + 1 // 1..BEATS_PER_CYCLE-1
-            const cycle = cycleIdx + beatIdx / BEATS_PER_CYCLE
+          Array.from({ length: BEATS_PER_BAR - 1 }).map((__, beatIdxMinusOne) => {
+            const beatIdx = beatIdxMinusOne + 1 // 1..BEATS_PER_BAR-1
+            const cycle = cycleIdx + beatIdx / BEATS_PER_BAR
             return {
               key: `${cycleIdx}-${beatIdx}`,
               x: (cycle / WINDOW_CYCLES) * rulerAreaWidth,

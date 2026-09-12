@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from "react";
 import { perf } from "@stave/editor";
 import { useRulerUnits, toggleRulerUnits } from "../state/rulerUnits";
+import { barBeatTick, cpsToBpm } from "../lib/meter";
 import { healthClass, healthBars } from "./transportLcdHealth";
 
 /**
@@ -97,11 +98,9 @@ function fmtCycle(c: number): string {
   return `${a.padStart(3, "0")}.${b}`;
 }
 
-/** `011.3.1` — bar·beat·tick (one cycle ≈ one bar, quarter-cycle beats). */
+/** `011.3.1` — bar·beat·tick, read in the app's one display meter (#1565). */
 function fmtBar(c: number): string {
-  const bar = Math.floor(c) + 1;
-  const beat = Math.floor((c % 1) * 4) + 1;
-  const tick = Math.floor(((c * 4) % 1) * 4) + 1;
+  const { bar, beat, tick } = barBeatTick(c);
   return `${String(bar).padStart(3, "0")}.${beat}.${tick}`;
 }
 
@@ -173,7 +172,13 @@ export function TransportLCD({ isPlaying, getCycle, getCps }: TransportLCDProps)
         }
         if (tempoRef.current) {
           tempoRef.current.textContent =
-            cps === null ? `${DASH}${DASH}` : inCycle ? cps.toFixed(2) : String(Math.round(cps * 240));
+            cps === null
+              ? `${DASH}${DASH}`
+              : inCycle
+                ? cps.toFixed(2)
+                // `cpsToBpm` is null only for a non-finite tempo, which the
+                // dash already describes better than `NaN` did.
+                : (cpsToBpm(cps)?.toString() ?? `${DASH}${DASH}`);
         }
       }
 
