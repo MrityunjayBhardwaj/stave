@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { TransportLCD } from "./TransportLCD";
+import { TimeSignatureControl } from "./TimeSignatureControl";
 import { useMenubarLcd } from "../state/menubarLcd";
 
 const GITHUB_REPO_URL = "https://github.com/MrityunjayBhardwaj/stave-code";
@@ -157,6 +158,7 @@ export function MenuBar({
       {lcdEnabled ? (
         <div style={styles.centerSlot}>
           <TransportLCD isPlaying={isPlaying} getCycle={getCycle} getCps={getCps} />
+          <TimeSignatureControl />
         </div>
       ) : (
         <div data-stave-brand style={styles.brand} aria-hidden="true">
@@ -250,6 +252,10 @@ const styles: Record<string, React.CSSProperties> = {
     left: "50%",
     top: "50%",
     transform: "translate(-50%, -50%)",
+    // The readout and the signature it counts in read as one cluster.
+    display: "flex" as const,
+    alignItems: "center" as const,
+    gap: 6,
   },
   menuButtonWrap: {
     position: "relative" as const,
