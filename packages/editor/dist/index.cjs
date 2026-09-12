@@ -41902,6 +41902,10 @@ var _LiveCodingRuntime = class _LiveCodingRuntime {
     const setOffset = engine.setTransportOffset;
     if (typeof setRange !== "function") return { error: null };
     const next = normalizeLoopRange(range2);
+    const live = this.currentLoopRange();
+    if (live?.startCycle === next?.startCycle && live?.cycles === next?.cycles) {
+      return { error: null };
+    }
     const now2 = this.rawSchedulerNow();
     const before = now2 === null ? null : songPositionAt(now2, engine.getTransportOffset?.() ?? 0, this.currentLoopRange());
     setRange.call(this.engine, next);

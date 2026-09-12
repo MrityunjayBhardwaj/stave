@@ -1098,6 +1098,17 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     if (typeof setRange !== 'function') return { error: null }
 
     const next = normalizeLoopRange(range)
+
+    // #1570 — an unchanged range is not a change, and this guard is what makes
+    // the store push-able. The app pushes the current locators at mount and on
+    // every active-file swap, so without it a document with no loop would pay a
+    // re-evaluate — an audible hot-swap — for arming nothing, every time the
+    // user changed tabs.
+    const live = this.currentLoopRange()
+    if (live?.startCycle === next?.startCycle && live?.cycles === next?.cycles) {
+      return { error: null }
+    }
+
     const now = this.rawSchedulerNow()
     // Where the ears are under the frame still in force. Read BEFORE the range
     // changes — afterwards the old frame is gone and this number is unrecoverable.
