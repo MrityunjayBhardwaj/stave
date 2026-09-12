@@ -77,4 +77,11 @@ test('tempo readout reflects a document that spells no setcps', async ({ page })
 
   const tempo = page.locator('[data-stave-lcd-tempo]')
   await expect(tempo).toHaveText('0.50', { timeout: 8000 })
+
+  // The same tempo read in the other vocabulary: 0.5 cps × 60 × 4 beats = 120
+  // BPM, and a bar.beat.tick position — both through the app's one meter.
+  await page.locator(LCD).click()
+  await expect(page.locator(LCD)).toContainText('BAR')
+  await expect(tempo).toHaveText('120', { timeout: 8000 })
+  await expect(page.locator('[data-stave-lcd-pos]')).toHaveText(/^\d{3}\.[1-4]\.[1-4]$/)
 })

@@ -9,6 +9,8 @@
  * playhead becomes drivable, a deliberate, logged veto revision).
  */
 
+import { BEATS_PER_BAR, barNumber } from '../../lib/meter'
+
 /**
  * The stretch of song the view is currently showing (#1108).
  *
@@ -336,10 +338,6 @@ export function followScrollLeft(
 
 // ── Ruler ticks (#412) ───────────────────────────────────────────────────────
 
-/** Beats per bar for the BARS ruler. Strudel has no fixed meter (one cycle is
- *  one bar), so beats are a display subdivision; 4 is the universal DAW default. */
-export const BEATS_PER_BAR = 4
-
 /** Upper bound on the total number of ruler ticks (majors + beats) at any zoom,
  *  so a long-horizon song can't flood the DOM with ~1k+ tick divs (#415). */
 export const MAX_TICKS = 600
@@ -394,7 +392,7 @@ export function rulerTicks(
   const first = Math.ceil(originCycle / step) * step
   const end = originCycle + spanCycles
   for (let c = first; c < end; c += step) {
-    ticks.push({ cycle: c, label: mode === 'bars' ? String(c + 1) : String(c), major: true })
+    ticks.push({ cycle: c, label: mode === 'bars' ? String(barNumber(c)) : String(c), major: true })
     if (showBeats) {
       for (let b = 1; b < BEATS_PER_BAR; b++) {
         ticks.push({ cycle: c + b / BEATS_PER_BAR, label: null, major: false })

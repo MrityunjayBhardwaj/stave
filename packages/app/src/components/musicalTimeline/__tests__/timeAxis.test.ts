@@ -1,5 +1,8 @@
 /**
- * timeAxis — eventToRect / cycleToPlayheadX / formatBarBeat / cpsToBpm.
+ * timeAxis — eventToRect / cycleToPlayheadX / formatBarBeat.
+ *
+ * The display meter and the cps→BPM conversion moved to `lib/meter` (#1565);
+ * their tests moved with them.
  *
  * Trap 3 (null/NaN safety), Trap 4 (PV28 — Fast events at post-collect
  * coords), Trap NEW-3 (cycle wrap explicit `%`).
@@ -7,12 +10,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   WINDOW_CYCLES,
-  BEATS_PER_CYCLE,
   MIN_BLOCK_PX,
   eventToRect,
   cycleToPlayheadX,
   formatBarBeat,
-  cpsToBpm,
 } from '../timeAxis'
 
 const W = 800 // grid content width fixture
@@ -104,7 +105,7 @@ describe('formatBarBeat', () => {
     expect(formatBarBeat(0)).toBe('bar 1 / beat 1.00')
   })
 
-  it('formats half-cycle as bar 1 / beat 3.00 (BEATS_PER_CYCLE=4)', () => {
+  it('formats half-cycle as bar 1 / beat 3.00 (BEATS_PER_BAR=4)', () => {
     // 0.5 cycles = 2 beats in → 1-indexed beat = 3.00.
     expect(formatBarBeat(0.5)).toBe('bar 1 / beat 3.00')
   })
@@ -122,33 +123,9 @@ describe('formatBarBeat', () => {
   })
 })
 
-describe('cpsToBpm', () => {
-  it('returns null for null / undefined / NaN', () => {
-    expect(cpsToBpm(null)).toBeNull()
-    expect(cpsToBpm(undefined)).toBeNull()
-    expect(cpsToBpm(Number.NaN)).toBeNull()
-  })
-
-  it('cps 0.5 → 120 BPM (Strudel default)', () => {
-    expect(cpsToBpm(0.5)).toBe(120)
-  })
-
-  it('cps 1.0 → 240 BPM', () => {
-    expect(cpsToBpm(1.0)).toBe(240)
-  })
-
-  it('cps 0 → 0 BPM', () => {
-    expect(cpsToBpm(0)).toBe(0)
-  })
-})
-
 describe('exported constants', () => {
   it('WINDOW_CYCLES is 2 (D-05)', () => {
     expect(WINDOW_CYCLES).toBe(2)
-  })
-
-  it('BEATS_PER_CYCLE is 4 (D-05)', () => {
-    expect(BEATS_PER_CYCLE).toBe(4)
   })
 
   it('MIN_BLOCK_PX is 4', () => {
