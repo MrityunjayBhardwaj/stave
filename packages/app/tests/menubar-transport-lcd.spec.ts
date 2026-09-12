@@ -57,3 +57,24 @@ test('shows by default and reflects transport + mode + settings toggle', async (
   await expect(page.locator(LCD)).toHaveCount(0)
   await expect(page.locator('[data-stave-brand]')).toBeVisible()
 })
+
+// A document that sets no tempo still HAS one — Strudel's scheduler default.
+// The readout must report the tempo the engine is running at, not one recovered
+// by matching `setcps(...)` in the source text.
+test('tempo readout reflects a document that spells no setcps', async ({ page }) => {
+  await boot(page)
+  await page.evaluate(() => {
+    const m = (window as unknown as { monaco?: { editor?: { getEditors?: () => Array<{ getModel: () => { getLanguageId?: () => string; setValue: (s: string) => void } | null; focus: () => void }> } } }).monaco
+    const eds = m?.editor?.getEditors?.() ?? []
+    const t = eds.find((e) => e.getModel()?.getLanguageId?.() === 'strudel') ?? eds[0]
+    t?.getModel()?.setValue('s("bd sd")')
+    t?.focus()
+  })
+  await page.waitForTimeout(200)
+
+  await page.locator('[data-testid="strudel-chrome-transport"]').click()
+  await expect(page.locator(LCD)).toContainText('PLAY', { timeout: 8000 })
+
+  const tempo = page.locator('[data-stave-lcd-tempo]')
+  await expect(tempo).toHaveText('0.50', { timeout: 8000 })
+})
