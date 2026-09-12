@@ -65,6 +65,8 @@ import {
   insertSilenceArm,
   renameArrangeSection,
   countArrangeSectionArms,
+  setArmPattern,
+  listArrangeSectionParts,
   splitArm,
   materializeBareDelete,
   materializeBareSplit,
@@ -75,6 +77,8 @@ import {
   pickInsertSilenceArm,
   pickRenameSection,
   pickCountSectionArms,
+  pickSetArmHead,
+  pickListSectionParts,
   pickReorderArm,
   pickDuplicateArm,
   pickSplitArm,
@@ -981,6 +985,53 @@ export function MusicalTimeline(
     [snapshot],
   )
 
+  // Point a section at a different PART (#1560). The routing is the job, and it
+  // is the same shape the rename needed: in `arrange(...)` an arm IS the
+  // reference, so the edit rewrites the arm's pattern expression; in the pick
+  // family the arm is a NAME resolving inside the call, so it rewrites the head.
+  //
+  // ⚠ ONE ARM MOVES, WHICHEVER SPELLING. That is what separates this from the
+  // rename, where touching a name necessarily moves every section that uses it.
+  // A returning chorus keeps returning; only the section the user clicked plays
+  // something else.
+  //
+  // Both primitives decline rather than half-write — an arm that names nothing,
+  // a blank part, a key this call does not define, the part already playing —
+  // and a decline reaches the user through the same seam every other gesture
+  // reports through, because zero edits is `no-edits` there.
+  const handleAssignSectionPart = React.useCallback(
+    (req: { sourceOffset: number | null; armIndex: number; part: string }) => {
+      if (!snapshot?.source || req.sourceOffset == null || req.armIndex < 0) return
+      const call = detectArrangeAt(snapshot.code, req.sourceOffset)
+      if (call) {
+        const edits = setArmPattern(snapshot.code, call, req.armIndex, req.part)
+        writeArrange(edits, 'arrange.structure', 'assign section part')
+        return
+      }
+      const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
+      if (!ctl) return
+      const edits = pickSetArmHead(snapshot.code, ctl, req.armIndex, req.part)
+      writeArrange(edits, 'arrange.structure', 'assign section part')
+    },
+    [snapshot, writeArrange],
+  )
+
+  // What this section may be pointed at, asked when the chooser OPENS so the
+  // list and the write read the same document. Returns an empty list rather than
+  // a guess whenever the question cannot be answered — the chooser then says
+  // there is nothing to offer, which is a different thing from not opening.
+  const sectionParts = React.useCallback(
+    (req: { sourceOffset: number | null; armIndex: number }): string[] => {
+      if (!snapshot?.source || req.sourceOffset == null || req.armIndex < 0) return []
+      const call = detectArrangeAt(snapshot.code, req.sourceOffset)
+      if (call) return listArrangeSectionParts(snapshot.code, call)
+      const ctl = detectPickControlAt(snapshot.code, req.sourceOffset)
+      if (!ctl) return []
+      return pickListSectionParts(ctl)
+    },
+    [snapshot],
+  )
+
   // Move a clip on the Song canvas (Phase 5c, #386): `reorder` only — the dragged
   // clip is a real arm, swapped to a new slot in the combinator (reorderArm
   // fromIndex→toIndex). Clip time-order = arm order. A bare track's implicit clip
@@ -1100,6 +1151,8 @@ export function MusicalTimeline(
           onInsertSilenceClip={handleInsertSilenceClip}
           onRenameSection={handleRenameSection}
           sectionArmCount={sectionArmCount}
+          onAssignSectionPart={handleAssignSectionPart}
+          sectionParts={sectionParts}
           onMoveClip={handleMoveClip}
           onDuplicateClip={handleDuplicateClip}
           onSplitClip={handleSplitClip}

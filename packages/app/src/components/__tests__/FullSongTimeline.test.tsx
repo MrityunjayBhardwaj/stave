@@ -1350,3 +1350,124 @@ describe('FullSongTimeline loop locators (#1570)', () => {
     expect(range.startCycle).toBe(2)
   })
 })
+
+describe('FullSongTimeline — point a section at a different part (select + P → chooser, #1560)', () => {
+  function renderChoosable(
+    onAssignSectionPart: ReturnType<typeof vi.fn>,
+    parts: string[] = ['bass', 'lead'],
+  ) {
+    const sectionParts = vi.fn(() => parts)
+    const utils = renderFull({ ir: {} as never, onAssignSectionPart, sectionParts })
+    const grid = utils.container.querySelector('[data-full-song="grid"]') as HTMLElement
+    grid.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 48, right: 800, bottom: 48, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    return { ...utils, grid, sectionParts }
+  }
+  const settle = () => act(async () => { await Promise.resolve() })
+  const selectArm = (grid: HTMLElement, x: number) => {
+    fireEvent.pointerDown(grid, { clientX: x, clientY: 10, pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: x, clientY: 10, pointerId: 1 })
+  }
+
+  it('P over a selected clip opens a chooser listing the document\'s parts', async () => {
+    const onAssignSectionPart = vi.fn()
+    const { grid, container, sectionParts } = renderChoosable(onAssignSectionPart)
+    await settle()
+    selectArm(grid, 200)
+    fireEvent.keyDown(grid, { key: 'p' })
+    const chooser = container.querySelector('[data-full-song="section-part"]') as HTMLSelectElement
+    expect(chooser).not.toBeNull()
+    // The fixture's clip plays an inline expression, so there is no name to
+    // preselect — the ordinal the clip already draws leads the list rather than
+    // a guess at what the expression is, and the parts follow.
+    expect([...chooser.options].map((o) => o.textContent)).toEqual(['§1 (expression)', 'bass', 'lead'])
+    expect(chooser.value).toBe('')
+    // The list is ASKED for, with the clip it is about to be shown over.
+    expect(sectionParts).toHaveBeenCalledWith({ sourceOffset: 9, armIndex: 0 })
+  })
+
+  it('choosing a part calls onAssignSectionPart and clears the selection', async () => {
+    const onAssignSectionPart = vi.fn()
+    const { grid, container } = renderChoosable(onAssignSectionPart)
+    await settle()
+    selectArm(grid, 200)
+    fireEvent.keyDown(grid, { key: 'p' })
+    const chooser = container.querySelector('[data-full-song="section-part"]') as HTMLSelectElement
+    fireEvent.change(chooser, { target: { value: 'lead' } })
+    expect(onAssignSectionPart).toHaveBeenCalledTimes(1)
+    expect(onAssignSectionPart).toHaveBeenCalledWith({ sourceOffset: 9, armIndex: 0, part: 'lead' })
+    // Keyed by sourceOffset + armIndex, and the write moves offsets (#448).
+    expect(container.querySelector('[data-full-song="clip-selection"]')).toBeNull()
+  })
+
+  it('a MODIFIED P does not open the chooser, while a bare P on the same selection does', async () => {
+    // ⚠ Both halves in ONE arm. The negative alone would also pass if the whole
+    // handler were broken, which is the failure it exists to exclude — the shape
+    // the silent ⌘⇧D duplicate binding taught (#1421).
+    const onAssignSectionPart = vi.fn()
+    const { grid, container } = renderChoosable(onAssignSectionPart)
+    await settle()
+    selectArm(grid, 200)
+
+    fireEvent.keyDown(grid, { key: 'p', metaKey: true })
+    expect(container.querySelector('[data-full-song="section-part"]'), '⌘P must not open it').toBeNull()
+    fireEvent.keyDown(grid, { key: 'p', altKey: true })
+    expect(container.querySelector('[data-full-song="section-part"]'), '⌥P must not open it').toBeNull()
+
+    fireEvent.keyDown(grid, { key: 'p' })
+    expect(container.querySelector('[data-full-song="section-part"]'), 'the selection was live all along').not.toBeNull()
+  })
+
+  it('opens with NOTHING to offer rather than doing nothing at all', async () => {
+    // The distinction the gesture exists to keep: a song with no other part has
+    // nowhere to point a section, and saying so is not the same as a dead key.
+    const onAssignSectionPart = vi.fn()
+    const { grid, container } = renderChoosable(onAssignSectionPart, [])
+    await settle()
+    selectArm(grid, 200)
+    fireEvent.keyDown(grid, { key: 'p' })
+    const chooser = container.querySelector('[data-full-song="section-part"]') as HTMLSelectElement
+    expect(chooser).not.toBeNull()
+    expect([...chooser.options].map((o) => o.textContent)).toContain('no other parts in this song')
+    expect(onAssignSectionPart).not.toHaveBeenCalled()
+  })
+
+  it('P with nothing selected is a no-op', async () => {
+    const onAssignSectionPart = vi.fn()
+    const { grid, container } = renderChoosable(onAssignSectionPart)
+    await settle()
+    fireEvent.keyDown(grid, { key: 'p' })
+    expect(container.querySelector('[data-full-song="section-part"]')).toBeNull()
+    expect(onAssignSectionPart).not.toHaveBeenCalled()
+  })
+
+  it('Escape closes the chooser without writing', async () => {
+    const onAssignSectionPart = vi.fn()
+    const { grid, container } = renderChoosable(onAssignSectionPart)
+    await settle()
+    selectArm(grid, 200)
+    fireEvent.keyDown(grid, { key: 'p' })
+    const chooser = container.querySelector('[data-full-song="section-part"]') as HTMLSelectElement
+    fireEvent.keyDown(chooser, { key: 'Escape' })
+    expect(container.querySelector('[data-full-song="section-part"]')).toBeNull()
+    expect(onAssignSectionPart).not.toHaveBeenCalled()
+  })
+
+  it('a keystroke inside the chooser cannot reach the clip-delete branch', async () => {
+    // ⚠ The guard, not a belt over a brace: this control is a DOM descendant of
+    // the element carrying the grid handler and React's onKeyDown BUBBLES, so
+    // without stopPropagation a Backspace would delete the clip being re-pointed.
+    const onDeleteClip = vi.fn()
+    const sectionParts = vi.fn(() => ['bass', 'lead'])
+    const utils = renderFull({ ir: {} as never, onAssignSectionPart: vi.fn(), sectionParts, onDeleteClip })
+    const grid = utils.container.querySelector('[data-full-song="grid"]') as HTMLElement
+    grid.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 48, right: 800, bottom: 48, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    await settle()
+    selectArm(grid, 200)
+    fireEvent.keyDown(grid, { key: 'p' })
+    const chooser = utils.container.querySelector('[data-full-song="section-part"]') as HTMLSelectElement
+    fireEvent.keyDown(chooser, { key: 'Backspace' })
+    expect(onDeleteClip).not.toHaveBeenCalled()
+  })
+})
