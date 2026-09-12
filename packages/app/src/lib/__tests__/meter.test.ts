@@ -11,7 +11,24 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-import { BEATS_PER_BAR, TICKS_PER_BEAT, barNumber, barBeatTick, cpsToBpm } from '../meter'
+import {
+  BEATS_PER_BAR,
+  TICKS_PER_BEAT,
+  DEFAULT_METER,
+  barNumber,
+  barBeatTick,
+  cpsToBpm,
+  quartersPerBar,
+  normalizeMeter,
+  formatMeter,
+  type DisplayMeter,
+} from '../meter'
+
+/** The two meters every consumer is checked against: the default, and one that
+ *  is NOT 4 — the only thing that tells a wired consumer from an unwired one. */
+const FOUR_FOUR = DEFAULT_METER
+const THREE_FOUR: DisplayMeter = { beatsPerBar: 3, beatUnit: 4 }
+const SIX_EIGHT: DisplayMeter = { beatsPerBar: 6, beatUnit: 8 }
 
 describe('barNumber', () => {
   it('is 1-indexed — cycle 0 is bar 1 (DAW convention over Strudel numbering)', () => {
@@ -30,23 +47,44 @@ describe('barNumber', () => {
 
 describe('barBeatTick', () => {
   it('reads cycle 0 as 1.1.1', () => {
-    expect(barBeatTick(0)).toEqual({ bar: 1, beat: 1, tick: 1 })
+    expect(barBeatTick(0, FOUR_FOUR)).toEqual({ bar: 1, beat: 1, tick: 1 })
   })
 
-  it('puts the half-cycle on the third beat', () => {
+  it('puts the half-cycle on the third beat in 4/4', () => {
     // 0.5 cycles = 2 whole beats in → 1-indexed beat 3.
-    expect(barBeatTick(0.5)).toEqual({ bar: 1, beat: 3, tick: 1 })
+    expect(barBeatTick(0.5, FOUR_FOUR)).toEqual({ bar: 1, beat: 3, tick: 1 })
+  })
+
+  it('puts the SAME half-cycle on the second beat in 3/4', () => {
+    // The music has not moved; the count has. 0.5 × 3 = 1.5 beats in → beat 2,
+    // half way through it → tick 3 of 4.
+    expect(barBeatTick(0.5, THREE_FOUR)).toEqual({ bar: 1, beat: 2, tick: 3 })
+  })
+
+  it('counts six beats to the bar in 6/8', () => {
+    expect(barBeatTick(0.5, SIX_EIGHT).beat).toBe(4)
+    expect(barBeatTick(5 / 6, SIX_EIGHT).beat).toBe(6)
+  })
+
+  it('never exceeds the meter it was given', () => {
+    for (const meter of [FOUR_FOUR, THREE_FOUR, SIX_EIGHT]) {
+      for (let i = 0; i < 64; i++) {
+        const beat = barBeatTick(i / 64, meter).beat
+        expect(beat).toBeGreaterThanOrEqual(1)
+        expect(beat).toBeLessThanOrEqual(meter.beatsPerBar)
+      }
+    }
   })
 
   it('subdivides the beat into ticks', () => {
     // One tick past the downbeat of bar 2.
     const oneTick = 1 / BEATS_PER_BAR / TICKS_PER_BEAT
-    expect(barBeatTick(1 + oneTick)).toEqual({ bar: 2, beat: 1, tick: 2 })
+    expect(barBeatTick(1 + oneTick, FOUR_FOUR)).toEqual({ bar: 2, beat: 1, tick: 2 })
   })
 
   it('reaches the last beat and the last tick of a bar', () => {
     const lastTick = 1 - 1 / BEATS_PER_BAR / TICKS_PER_BEAT
-    expect(barBeatTick(lastTick)).toEqual({
+    expect(barBeatTick(lastTick, FOUR_FOUR)).toEqual({
       bar: 1,
       beat: BEATS_PER_BAR,
       tick: TICKS_PER_BEAT,
@@ -54,32 +92,86 @@ describe('barBeatTick', () => {
   })
 
   it('is total: a negative or non-finite cycle reads as 1.1.1', () => {
-    expect(barBeatTick(-1)).toEqual({ bar: 1, beat: 1, tick: 1 })
-    expect(barBeatTick(Number.NaN)).toEqual({ bar: 1, beat: 1, tick: 1 })
+    expect(barBeatTick(-1, FOUR_FOUR)).toEqual({ bar: 1, beat: 1, tick: 1 })
+    expect(barBeatTick(Number.NaN, FOUR_FOUR)).toEqual({ bar: 1, beat: 1, tick: 1 })
+  })
+
+  it('the bar number does not move with the meter — a bar is a cycle', () => {
+    for (const meter of [FOUR_FOUR, THREE_FOUR, SIX_EIGHT]) {
+      expect(barBeatTick(2.4, meter).bar).toBe(3)
+    }
+  })
+})
+
+describe('quartersPerBar', () => {
+  it('counts the quarter notes the user is declaring the bar to hold', () => {
+    expect(quartersPerBar(FOUR_FOUR)).toBe(4)
+    expect(quartersPerBar(THREE_FOUR)).toBe(3)
+    expect(quartersPerBar(SIX_EIGHT)).toBe(3)
+    expect(quartersPerBar({ beatsPerBar: 6, beatUnit: 4 })).toBe(6)
+  })
+
+  it('6/8 and 3/4 hold the same quarters — and so read the same tempo', () => {
+    expect(quartersPerBar(SIX_EIGHT)).toBe(quartersPerBar(THREE_FOUR))
   })
 })
 
 describe('cpsToBpm', () => {
   it('returns null for null / undefined / NaN', () => {
-    expect(cpsToBpm(null)).toBeNull()
-    expect(cpsToBpm(undefined)).toBeNull()
-    expect(cpsToBpm(Number.NaN)).toBeNull()
+    expect(cpsToBpm(null, FOUR_FOUR)).toBeNull()
+    expect(cpsToBpm(undefined, FOUR_FOUR)).toBeNull()
+    expect(cpsToBpm(Number.NaN, FOUR_FOUR)).toBeNull()
   })
 
-  it('cps 0.5 → 120 BPM (Strudel default)', () => {
-    expect(cpsToBpm(0.5)).toBe(120)
+  it('cps 0.5 → 120 BPM in 4/4 (Strudel default, unchanged)', () => {
+    expect(cpsToBpm(0.5, FOUR_FOUR)).toBe(120)
   })
 
-  it('cps 1.0 → 240 BPM', () => {
-    expect(cpsToBpm(1.0)).toBe(240)
+  it('cps 1.0 → 240 BPM in 4/4', () => {
+    expect(cpsToBpm(1.0, FOUR_FOUR)).toBe(240)
   })
 
   it('cps 0 → 0 BPM', () => {
-    expect(cpsToBpm(0)).toBe(0)
+    expect(cpsToBpm(0, FOUR_FOUR)).toBe(0)
   })
 
-  it('is the meter times a minute, not a magic number', () => {
-    expect(cpsToBpm(0.75)).toBe(Math.round(0.75 * 60 * BEATS_PER_BAR))
+  it('the same music reads slower in 3/4 — three longer quarters, not four', () => {
+    // The bar is still 2s. Declaring three quarters in it makes each 666ms,
+    // which IS 90 quarter-note BPM. Nothing about the audio changed.
+    expect(cpsToBpm(0.5, THREE_FOUR)).toBe(90)
+  })
+
+  it('6/8 reads the same tempo as 3/4, not double it', () => {
+    // The denominator is why: six EIGHTHS are three quarters.
+    expect(cpsToBpm(0.5, SIX_EIGHT)).toBe(cpsToBpm(0.5, THREE_FOUR))
+    expect(cpsToBpm(0.5, { beatsPerBar: 6, beatUnit: 4 })).toBe(180)
+  })
+
+  it('is the quarter count times a minute, not a magic number', () => {
+    expect(cpsToBpm(0.75, FOUR_FOUR)).toBe(Math.round(0.75 * 60 * quartersPerBar(FOUR_FOUR)))
+  })
+})
+
+describe('normalizeMeter', () => {
+  it('keeps a meter Stave can draw', () => {
+    expect(normalizeMeter(3, 4)).toEqual(THREE_FOUR)
+    expect(normalizeMeter(6, 8)).toEqual(SIX_EIGHT)
+  })
+
+  it('falls back rather than throwing — this sits behind a numeric input', () => {
+    // A half-typed value must not take the ruler down with it.
+    expect(normalizeMeter(0, 4)).toEqual(FOUR_FOUR)
+    expect(normalizeMeter(Number.NaN, 4)).toEqual(FOUR_FOUR)
+    expect(normalizeMeter(2.5, 4)).toEqual(FOUR_FOUR)
+    expect(normalizeMeter(999, 4)).toEqual(FOUR_FOUR)
+    expect(normalizeMeter(3, 5)).toEqual(THREE_FOUR) // unit falls back, count survives
+  })
+})
+
+describe('formatMeter', () => {
+  it('writes the meter the way a musician does', () => {
+    expect(formatMeter(FOUR_FOUR)).toBe('4/4')
+    expect(formatMeter(SIX_EIGHT)).toBe('6/8')
   })
 })
 
@@ -172,6 +264,28 @@ describe('#1565 — the meter is spelled in exactly one place', () => {
       `these files declare a second display meter: ${offenders.join(', ')}. ` +
         'Import BEATS_PER_BAR from lib/meter instead — two spellings agree only ' +
         'until the first time signature that is not 4/4.',
+    ).toEqual([])
+  })
+
+  it('only the store reads the DEFAULT meter — everyone else reads the live one', () => {
+    // The #1568 hazard, one level down from the #1565 one: a consumer that
+    // imports the default instead of subscribing to the store looks perfectly
+    // correct until somebody changes the setting, and then draws 4/4 beside a
+    // ruler that moved. The store is the one place allowed to name the default.
+    const STORE = join('state', 'displayMeter.ts')
+    // Matched on the IMPORT, not on the name: a consumer can only read the
+    // default by importing it, and matching the bare name would redden the arm
+    // for a doc comment that merely mentions it.
+    const IMPORTS_DEFAULT = /import[^;\n]*\bDEFAULT_METER\b/
+    const offenders = scanned
+      .filter((f) => IMPORTS_DEFAULT.test(readFileSync(f, 'utf8')))
+      .map((f) => relative(SRC, f))
+      .filter((rel) => rel !== STORE)
+    expect(
+      offenders,
+      `these files read the default meter directly: ${offenders.join(', ')}. ` +
+        'Subscribe to the display-meter store (or take the meter as an argument) ' +
+        'so the setting reaches them.',
     ).toEqual([])
   })
 

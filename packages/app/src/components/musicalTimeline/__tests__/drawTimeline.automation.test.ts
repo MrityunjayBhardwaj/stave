@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { drawTimeline, type DrawTheme, type DrawTransform } from '../drawTimeline'
+import { DEFAULT_METER } from '../../../lib/meter'
 import type { TimelineScene, SceneLane } from '../timelineScene'
 import type { SignalAutomation } from '@stave/editor'
 import { computeLaneLayout } from '../laneLayout'
@@ -23,7 +24,7 @@ const THEME: DrawTheme = {
   gridline: '#grid', clipFill: '#clipFill', clipCaption: '#cap', clipBorder: '#border',
   automationLine: '#AUTO',
 }
-const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 400, viewportWidth: 400 }
+const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 400, viewportWidth: 400, meter: DEFAULT_METER }
 
 interface Path { points: { x: number; y: number }[]; style: string; dash: readonly number[] }
 interface Text { text: string; x: number; y: number; style: string }

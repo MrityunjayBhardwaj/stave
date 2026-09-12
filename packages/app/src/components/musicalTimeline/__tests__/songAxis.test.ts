@@ -16,7 +16,7 @@ import {
   MAX_TICKS,
   wholeSongWindow,
 } from '../songAxis'
-import { BEATS_PER_BAR } from '../../../lib/meter'
+import { BEATS_PER_BAR, DEFAULT_METER } from '../../../lib/meter'
 
 /** Terse window literal for the origin-0 arms — every pre-#1108 case is a
  *  window anchored at cycle 0, so these read exactly as they did before. */
@@ -236,12 +236,12 @@ describe('followScrollLeft (center-lock, #505)', () => {
 
 describe('rulerTicks', () => {
   it('emits a 0-indexed major per cycle when there is room (CYCLES)', () => {
-    const ticks = rulerTicks(win(4), 200, 'cycles')
+    const ticks = rulerTicks(win(4), 200, 'cycles', DEFAULT_METER)
     expect(ticks.map((t) => t.label)).toEqual(['0', '1', '2', '3'])
     expect(ticks.every((t) => t.major)).toBe(true)
   })
   it('uses 1-indexed bar labels and adds beat ticks when zoomed in (BARS)', () => {
-    const ticks = rulerTicks(win(2), 200, 'bars') // 200px/cycle → 50px/beat ≥ 14
+    const ticks = rulerTicks(win(2), 200, 'bars', DEFAULT_METER) // 200px/cycle → 50px/beat ≥ 14
     const majors = ticks.filter((t) => t.major)
     expect(majors.map((t) => t.label)).toEqual(['1', '2'])
     const beats = ticks.filter((t) => !t.major)
@@ -251,18 +251,18 @@ describe('rulerTicks', () => {
     expect(beats.every((t) => t.label === null)).toBe(true)
   })
   it('drops beat ticks when each beat is too narrow', () => {
-    const ticks = rulerTicks(win(2), 40, 'bars') // 40/4 = 10px/beat < 14 → no beats
+    const ticks = rulerTicks(win(2), 40, 'bars', DEFAULT_METER) // 40/4 = 10px/beat < 14 → no beats
     expect(ticks.every((t) => t.major)).toBe(true)
   })
   it('thins majors by powers of two when zoomed out', () => {
     // 64 cycles across 800px → 12.5px/cycle; step doubles until ≥40 → step 4.
-    const ticks = rulerTicks(win(64), 12.5, 'cycles')
+    const ticks = rulerTicks(win(64), 12.5, 'cycles', DEFAULT_METER)
     expect(ticks.map((t) => t.cycle)).toEqual([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60])
   })
   it('caps the total tick count on a long song at high zoom (#415)', () => {
     // 4000 cycles × 1000px/cycle would emit 4000 majors uncapped → thin by
     // powers of two until majors fit the budget.
-    const ticks = rulerTicks(win(4000), 1000, 'cycles')
+    const ticks = rulerTicks(win(4000), 1000, 'cycles', DEFAULT_METER)
     expect(ticks.length).toBeLessThanOrEqual(MAX_TICKS)
     // step doubled to 8 (4000/8 = 500 ≤ 600) → first majors are 0, 8, 16…
     expect(ticks.slice(0, 3).map((t) => t.cycle)).toEqual([0, 8, 16])
@@ -270,16 +270,16 @@ describe('rulerTicks', () => {
 
   it('drops beats when they would blow the budget, keeping only majors', () => {
     // 256 bars at step 1 with wide beats: 256×4 = 1024 > MAX_TICKS → beats off.
-    const ticks = rulerTicks(win(256), 250, 'bars')
+    const ticks = rulerTicks(win(256), 250, 'bars', DEFAULT_METER)
     expect(ticks.every((t) => t.major)).toBe(true)
     expect(ticks.length).toBe(256)
     expect(ticks.length).toBeLessThanOrEqual(MAX_TICKS)
   })
 
   it('returns [] for degenerate inputs', () => {
-    expect(rulerTicks(win(0), 100, 'cycles')).toEqual([])
-    expect(rulerTicks(win(4), 0, 'cycles')).toEqual([])
-    expect(rulerTicks(win(4), Number.NaN, 'cycles')).toEqual([])
+    expect(rulerTicks(win(0), 100, 'cycles', DEFAULT_METER)).toEqual([])
+    expect(rulerTicks(win(4), 0, 'cycles', DEFAULT_METER)).toEqual([])
+    expect(rulerTicks(win(4), Number.NaN, 'cycles', DEFAULT_METER)).toEqual([])
   })
 })
 
@@ -342,11 +342,11 @@ describe('the axis under a non-zero window origin (#1108)', () => {
   })
 
   it('labels the ruler with ABSOLUTE cycle numbers', () => {
-    const ticks = rulerTicks(win(4, 256), 200, 'cycles')
+    const ticks = rulerTicks(win(4, 256), 200, 'cycles', DEFAULT_METER)
     expect(ticks.map((t) => t.label)).toEqual(['256', '257', '258', '259'])
     // BARS mode stays 1-indexed off the absolute cycle, so bar 1 cannot appear
     // in the middle of the piece.
-    expect(rulerTicks(win(4, 256), 200, 'bars').filter((t) => t.major).map((t) => t.label))
+    expect(rulerTicks(win(4, 256), 200, 'bars', DEFAULT_METER).filter((t) => t.major).map((t) => t.label))
       .toEqual(['257', '258', '259', '260'])
   })
 
@@ -354,7 +354,7 @@ describe('the axis under a non-zero window origin (#1108)', () => {
     // 64-cycle window from 250, thinned to step 4: the first major is 252, not
     // 250. Anchoring to the window would relabel the same musical position
     // differently depending on where the user paged from.
-    const ticks = rulerTicks(win(64, 250), 12.5, 'cycles')
+    const ticks = rulerTicks(win(64, 250), 12.5, 'cycles', DEFAULT_METER)
     expect(ticks[0].cycle).toBe(252)
     expect(ticks.every((t) => t.cycle % 4 === 0)).toBe(true)
     expect(ticks.every((t) => t.cycle >= 250 && t.cycle < 314)).toBe(true)

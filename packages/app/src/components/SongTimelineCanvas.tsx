@@ -24,6 +24,7 @@ import { useEffect, useRef } from 'react'
 import type { TimelineScene } from './musicalTimeline/timelineScene'
 import type { LaneLayout } from './musicalTimeline/laneLayout'
 import { drawTimeline, type DrawTheme, type WaveformSource } from './musicalTimeline/drawTimeline'
+import { useDisplayMeter } from '../state/displayMeter'
 
 export interface SongTimelineCanvasProps {
   readonly scene: TimelineScene
@@ -79,6 +80,9 @@ export function SongTimelineCanvas(props: SongTimelineCanvasProps): React.ReactE
   const { scene, scrollLeft, contentWidth, viewportWidth, layout, silencedNames, waveforms, waveformsEpoch } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const height = layout.totalHeight
+  // The beat grid's subdivision (#1568), from the store the ruler above the
+  // canvas reads — one meter, or the grid and the ruler draw different bars.
+  const meter = useDisplayMeter()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -95,10 +99,15 @@ export function SongTimelineCanvas(props: SongTimelineCanvasProps): React.ReactE
       const ctx = canvas.getContext('2d')
       if (!ctx) return
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // draw in CSS px
-      drawTimeline(ctx, scene, { scrollLeft, contentWidth, viewportWidth: cssW }, DEFAULT_THEME, layout, silencedNames, waveforms)
+      drawTimeline(ctx, scene, { scrollLeft, contentWidth, viewportWidth: cssW, meter }, DEFAULT_THEME, layout, silencedNames, waveforms)
     })
     return () => cancelAnimationFrame(raf)
-  }, [scene, scrollLeft, contentWidth, viewportWidth, layout, height, silencedNames, waveforms, waveformsEpoch])
+    // ⚠ `meter` belongs in these deps, not only in the transform: the canvas
+    // redraws on effect re-runs, so a meter change that is not a dependency
+    // leaves the beat grid drawn in the old signature until something else
+    // happens to move — the exact silent disagreement this setting exists to
+    // prevent.
+  }, [scene, scrollLeft, contentWidth, viewportWidth, layout, height, silencedNames, waveforms, waveformsEpoch, meter])
 
   return (
     <canvas

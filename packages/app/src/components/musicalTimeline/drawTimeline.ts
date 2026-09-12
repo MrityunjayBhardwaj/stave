@@ -24,7 +24,7 @@
 import type { TimelineScene, SceneLane, SceneNote, SceneClip } from './timelineScene'
 import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
-import { BEATS_PER_BAR } from '../../lib/meter'
+import type { DisplayMeter } from '../../lib/meter'
 import { songCycleToXUnclamped, type SongWindow } from './songAxis'
 import type { SignalAutomation } from '@stave/editor'
 import { automationColorOnLane } from './colors'
@@ -39,13 +39,28 @@ import { waveformColumn, waveformFit } from './waveformLane'
 
 /** The HORIZONTAL view transform + viewport, all in CSS pixels. Vertical
  *  geometry (per-lane top/height, total height) lives in the `LaneLayout`. */
-export interface DrawTransform {
+/** Where the song sits in this view, in pixels. Everything a drawer that never
+ *  subdivides a cycle needs — the live overlay lights marks and a playhead, and
+ *  asking it for a meter it does not read would invite a caller to pass a stale
+ *  one and believe it mattered. */
+export interface ViewTransform {
   /** Horizontal scroll offset (content px hidden to the left). */
   readonly scrollLeft: number
   /** Full content width = `viewportWidth * zoom`. */
   readonly contentWidth: number
   /** Visible canvas width (CSS px). */
   readonly viewportWidth: number
+}
+
+export interface DrawTransform extends ViewTransform {
+  /**
+   * How this view subdivides a cycle (#1568) — the same kind of fact as the
+   * pixel mapping above: not a property of the music, a property of the
+   * reading. REQUIRED rather than defaulted, so a caller that forgets to pass
+   * the current meter is a type error instead of a canvas that quietly stays
+   * in 4/4 while the ruler beside it moves.
+   */
+  readonly meter: DisplayMeter
 }
 
 /** Resolved literal colors (canvas can't read CSS custom properties). */
@@ -292,7 +307,7 @@ export function drawTimeline(
     drawClips(ctx, lane, top, rowHeight, viewportWidth, theme, scene.windowOriginCycles, toScreenX)
     const mode = laneRenderMode(pxPerCycle, lane.notes.length > 0, expanded)
     if (expanded) {
-      drawBeatGrid(ctx, top, rowHeight, pxPerCycle, firstCycle, lastCycle, viewportWidth, theme, toScreenX)
+      drawBeatGrid(ctx, top, rowHeight, pxPerCycle, firstCycle, lastCycle, viewportWidth, theme, toScreenX, transform.meter)
     }
     if (mode === 'density') {
       drawDensity(
@@ -542,7 +557,8 @@ function drawClips(
 
 /** Faint per-beat vertical guides inside an expanded lane (rhythm readability).
  *  Cycle boundaries are already drawn by the global gridlines; this adds the
- *  in-between beats (BEATS_PER_BAR subdivisions), suppressed when they'd crowd. */
+ *  in-between beats (`meter.beatsPerBar` subdivisions), suppressed when they'd
+ *  crowd. */
 /** Horizontal sampling step for the curve, in px. One sample per ~2px is below
  *  the resolution of the stroke itself, so a finer step costs time and changes
  *  no pixel. */
@@ -809,13 +825,14 @@ function drawBeatGrid(
   viewportWidth: number,
   theme: DrawTheme,
   toScreenX: (c: number) => number,
+  meter: DisplayMeter,
 ): void {
-  if (pxPerCycle / BEATS_PER_BAR < BEAT_GRID_MIN_PX) return
+  if (pxPerCycle / meter.beatsPerBar < BEAT_GRID_MIN_PX) return
   ctx.fillStyle = theme.gridline
   ctx.globalAlpha = 0.5
   for (let c = Math.floor(firstCycle); c < lastCycle; c++) {
-    for (let b = 1; b < BEATS_PER_BAR; b++) {
-      const x = toScreenX(c + b / BEATS_PER_BAR)
+    for (let b = 1; b < meter.beatsPerBar; b++) {
+      const x = toScreenX(c + b / meter.beatsPerBar)
       if (x < 0 || x > viewportWidth) continue
       ctx.fillRect(x, top, 1, rowHeight)
     }

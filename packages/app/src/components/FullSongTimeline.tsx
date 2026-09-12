@@ -79,6 +79,7 @@ import {
 } from './musicalTimeline/windowPaging'
 import { TrackSwatchPopover } from './TrackSwatchPopover'
 import { useRulerUnits } from '../state/rulerUnits'
+import { useDisplayMeter } from '../state/displayMeter'
 import {
   applyStableVoiceOrder,
   EMPTY_VOICE_ORDER,
@@ -611,6 +612,10 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
   // Ruler units (#412 → #750). The toggle now lives on the editor pattern bar
   // (StrudelEditorClient); this view just reads the shared store.
   const units = useRulerUnits()
+  // The time signature the ruler's beat ticks are drawn in (#1568) — read from
+  // the same store the canvas and the transport readout read, so the three
+  // cannot disagree about where beat 2 is.
+  const meter = useDisplayMeter()
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const scrollLeftRef = useRef(scrollLeft)
@@ -656,7 +661,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       ? (restContentWidth * dragSpanCycles) / loopCycles
       : restContentWidth
   const pxPerCycle = displayCycles > 0 ? contentWidth / displayCycles : 0
-  const ticks = rulerTicks(songWindow, pxPerCycle, units)
+  const ticks = rulerTicks(songWindow, pxPerCycle, units, meter)
 
   // Content width as the pointer handlers see it: rest width (zoom-scaled),
   // scaled by the live (grown) drag span so the handler math matches the

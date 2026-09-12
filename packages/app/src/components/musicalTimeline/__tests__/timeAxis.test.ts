@@ -8,6 +8,7 @@
  * coords), Trap NEW-3 (cycle wrap explicit `%`).
  */
 import { describe, it, expect } from 'vitest'
+import { DEFAULT_METER } from '../../../lib/meter'
 import {
   WINDOW_CYCLES,
   MIN_BLOCK_PX,
@@ -96,30 +97,30 @@ describe('cycleToPlayheadX (Trap 3 + Trap NEW-3)', () => {
 
 describe('formatBarBeat', () => {
   it('returns empty string for null / undefined / NaN', () => {
-    expect(formatBarBeat(null)).toBe('')
-    expect(formatBarBeat(undefined)).toBe('')
-    expect(formatBarBeat(Number.NaN)).toBe('')
+    expect(formatBarBeat(null, DEFAULT_METER)).toBe('')
+    expect(formatBarBeat(undefined, DEFAULT_METER)).toBe('')
+    expect(formatBarBeat(Number.NaN, DEFAULT_METER)).toBe('')
   })
 
   it('formats cycle 0 as bar 1 / beat 1.00', () => {
-    expect(formatBarBeat(0)).toBe('bar 1 / beat 1.00')
+    expect(formatBarBeat(0, DEFAULT_METER)).toBe('bar 1 / beat 1.00')
   })
 
   it('formats half-cycle as bar 1 / beat 3.00 (BEATS_PER_BAR=4)', () => {
     // 0.5 cycles = 2 beats in → 1-indexed beat = 3.00.
-    expect(formatBarBeat(0.5)).toBe('bar 1 / beat 3.00')
+    expect(formatBarBeat(0.5, DEFAULT_METER)).toBe('bar 1 / beat 3.00')
   })
 
   it('formats 1.5 as bar 2 / beat 3.00', () => {
-    expect(formatBarBeat(1.5)).toBe('bar 2 / beat 3.00')
+    expect(formatBarBeat(1.5, DEFAULT_METER)).toBe('bar 2 / beat 3.00')
   })
 
   it('formats 1.99 as bar 2 / beat ~4.96', () => {
-    expect(formatBarBeat(1.99)).toBe('bar 2 / beat 4.96')
+    expect(formatBarBeat(1.99, DEFAULT_METER)).toBe('bar 2 / beat 4.96')
   })
 
   it('treats negative cycle as 0', () => {
-    expect(formatBarBeat(-0.25)).toBe('bar 1 / beat 1.00')
+    expect(formatBarBeat(-0.25, DEFAULT_METER)).toBe('bar 1 / beat 1.00')
   })
 })
 

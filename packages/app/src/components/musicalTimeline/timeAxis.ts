@@ -27,7 +27,7 @@
 
 import type { IREvent } from '@stave/editor'
 
-import { BEATS_PER_BAR, barNumber } from '../../lib/meter'
+import { barNumber, type DisplayMeter } from '../../lib/meter'
 
 /** 2-cycle window (D-05). Slice β fixed; pan/zoom is a follow-up. */
 export const WINDOW_CYCLES = 2
@@ -111,20 +111,22 @@ export function cycleToPlayheadX(
  * whether to render a fallback like `STOPPED_STATUS_COPY`.
  *
  * Bar is 1-indexed (musicians count from 1); beat is 1-indexed within
- * the bar and goes up to (but not including) `BEATS_PER_BAR + 1`. Both
- * readings come from `lib/meter`, which owns the display meter (#1565) —
- * this is a FRACTIONAL beat, which is why it reads the constant rather
- * than calling `barBeatTick`.
+ * the bar and goes up to (but not including) `meter.beatsPerBar + 1`. The
+ * meter is passed rather than read (#1568) — this is a FRACTIONAL beat,
+ * which is why it uses the numerator directly instead of `barBeatTick`.
  *
- * Examples (BEATS_PER_BAR = 4):
+ * Examples (in 4/4):
  *   - 0     → 'bar 1 / beat 1.00'
  *   - 0.5   → 'bar 1 / beat 3.00'
  *   - 1.0   → 'bar 2 / beat 1.00'
  *   - 1.5   → 'bar 2 / beat 3.00'
  */
-export function formatBarBeat(cycle: number | null | undefined): string {
+export function formatBarBeat(
+  cycle: number | null | undefined,
+  meter: DisplayMeter,
+): string {
   if (cycle == null || !Number.isFinite(cycle)) return ''
   const safeCycle = cycle < 0 ? 0 : cycle
-  const beat = (safeCycle % 1) * BEATS_PER_BAR + 1
+  const beat = (safeCycle % 1) * meter.beatsPerBar + 1
   return `bar ${barNumber(safeCycle)} / beat ${beat.toFixed(2)}`
 }

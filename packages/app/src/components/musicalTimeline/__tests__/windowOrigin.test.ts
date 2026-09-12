@@ -20,6 +20,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildTimelineScene, type CollectedMarks, type SceneNote } from '../timelineScene'
 import { drawTimeline, type DrawTheme, type DrawTransform } from '../drawTimeline'
+import { DEFAULT_METER } from '../../../lib/meter'
 import { drawLiveOverlay, markSig } from '../drawLiveOverlay'
 import { computeLaneLayout } from '../laneLayout'
 import { songCycleToX, type SongWindow } from '../songAxis'
@@ -45,6 +46,7 @@ const TRANSFORM: DrawTransform = {
   scrollLeft: 0,
   contentWidth: CONTENT_W,
   viewportWidth: VIEW_W,
+  meter: DEFAULT_METER,
 }
 
 type Rect = { op: string; x: number; y: number; w: number; h: number; fill: string; alpha: number }
@@ -243,7 +245,7 @@ describe('the renderer at a non-zero window origin (#1201)', () => {
     drawTimeline(
       ctx,
       scene,
-      { scrollLeft: 0, contentWidth: wideW, viewportWidth: VIEW_W },
+      { scrollLeft: 0, contentWidth: wideW, viewportWidth: VIEW_W, meter: DEFAULT_METER },
       THEME,
       layout,
     )
@@ -265,7 +267,7 @@ describe('the renderer at a non-zero window origin (#1201)', () => {
       marksWith([note]),
     )
     const layout = computeLaneLayout([{ laneKey: 'bass' }], new Set(), 24, 80)
-    const tf: DrawTransform = { scrollLeft: 0, contentWidth: wideW, viewportWidth: VIEW_W }
+    const tf: DrawTransform = { scrollLeft: 0, contentWidth: wideW, viewportWidth: VIEW_W, meter: DEFAULT_METER }
 
     const base = recordingCtx()
     drawTimeline(base.ctx, scene, tf, THEME, layout)
