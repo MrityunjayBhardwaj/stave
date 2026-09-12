@@ -1770,6 +1770,46 @@ export function extractTracks(
     commented: boolean
     label: string
   }[] = []
+  /**
+   * #1476 — IS THIS COMMENTED LABEL A TRACK, OR A FRAGMENT OF THE TRACK ABOVE IT?
+   *
+   * `// $: note("F")` sitting between `.roomsize("10")` and `.slow(".1275")` is
+   * a commented-out ALTERNATIVE inside a live chain, not a second track. What
+   * disqualifies it is its POSITION, not its text — #1475's prose check reads
+   * the text and correctly admits this one as reading like code.
+   *
+   * Position is exactly what `splitTopLevelStatements` already computes, so ask
+   * IT rather than deciding a second way: a label strictly inside a top-level
+   * statement's extent is interior to that statement. The splitter's `\n`
+   * handler peeks past whitespace AND `//` lines before deciding a boundary, so
+   * a leading-dot continuation below a comment block keeps the whole chain as
+   * one statement — which is the shape that makes this case decidable at all.
+   *
+   * ⚠ WHY THIS MUST BE REJECTED HERE AND NOT AT THE EMIT SITE: a `start` also
+   * sets the PREVIOUS entry's `end`. Admitting an interior label truncates the
+   * live track above it even if its own empty body is discarded later — which
+   * is the whole defect. `0/2NQuAYDvjagj` keeps 19 bytes of a 456-byte chain on
+   * two of its four tracks for precisely this reason.
+   *
+   * #1384's lone-commented-label pin survives for free: a document that is
+   * nothing but a commented label yields NO statements (the splitter strips
+   * `//` residue before emitting), so the label is interior to nothing and
+   * stays a track with its own name.
+   *
+   * Computed lazily and once — most documents never admit a commented label at
+   * all, and the walk is O(n) over the source.
+   */
+  let stmtExtents: { start: number; end: number }[] | null = null
+  const isInteriorToStatement = (pos: number): boolean => {
+    if (stmtExtents === null) {
+      stmtExtents = splitTopLevelStatements(code, 0).map((st) => ({
+        start: st.offset,
+        end: st.offset + st.text.length,
+      }))
+    }
+    return stmtExtents.some((st) => pos > st.start && pos < st.end)
+  }
+
   let m: RegExpExecArray | null
   while ((m = dollarRe.exec(code))) {
     const label = m[2]
@@ -1793,6 +1833,12 @@ export function extractTracks(
     // prose line would cut the track above it short even if its own empty body
     // were discarded later.
     if (m[1] && !commentedLabelIsTrack(code, m.index + m[0].length)) {
+      continue
+    }
+    // #1476 — and a commented label INTERIOR to a top-level statement is a
+    // fragment of that statement, whatever its text says. Same reason for
+    // rejecting here: the truncation of the entry above is the damage.
+    if (m[1] && isInteriorToStatement(m.index)) {
       continue
     }
     // bodyStart points after the matched prefix (`[ws][//]label:`) and any
