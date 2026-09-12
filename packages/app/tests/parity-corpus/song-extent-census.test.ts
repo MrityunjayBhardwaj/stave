@@ -6,14 +6,14 @@
  * WHY A CENSUS AND NOT ONLY UNIT TESTS. The unit tests next door pin the walk's
  * SEMANTICS against synthetic IR. They cannot say whether those semantics reach
  * anything real, and the number that decides the feature's shape is exactly
- * that: measured here, 2 documents in 150 yield a trustworthy arrangement
- * extent. A change that quietly widened `arranged` — dropping the opaque taint,
+ * that: measured here, 3 documents in 150 yield a trustworthy arrangement
+ * extent (2 until #1476 — see `ARRANGED` for why the third arrived). A change that quietly widened `arranged` — dropping the opaque taint,
  * say — would keep every unit test green while handing documents a confident
  * length a bounce would truncate to. This arm is what notices.
  *
  * ⚠ THE CORPUS IS SAVED LIVE-CODING SKETCHES, NOT STAVE SONGS. It skews hard to
  * loops because arrangements of the kind the full-song work is about mostly do
- * not exist out there yet. So `loop: 142` is a fact about what people write
+ * not exist out there yet. So `loop: 141` is a fact about what people write
  * TODAY, not a ceiling on the feature — read it as "the loop case cannot be the
  * unsupported half", never as "arrangements do not matter".
  *
@@ -95,8 +95,22 @@ if (!hasCorpusArchive()) {
   )
 }
 
-/** The two documents with a trustworthy extent, and what it measures as. */
-const ARRANGED = ['0/-HyFCSbuSlq5=274', '0/-P5TIfAEmiGv=32']
+/**
+ * The documents with a trustworthy extent, and what each measures as.
+ *
+ * ⚠ `0/-HB2AUFfae4D` JOINED AT #1476, and the move is the header's own
+ * direction-of-travel test passing again. Before, the document's only track was
+ * a commented-out label parked inside `let seqA`'s open chain; admitting it made
+ * the whole file a single empty ghost row — `Track#d1[Pure]`, **0 sound leaves,
+ * classified `loop`**. Rejecting it lets the file parse as what it is, and its
+ * `cat(seqA, seqB)` reads as `Track#d1[Arrange]` with **16 leaves** over 2
+ * cycles. An arrangement became FOUND where none was found before, which only a
+ * parser that reads MORE can do.
+ *
+ * So: the module is `parseStrudel` (again — see the #1469 note above), and the
+ * new verdict is right. Measured both sides of the change, not inferred.
+ */
+const ARRANGED = ['0/-HB2AUFfae4D=2', '0/-HyFCSbuSlq5=274', '0/-P5TIfAEmiGv=32']
 
 /** Every document holding an arrangement Stave cannot measure — see the header. */
 const OPAQUE = [
@@ -136,7 +150,7 @@ describe('songExtent over the real corpus', () => {
     // classification, which is a different bug with a different fix.
     expect(arranged.sort()).toEqual(ARRANGED)
     expect(opaque.sort()).toEqual([...OPAQUE].sort())
-    expect(tally).toEqual({ arranged: 2, loop: 142, opaque: 6 })
+    expect(tally).toEqual({ arranged: 3, loop: 141, opaque: 6 })
 
     // ⚠ One of the two (274) runs PAST the 256-cycle horizon cap that
     // `SongAnalysis.displaySpan` stops at — which is precisely why a bounce

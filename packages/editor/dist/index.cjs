@@ -665,11 +665,13 @@ function walkCycle(ir, ctx) {
         let leafIdx = ctx.leafIndex ?? 0;
         for (const track of ir.tracks) {
           const armLane = ctx.armLaneOf?.get(track);
+          const armPos = armLane !== void 0 ? armSourceSpan(track)?.start : void 0;
           out.push(
             ...recurse(track, {
               ...ctx,
               leafIndex: leafIdx,
-              ...armLane !== void 0 ? { trackId: armLane } : {}
+              ...armLane !== void 0 ? { trackId: armLane } : {},
+              ...armPos !== void 0 ? { dollarPos: armPos } : {}
             })
           );
           leafIdx += safeCountLeaves(track);
@@ -2766,6 +2768,16 @@ function extractTracks(code) {
   const tracks = [];
   const dollarRe = /^[ \t]*(\/\/[ \t]*)?([A-Za-z_$][\w$]*)\s*:/gm;
   const starts = [];
+  let stmtExtents = null;
+  const isInteriorToStatement = /* @__PURE__ */ __name((pos) => {
+    if (stmtExtents === null) {
+      stmtExtents = splitTopLevelStatements(code, 0).map((st) => ({
+        start: st.offset,
+        end: st.offset + st.text.length
+      }));
+    }
+    return stmtExtents.some((st) => pos > st.start && pos < st.end);
+  }, "isInteriorToStatement");
   let m;
   while (m = dollarRe.exec(code)) {
     const label = m[2];
@@ -2774,6 +2786,9 @@ function extractTracks(code) {
       continue;
     }
     if (m[1] && !commentedLabelIsTrack(code, m.index + m[0].length)) {
+      continue;
+    }
+    if (m[1] && isInteriorToStatement(m.index)) {
       continue;
     }
     const after = m.index + m[0].length;
