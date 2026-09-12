@@ -79,6 +79,7 @@ function sceneWith(notes: SceneNote[]): TimelineScene {
         arrangeOffset: null,
         labelOffset: null,
         automations: [],
+        stepped: [],
       },
     ],
   }

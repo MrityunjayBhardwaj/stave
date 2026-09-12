@@ -93,7 +93,9 @@ import {
 } from './musicalTimeline/stableVoiceOrder'
 import { collectNoteMarks, readEventsInBand } from './musicalTimeline/timelineMarks'
 import { declaredTracks } from './musicalTimeline/trackOrder'
-import { signalAutomations, type SignalAutomation } from '@stave/editor'
+import { signalAutomations, steppedAutomations, knobRangeFor, type SignalAutomation } from '@stave/editor'
+import { stepAxis } from './musicalTimeline/steppedLane'
+import type { SceneStepped } from './musicalTimeline/timelineScene'
 import { computeLaneLayout, laneAtY, type LaneLayout } from './musicalTimeline/laneLayout'
 import {
   markRegionValue,
@@ -1160,6 +1162,20 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     }
     return by as ReadonlyMap<string, readonly SignalAutomation[]>
   }, [props.ir])
+  // Stepped automation per lane (#1463 Stage 2), memoised on the same `props.ir`
+  // so the two classes can never describe different documents. The axis is
+  // resolved HERE because this is the module that may call `knobRangeFor` at
+  // runtime — the scene and the renderer import only types from `@stave/editor`.
+  const steppedByTrack = useMemo(() => {
+    const by = new Map<string, SceneStepped[]>()
+    for (const automation of steppedAutomations(props.ir ?? null)) {
+      const entry: SceneStepped = { automation, axis: stepAxis(automation, knobRangeFor) }
+      const list = by.get(automation.trackId)
+      if (list) list.push(entry)
+      else by.set(automation.trackId, [entry])
+    }
+    return by as ReadonlyMap<string, readonly SceneStepped[]>
+  }, [props.ir])
   // Per-lane voice sub-row order is pinned first-seen across re-evals (#480) so
   // reordering clips in time doesn't reshuffle the instrument rows — the SAME
   // first-seen stability `stableTrackOrder` gives the top-level lanes, one level
@@ -1199,11 +1215,12 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       customColorByName,
       trackOrder,
       automationsByTrack,
+      steppedByTrack,
     )
     const { scene: ordered, order } = applyStableVoiceOrder(raw, voiceOrderRef.current)
     voiceOrderRef.current = order
     return ordered
-  }, [analysis, windowActivity, songWindow, marks, source, customColorByName, trackOrder, automationsByTrack])
+  }, [analysis, windowActivity, songWindow, marks, source, customColorByName, trackOrder, automationsByTrack, steppedByTrack])
 
   // ── Expand + bind (#422) ─────────────────────────────────────────────────
   // Click/expand a lane → accordion it taller (read-only note detail) AND bind

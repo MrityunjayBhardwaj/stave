@@ -83,6 +83,7 @@ const scene: TimelineScene = {
       arrangeOffset: null,
       labelOffset: null,
       automations: [],
+      stepped: [],
     },
   ],
 }
@@ -223,6 +224,7 @@ describe('drawTimeline', () => {
           arrangeOffset: null,
       labelOffset: null,
       automations: [],
+      stepped: [],
         },
       ],
     }

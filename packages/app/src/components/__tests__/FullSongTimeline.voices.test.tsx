@@ -32,8 +32,13 @@ vi.mock('@stave/editor', async () => {
   // the exact trap the `wholeWalkWindow` note below already describes. Real
   // function, from source: it is a pure IR walk, so there is nothing to stub.
   const { signalAutomations } = await import('../../../../editor/src/ir/signalAutomation')
+  // #1463 Stage 2 — the component also reads stepped automation and its axis.
+  const { steppedAutomations } = await import('../../../../editor/src/ir/steppedAutomation')
+  const { knobRangeFor } = await import('../../../../editor/src/visualEdit/panels/knobRanges')
   return {
     signalAutomations,
+    steppedAutomations,
+    knobRangeFor,
     structuralWalk: (_ir: unknown, window: { originCycle: number; spanCycles: number }) =>
       skeletonsFromEvents(DRUM_EVENTS, window),
     wholeWalkWindow,
