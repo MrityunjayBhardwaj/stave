@@ -2731,6 +2731,11 @@ function skipWhitespaceAndLineComments(src, pos) {
       if (i < src.length && src[i] === "\n") i++;
       continue;
     }
+    if (src[i] === "/" && src[i + 1] === "*") {
+      const close = src.indexOf("*/", i + 2);
+      i = close < 0 ? src.length : close + 2;
+      continue;
+    }
     break;
   }
   return i;
@@ -3681,8 +3686,10 @@ function splitArgsWithOffsets(argsStr) {
   const pushCurrent = /* @__PURE__ */ __name(() => {
     if (current4.trim().length === 0) return;
     const consumed = skipWhitespaceAndLineComments(current4, 0);
+    const value = current4.slice(consumed).trimEnd();
+    if (value.length === 0) return;
     args.push({
-      value: current4.slice(consumed).trimEnd(),
+      value,
       offset: currentStart + consumed
     });
   }, "pushCurrent");
