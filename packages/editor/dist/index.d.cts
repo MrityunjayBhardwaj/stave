@@ -8235,16 +8235,23 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
      * silent. So a bounce rewinds first and the export is reproducible: the same
      * document bounces to the same audio however long you had been playing it.
      *
-     * The rewind is three steps and each is load-bearing:
+     * The rewind is four steps and each is load-bearing:
      *   1. `stop()` — resets the scheduler's query cursor (`cyclist.stop()` sets
      *      `lastEnd = 0`, and each tick queries from `lastEnd`). `pause()` does
      *      NOT, which is exactly why this cannot be a pause.
      *   2. `setTransportOffset(0)` — clears any earlier seek. Song position is
-     *      `scheduler.now() - transportOffset`, applied as a `.late()` wrap, so
-     *      resetting the clock WITHOUT resetting the offset would rewind the
-     *      scheduler and leave the pattern shifted — a subtler version of the
-     *      same bug. Optional-chained: non-Strudel engines have no seek.
-     *   3. `play()` — re-evaluates and starts from cycle 0.
+     *      the scheduler clock read through the transport frame, applied as a
+     *      `.late()` wrap, so resetting the clock WITHOUT resetting the offset
+     *      would rewind the scheduler and leave the pattern shifted — a subtler
+     *      version of the same bug. Optional-chained: non-Strudel engines have
+     *      no seek.
+     *   3. `setLoopRange(null)` — clears any armed loop (#1572), which is the
+     *      OTHER half of that frame and fails in exactly the same shape: a
+     *      bounce with a loop over bars 3–5 would capture those two bars
+     *      repeating for the whole duration. Restored afterwards, unlike the
+     *      offset: rewinding is what the user asked for, disarming the locators
+     *      they set is not.
+     *   4. `play()` — re-evaluates and starts from cycle 0.
      *
      * ⚠ The old comment here warned against calling `play()` when already
      * playing, because `play()` re-evaluates and would restart the audio
@@ -8386,7 +8393,12 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
         error: Error | null;
     }>;
     /**
-     * #384 — current SONG position in cycles: `scheduler.now() - transportOffset`.
+     * #384 — current SONG position in cycles: the scheduler clock read through
+     * the transport frame. `scheduler.now() - transportOffset` with no loop
+     * armed; folded into the looped span when one is (#1570), because a ribboned
+     * pattern re-bases its slice to cycle 0 and the raw difference would count
+     * loop-relative cycles.
+     *
      * The full-song timeline playhead reads this (vs `getCurrentCycle`'s raw
      * window clock). Gated on `isPlayingState` like `getCurrentCycle` so the
      * playhead clears on stop. `null` on non-Strudel engines / when stopped.

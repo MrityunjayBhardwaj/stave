@@ -45,7 +45,8 @@
  * ── WHY A PASS COUNTER AND NOT `position >= cycles` ──────────────────────────
  * The obvious comparison is wrong in two directions, both of them silent:
  *
- * 1. Song position is `scheduler.now() - transportOffset`, and `stop()` resets
+ * 1. Song position is the scheduler clock read through the transport frame —
+ *    `scheduler.now() - transportOffset` with no loop armed — and `stop()` resets
  *    the scheduler cursor WITHOUT clearing an earlier seek's offset (only
  *    `record()` does that explicitly). So the first sample of a run is not
  *    guaranteed to be near zero. A bare `position >= cycles` would then fire on
@@ -62,6 +63,11 @@
  * pass being left is the first or the fifth. A stale offset degrades to
  * stopping one pass late instead of not playing at all, which is the safe
  * direction. A backwards seek lowers the baseline and re-arms naturally.
+ *
+ * ⚠ WITH A LOOP RANGE ARMED (#1570) THIS MODULE NEVER TERMINATES, BY DESIGN.
+ * Song position folds into the looped span, so the pass number stops rising and
+ * no crossing ever happens — which is what a loop means. Worth knowing before
+ * diagnosing "stopAtEnd is broken": check whether locators are set first.
  *
  * The counting starts at ONE, not zero: see the `pass < 1` guard below, which
  * exists because the first sample of a real run is slightly NEGATIVE, and the

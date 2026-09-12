@@ -491,7 +491,8 @@ export class StrudelEngine implements LiveCodingEngine {
   private pauseChangedListeners: Set<(paused: boolean) => void> = new Set()
 
   // #384 — transport seek offset, in cycles. The song position the user sees
-  // is `scheduler.now() - transportOffset`; `0` means normal playback (no
+  // is `scheduler.now() - transportOffset` (folded into the loop span when one
+  // is armed — see `loopRange` below); `0` means normal playback (no
   // seek). Set by `setTransportOffset()` (the runtime's `seekTo` computes
   // `now - targetCycle`). Applied at the `.p` capture seam inside evaluate()
   // by wrapping the pattern with `.late(transportOffset)` — the IR-level
