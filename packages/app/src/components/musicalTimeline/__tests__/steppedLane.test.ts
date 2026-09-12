@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest'
 import type { SteppedAutomation } from '@stave/editor'
 import {
   stepAxis,
+  stepEdit,
   stepHitAt,
   stepSegments,
   stepY,
@@ -202,5 +203,54 @@ describe('unitOnAxis', () => {
   it('returns the floor for a degenerate axis or a non-finite value', () => {
     expect(unitOnAxis(0.5, { lo: 1, hi: 1, scale: 'linear' })).toBe(0)
     expect(unitOnAxis(Number.NaN, { lo: 0, hi: 1, scale: 'linear' })).toBe(0)
+  })
+})
+
+describe('stepEdit — what typed text may become (Stage 3)', () => {
+  const LIN: StepAxis = { lo: 0, hi: 1, scale: 'linear' }
+  const automation: SteppedAutomation = {
+    trackId: 'd1',
+    paramKey: 'gain',
+    method: 'gain',
+    steps: [
+      { value: 0.2, weight: 1, startCycle: 0, valueSpan: { start: 10, end: 13 } },
+      { value: 0.8, weight: 1, startCycle: 1, valueSpan: { start: 14, end: 17 } },
+    ],
+    periodCycles: 2,
+    offset: 0,
+  }
+  const hit = { entry: { automation, axis: LIN }, index: 1, y: 0 }
+  const spy = () => {
+    const calls: [SteppedAutomation, number, number][] = []
+    const edit = (a: SteppedAutomation, index: number, value: number) => {
+      calls.push([a, index, value])
+      return { range: [0, 1] as [number, number], text: String(value) }
+    }
+    return { calls, edit }
+  }
+
+  it('hands the step\'s own automation, its index and the typed number to the writer', () => {
+    const { calls, edit } = spy()
+    expect(stepEdit(hit, ' 0.4 ', edit)).toEqual({ range: [0, 1], text: '0.4' })
+    expect(calls).toEqual([[automation, 1, 0.4]])
+  })
+
+  it('an empty or blank entry writes nothing — `Number(\'\')` is 0, not NaN', () => {
+    const { calls, edit } = spy()
+    expect(Number('')).toBe(0)
+    expect(stepEdit(hit, '', edit)).toBeNull()
+    expect(stepEdit(hit, '   ', edit)).toBeNull()
+    expect(calls).toEqual([])
+  })
+
+  it('a non-numeric entry writes nothing', () => {
+    const { calls, edit } = spy()
+    expect(stepEdit(hit, 'loud', edit)).toBeNull()
+    expect(stepEdit(hit, 'Infinity', edit)).toBeNull()
+    expect(calls).toEqual([])
+  })
+
+  it('passes the writer\'s refusal through rather than inventing an edit', () => {
+    expect(stepEdit(hit, '0.8', () => null)).toBeNull()
   })
 })

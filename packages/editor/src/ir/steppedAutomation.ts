@@ -254,5 +254,12 @@ export function stepValueEdit(
 ): { range: [number, number]; text: string } | null {
   const step = a.steps[index]
   if (!step || !Number.isFinite(value) || value === step.value) return null
-  return { range: [step.valueSpan.start, step.valueSpan.end], text: String(value) }
+  const text = String(value)
+  // ⚠ THE EDIT MUST WRITE A NUMBER THIS MODULE CAN READ BACK. `String` spells a
+  // very large or very small number in exponent form (`1e+21`, `1e-7`), which
+  // `NUMBER` declines — so the write would land, the engine would play it, and
+  // the whole parameter would drop off its lane on the next read. One grammar,
+  // checked on the way out as well as on the way in.
+  if (!NUMBER.test(text)) return null
+  return { range: [step.valueSpan.start, step.valueSpan.end], text }
 }

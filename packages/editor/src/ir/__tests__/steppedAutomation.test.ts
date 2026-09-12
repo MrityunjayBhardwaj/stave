@@ -181,4 +181,20 @@ describe('stepValueEdit — replaces one number and no other byte', () => {
     expect(stepValueEdit(a, 0, Number.NaN)).toBeNull()
     expect(stepValueEdit(a, 0, Number.POSITIVE_INFINITY)).toBeNull()
   })
+
+  it('writes nothing it could not read back — an exponent spelling would drop the lane', () => {
+    const src = '$: s("bd*2").gain("<0.2 0.8>")'
+    const [a] = read(src)
+    // The CONTROL first: the reader does read an ordinary edit back, so the refusal
+    // below is about the spelling, not about any edit at all.
+    expect(read(apply(src, stepValueEdit(a, 0, 0.5)!))).toHaveLength(1)
+    // `String` spells these in exponent form, and the reader declines them.
+    expect(String(1e21)).toBe('1e+21')
+    expect(String(1e-7)).toBe('1e-7')
+    expect(stepValueEdit(a, 0, 1e21)).toBeNull()
+    expect(stepValueEdit(a, 0, 1e-7)).toBeNull()
+    // Negative and whole numbers stay plain decimals and are written.
+    expect(stepValueEdit(a, 0, -2)?.text).toBe('-2')
+    expect(stepValueEdit(a, 0, 3)?.text).toBe('3')
+  })
 })
