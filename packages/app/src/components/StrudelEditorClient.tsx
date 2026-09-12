@@ -59,7 +59,6 @@ import {
   runRawStage,
   runMiniExpandedStage,
   runChainAppliedStage,
-  runFinalStage,
   type Pass,
   type PatternIR,
   STRUDEL_DOCS_INDEX,
@@ -115,21 +114,50 @@ import { PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
 import { installBounceProbe } from "../e2e/bounceProbe";
 import { installAssetProbe } from "../e2e/assetProbe";
 import { warmWaveforms } from "../audio/waveformWarm";
+import {
+  buildStrudelPasses,
+  type StrudelPassDeps,
+} from "./strudelPasses";
 
 
-// Phase 19-07 (#79) — 4-stage parser pipeline. Each stage emits its own
-// IRSnapshot.passes[] entry; FINAL output is byte-identical to today's
-// parseStrudel(code). Tab name 'Parsed' kept for IRInspectorPanel
-// persistence backward-compat (RESEARCH §3.2). RAW reads input.code from
-// the pre-pass-0 seed (Code-wrapped raw source); subsequent stages take
-// the previous stage's PatternIR output. Future passes that rewrite Play
+// Phase 19-07 (#79) — the Inspector's INTERMEDIATE views. RAW reads
+// input.code from the pre-pass-0 seed (Code-wrapped raw source); the next two
+// take the previous stage's PatternIR output. Future passes that rewrite Play
 // nodes must preserve or compose `loc` (PV24).
-const STRUDEL_PASSES: readonly Pass<PatternIR>[] = [
+//
+// ⚠ #1558 — THE FINAL TAB IS NOT IN THIS LIST, AND THAT IS THE POINT. These
+// three are `parseStrudelStages.ts`, a parallel reimplementation of decisions
+// `parseStrudel` makes, kept in sync by hand. It exists so the Inspector can
+// show the parse in steps — `parseStrudel` does all of it in one pass and never
+// stops to show its work.
+//
+// That makes it a DEBUGGING affordance, and the song timeline must not eat its
+// output: `MusicalTimeline` analyses `snapshot.ir`, so a bug in a hidden debug
+// panel's data source was able to silence a track. #1553 did exactly that —
+// `runChainAppliedStage` dropped a chain applied over a comma pattern, and six
+// archive documents lost every method in their chain; one kept 7 of its 66
+// notes. That bug is not expressible in `parseStrudel`, which passes the chain
+// straight from `parseRoot` to `applyChain` as a local instead of stashing it
+// on a node to carry it across a stage boundary.
+//
+// So the FINAL entry is appended at the call site from `parseStrudel` directly.
+// The tab name 'Parsed' is unchanged (IRInspectorPanel persistence,
+// RESEARCH §3.2) and there are still four tabs.
+const STRUDEL_STAGE_PASSES: readonly Pass<PatternIR>[] = [
   { name: "RAW",            run: runRawStage           },
   { name: "MINI-EXPANDED",  run: runMiniExpandedStage  },
   { name: "CHAIN-APPLIED",  run: runChainAppliedStage  },
-  { name: "Parsed",         run: runFinalStage         },
 ];
+
+/**
+ * #1558 — the real wiring for `buildStrudelPasses`. Lives HERE because this
+ * file already imports the `@stave/editor` barrel; `strudelPasses.ts` must not,
+ * or it drags `gifenc` (CJS) into the app's vitest run.
+ */
+const STRUDEL_PASS_DEPS: StrudelPassDeps = {
+  runStages: (code) => runPasses(IR.code(code), STRUDEL_STAGE_PASSES),
+  parse: parseStrudel,
+};
 
 // Phase 20-12 — the timeline collects across the same cycle window the live
 // monitor displays (WINDOW_CYCLES in musicalTimeline/timeAxis.ts is 2).
@@ -205,8 +233,11 @@ function captureAndPublishSnapshot(
     // Phase 19-07 (#79) — pre-pass-0 seed: wrap raw source as a Code node so
     // pass 0 (RAW) reads input.code and runs extractTracks. finalIR is the `ir`
     // alias — the Inspector's IR tree, source-fresh (PV27).
-    const seed: PatternIR = IR.code(fileNow.content);
-    const passes = runPasses(seed, STRUDEL_PASSES);
+    const passes = buildStrudelPasses(fileNow.content, STRUDEL_PASS_DEPS);
+    // #1558 — the FINAL tree is the PARSER's, not the staged pipeline's, so a
+    // bug in the (unreachable) Inspector's data source cannot silence a track.
+    // The rule, the measurements and why the deps are injected: strudelPasses.ts.
+    // `finalIR` stays the `ir` alias that IRSnapshot requires.
     const finalIR = passes[passes.length - 1].ir;
     // #982 — events = the runtime's evaluated haps (queryArc), not collect, so
     // the Inspector's event table shows eval-truth. `[]` until eval populates
