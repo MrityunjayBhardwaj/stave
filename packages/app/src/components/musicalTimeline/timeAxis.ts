@@ -5,8 +5,8 @@
  * `lib/meter` — one owner for every readout in the app (#1565).
  *
  * Every helper is total: null / NaN / non-finite inputs map to a safe
- * default (0 px, empty string, null bpm) so the React render path never
- * sees `NaN` in `style.left`. Trap 3 (CONTEXT) — `runtime.getCurrentCycle()`
+ * default (0 px, empty string) so the React render path never sees `NaN`
+ * in `style.left`. Trap 3 (CONTEXT) — `runtime.getCurrentCycle()`
  * legitimately returns `null` when the engine is stopped.
  *
  * PV28 (load-bearing): `event.begin` is ALREADY in post-collect cycle

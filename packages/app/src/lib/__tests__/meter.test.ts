@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { BEATS_PER_BAR, TICKS_PER_BEAT, barNumber, barBeatTick, cpsToBpm } from '../meter'
 
@@ -140,7 +140,7 @@ describe('#1565 — the meter is spelled in exactly one place', () => {
 
   const scanned = sourceFiles().filter((f) => {
     const rel = relative(SRC, f)
-    return rel !== OWNER.split('/').join(sep) && rel !== DOCUMENT_TEXT
+    return rel !== OWNER && rel !== DOCUMENT_TEXT
   })
 
   it('control arm: the scan actually reaches the tree', () => {
