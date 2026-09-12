@@ -7916,6 +7916,42 @@ function resolveBareCaptureId(code) {
 }
 __name(resolveBareCaptureId, "resolveBareCaptureId");
 
+// src/engine/transportFrame.ts
+function fold(x, m) {
+  const r = x % m;
+  return r < 0 ? r + m : r;
+}
+__name(fold, "fold");
+function normalizeLoopRange(range2) {
+  if (!range2) return null;
+  const { startCycle, cycles } = range2;
+  if (!Number.isFinite(startCycle) || !Number.isFinite(cycles)) return null;
+  if (cycles <= 0) return null;
+  if (startCycle < 0) return null;
+  return { startCycle, cycles };
+}
+__name(normalizeLoopRange, "normalizeLoopRange");
+function songPositionAt(now2, transportOffset, loop) {
+  const offset = Number.isFinite(transportOffset) ? transportOffset : 0;
+  const raw = now2 - offset;
+  if (!loop) return raw;
+  return loop.startCycle + fold(raw, loop.cycles);
+}
+__name(songPositionAt, "songPositionAt");
+function transportOffsetForSeek(now2, targetSongCycle, loop) {
+  if (!Number.isFinite(targetSongCycle)) return Number.isFinite(now2) ? now2 : 0;
+  if (!loop) return now2 - targetSongCycle;
+  const inside = isInsideLoop(targetSongCycle, loop);
+  const target = inside ? targetSongCycle : loop.startCycle;
+  return now2 - fold(target - loop.startCycle, loop.cycles);
+}
+__name(transportOffsetForSeek, "transportOffsetForSeek");
+function isInsideLoop(songCycle, loop) {
+  if (!loop) return false;
+  return songCycle >= loop.startCycle && songCycle < loop.startCycle + loop.cycles;
+}
+__name(isInsideLoop, "isInsideLoop");
+
 // src/engine/StrudelEngine.ts
 function isQueryablePattern(p) {
   return !!p && typeof p.queryArc === "function";
@@ -8135,6 +8171,17 @@ var _StrudelEngine = class _StrudelEngine {
     // guard). Exact only for stateless-cyclic patterns; state-accumulating
     // patterns seek approximately (documented edge, design §7.4).
     this.transportOffset = 0;
+    // #1570 — the user's loop range, in SONG cycles, or `null` when the transport
+    // runs straight through. Applied at the same `.p` capture seam as the seek
+    // wrap, as `.ribbon(startCycle, cycles)` BEFORE the `.late()` — so the span
+    // repeats natively, applied once when the range changes rather than on every
+    // lap. (Looping by seeking would re-evaluate the whole document every few
+    // seconds: `seekTo` ends in `play()`.)
+    //
+    // ⚠ `ribbon` re-bases the slice to cycle 0, so this field is only ever half a
+    // decision: the transport offset that keeps song position song-absolute is the
+    // other half, and `transportFrame.ts` owns the arithmetic that binds them.
+    this.loopRange = null;
     // Phase 20-14 α-5 — tier flags read at boot. β-4 wires `midi` to call
     // enableWebMidi(); the other 7 (csound, tidal, osc, serial, gamepad,
     // motion, mqtt) land as one follow-up issue each. Mid-session toggle
@@ -8178,6 +8225,33 @@ var _StrudelEngine = class _StrudelEngine {
   /** #384 — current transport offset (cycles). `0` when no seek is active. */
   getTransportOffset() {
     return this.transportOffset;
+  }
+  /**
+   * #1570 — set the user's loop range (song cycles), or `null` to clear it.
+   * Like `setTransportOffset`, this does NOT re-evaluate by itself: the
+   * runtime's `setLoopRange` pairs it with a compensating transport offset and
+   * then re-evals through the normal hot-swap, which re-reads both here and
+   * applies them together at the `.p` seam.
+   *
+   * ⚠ THE PAIRING IS NOT OPTIONAL. `ribbon` re-bases the slice to cycle 0, so a
+   * range set without the matching offset leaves the scheduler clock counting
+   * loop-relative cycles while every readout is song-absolute. The arithmetic
+   * that keeps them in one frame lives in `transportFrame.ts`, and both this
+   * engine and the runtime read it rather than re-deriving it.
+   *
+   * Input is normalised here (not at the caller): an inverted or zero-length
+   * drag becomes "no loop" rather than a wrap that cannot be heard.
+   *
+   * Kept off the `LiveCodingEngine` interface (v1) and reached via
+   * `(engine as any).setLoopRange?.()` so non-Strudel engines no-op, mirroring
+   * the `setTransportOffset` convention.
+   */
+  setLoopRange(range2) {
+    this.loopRange = normalizeLoopRange(range2);
+  }
+  /** #1570 — the armed loop range, or `null` when the transport runs straight through. */
+  getLoopRange() {
+    return this.loopRange;
   }
   /**
    * Phase 20-14 β-2 — read-only snapshot of alias rewrites that have fired
@@ -8494,6 +8568,7 @@ var _StrudelEngine = class _StrudelEngine {
     let anonIndex = 0;
     let autoOrbitNext = 100;
     const transportOffset = this.transportOffset;
+    const loopRange = this.loopRange;
     const probeExplicitOrbit = /* @__PURE__ */ __name((pat) => {
       try {
         const haps = pat.queryArc(0, 1);
@@ -8605,6 +8680,12 @@ var _StrudelEngine = class _StrudelEngine {
                 }
               }
               capturedSongPatterns.set(captureId, effectivePattern);
+              if (loopRange && typeof effectivePattern.ribbon === "function") {
+                try {
+                  effectivePattern = effectivePattern.ribbon(loopRange.startCycle, loopRange.cycles);
+                } catch {
+                }
+              }
               if (transportOffset !== 0 && typeof effectivePattern.late === "function") {
                 try {
                   effectivePattern = effectivePattern.late(transportOffset);
@@ -29794,11 +29875,11 @@ function leafViewUsable(model) {
   return false;
 }
 __name(leafViewUsable, "leafViewUsable");
-function claimLeafSpan(src, span, token, seen, fold = false) {
+function claimLeafSpan(src, span, token, seen, fold2 = false) {
   const no2 = { ok: false, gate: "no-leaf-anchor" };
   if (!span) return no2;
   const bytes = src.slice(span.start, span.end);
-  const isOwn = fold ? bytes.toLowerCase() === token.toLowerCase() : bytes === token;
+  const isOwn = fold2 ? bytes.toLowerCase() === token.toLowerCase() : bytes === token;
   if (!isOwn) return no2;
   for (const s of seen) {
     const identical = s.start === span.start && s.end === span.end;
@@ -41779,7 +41860,45 @@ var _LiveCodingRuntime = class _LiveCodingRuntime {
     const now2 = this.rawSchedulerNow();
     const setOffset = this.engine.setTransportOffset;
     if (now2 === null || typeof setOffset !== "function") return { error: null };
-    setOffset.call(this.engine, now2 - targetCycle);
+    setOffset.call(this.engine, transportOffsetForSeek(now2, targetCycle, this.currentLoopRange()));
+    return this.play();
+  }
+  /** #1570 — the loop range the engine currently holds (`null` on non-Strudel engines). */
+  currentLoopRange() {
+    const get = this.engine.getLoopRange;
+    return typeof get === "function" ? get.call(this.engine) ?? null : null;
+  }
+  /**
+   * #1570 — arm a loop over `[startCycle, startCycle + cycles)` song cycles, or
+   * clear it with `null`. One re-eval (the existing hot-swap), not one per lap.
+   *
+   * ⚠ THE RANGE AND THE OFFSET ARE ONE DECISION, MADE HERE. `ribbon` re-bases
+   * the looped span to cycle 0, so arming a range alone would leave the playhead
+   * reading loop-relative cycles while the ears hear the middle of the song.
+   * This sets both, in one place, so `getSongPosition` stays song-absolute —
+   * the same pairing `seekTo` already makes for `.late()`, for the same reason.
+   *
+   * Where playback lands:
+   *   · arming while the ears are already INSIDE the new span — stays put, so
+   *     the loop closes around the music that is playing rather than jumping;
+   *   · arming from outside it — starts at the loop's start, the only other
+   *     answer that is predictable;
+   *   · clearing — continues from wherever the ears are, now running straight on.
+   */
+  async setLoopRange(range2) {
+    const engine = this.engine;
+    const setRange = engine.setLoopRange;
+    const setOffset = engine.setTransportOffset;
+    if (typeof setRange !== "function") return { error: null };
+    const next = normalizeLoopRange(range2);
+    const now2 = this.rawSchedulerNow();
+    const before = now2 === null ? null : songPositionAt(now2, engine.getTransportOffset?.() ?? 0, this.currentLoopRange());
+    setRange.call(this.engine, next);
+    if (now2 !== null && typeof setOffset === "function") {
+      const target = next ? before !== null && isInsideLoop(before, next) ? before : next.startCycle : before ?? 0;
+      setOffset.call(this.engine, transportOffsetForSeek(now2, target, next));
+    }
+    if (!this.isPlayingState) return { error: null };
     return this.play();
   }
   /**
@@ -41793,7 +41912,7 @@ var _LiveCodingRuntime = class _LiveCodingRuntime {
     const now2 = this.rawSchedulerNow();
     if (now2 === null) return null;
     const offset = this.engine.getTransportOffset?.() ?? 0;
-    return now2 - (Number.isFinite(offset) ? offset : 0);
+    return songPositionAt(now2, offset, this.currentLoopRange());
   }
   /**
    * Engine-owned HapStream, or `null` when the engine doesn't expose one

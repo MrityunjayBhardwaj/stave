@@ -1055,6 +1055,223 @@ describe('LiveCodingRuntime', () => {
   })
 
   // -------------------------------------------------------------------------
+  // Loop locators (#1570) — a user-set span the transport repeats.
+  //
+  // ⚠ THE TWO OBVIOUS IMPLEMENTATIONS FAIL IN OPPOSITE DIRECTIONS, and each one
+  // passes any arm written in the layer it fails outside of:
+  //   · looping by SEEKING back at the boundary sounds wrong (seekTo ends in
+  //     play() — a hot-swap of the whole document every lap) while satisfying
+  //     every assertion over the clock;
+  //   · looping by RIBBON sounds right while the clock lies, because ribbon
+  //     re-bases the span to cycle 0 and `now - offset` then counts
+  //     loop-relative cycles.
+  // So these arms assert both halves: the position folds into the span AND the
+  // re-eval count stays flat across laps. Neither alone is worth anything.
+  // -------------------------------------------------------------------------
+  describe('loop locators (#1570)', () => {
+    function makeLoopEngine() {
+      const engine = createMockEngine()
+      let nowVal = 0
+      let offset = 0
+      let loop: { startCycle: number; cycles: number } | null = null
+      engine.setComponents({
+        streaming: makeStreamingComponent(),
+        audio: makeAudioComponent(),
+        queryable: {
+          scheduler: {
+            now: () => nowVal,
+            query: () => [],
+          },
+        } as unknown as EngineComponents['queryable'],
+      })
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      ;(engine as any).setTransportOffset = (o: number) => {
+        offset = Number.isFinite(o) ? o : 0
+      }
+      ;(engine as any).getTransportOffset = () => offset
+      // The engine normalises; the mock stores what it is handed, so a test can
+      // see whether the runtime passed a range through or dropped it.
+      ;(engine as any).setLoopRange = (r: { startCycle: number; cycles: number } | null) => {
+        loop = r
+      }
+      ;(engine as any).getLoopRange = () => loop
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      return {
+        engine,
+        setNow: (n: number) => {
+          nowVal = n
+        },
+        getOffset: () => offset,
+        getLoop: () => loop,
+      }
+    }
+
+    it('arming from outside the span starts playback at the loop start', async () => {
+      const { engine, setNow, getLoop } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-1', engine, () => 'code')
+      await runtime.play()
+      setNow(10) // song cycle 10, well past the span
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      expect(getLoop()).toEqual({ startCycle: 3, cycles: 2 })
+      expect(runtime.getSongPosition()).toBe(3)
+      runtime.dispose()
+    })
+
+    it('arming around the music already playing leaves it where it is', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-2', engine, () => 'code')
+      await runtime.play()
+      setNow(3.5) // inside the span we are about to arm
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      // No jump: the loop closes around what is sounding.
+      expect(runtime.getSongPosition()).toBe(3.5)
+      runtime.dispose()
+    })
+
+    // THE assertion the playhead depends on. Under a ribbon the raw clock keeps
+    // counting up; the reported song position must not.
+    it('the song position folds into the span, lap after lap', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-3', engine, () => 'code')
+      await runtime.play()
+      setNow(0)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      expect(runtime.getSongPosition()).toBe(3)
+      setNow(1) // one cycle in
+      expect(runtime.getSongPosition()).toBe(4)
+      setNow(2) // second lap begins
+      expect(runtime.getSongPosition()).toBe(3)
+      setNow(9.5) // many laps later
+      expect(runtime.getSongPosition()).toBe(4.5)
+      // And never outside it, at any clock value.
+      for (let t = 0; t < 40; t += 0.5) {
+        setNow(t)
+        const p = runtime.getSongPosition()!
+        expect(p).toBeGreaterThanOrEqual(3)
+        expect(p).toBeLessThan(5)
+      }
+      runtime.dispose()
+    })
+
+    // CONTROL for the arm above: with no loop armed the same clock walks
+    // straight past the span, so "folds" and "runs on" are told apart rather
+    // than agreeing by accident. ("Plays straight through" and "loops
+    // correctly" are indistinguishable for exactly one lap.)
+    it('without a loop the position walks straight past the same span', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-4', engine, () => 'code')
+      await runtime.play()
+      setNow(9.5)
+      expect(runtime.getSongPosition()).toBe(9.5)
+      runtime.dispose()
+    })
+
+    // The other half of P841: a loop must not cost a re-eval per lap. This is
+    // what rules out the seek-back implementation, and the clock running for
+    // twenty laps with a flat play count is the only thing that proves it.
+    it('costs ONE re-eval to arm, and none per lap', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-5', engine, () => 'code')
+      await runtime.play()
+      const playsBefore = engine.playFn.mock.calls.length
+      setNow(0)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      expect(engine.playFn.mock.calls.length).toBe(playsBefore + 1)
+      for (let t = 0; t < 40; t += 0.5) {
+        setNow(t)
+        runtime.getSongPosition()
+      }
+      expect(engine.playFn.mock.calls.length).toBe(playsBefore + 1)
+      runtime.dispose()
+    })
+
+    it('a seek inside the loop lands on the cycle asked for', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-6', engine, () => 'code')
+      await runtime.play()
+      setNow(10)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      await runtime.seekTo(4.5)
+      expect(runtime.getSongPosition()).toBe(4.5)
+      runtime.dispose()
+    })
+
+    it('a seek OUTSIDE the loop resolves to the loop start, not a fold', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-7', engine, () => 'code')
+      await runtime.play()
+      setNow(10)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      await runtime.seekTo(12)
+      expect(runtime.getSongPosition()).toBe(3)
+      // A fold would have landed on 4 — inside the span, plausible, and not
+      // what anyone asked for. This is the arm that separates the two.
+      expect(runtime.getSongPosition()).not.toBe(4)
+      runtime.dispose()
+    })
+
+    it('clearing the loop continues from where the ears are, then runs on', async () => {
+      const { engine, setNow, getLoop } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-8', engine, () => 'code')
+      await runtime.play()
+      setNow(0)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      setNow(1) // song cycle 4 — mid-span
+      expect(runtime.getSongPosition()).toBe(4)
+
+      await runtime.setLoopRange(null)
+      expect(getLoop()).toBeNull()
+      expect(runtime.getSongPosition()).toBe(4) // continuous across the clear
+      // …and now it walks past the old span end instead of wrapping: the
+      // control that the loop is really gone, not merely reported as gone.
+      setNow(4)
+      expect(runtime.getSongPosition()).toBe(7)
+      runtime.dispose()
+    })
+
+    it('drops an unusable range (a drag that ended where it started)', async () => {
+      const { engine, setNow, getLoop } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-9', engine, () => 'code')
+      await runtime.play()
+      setNow(5)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 0 })
+      expect(getLoop()).toBeNull()
+      expect(runtime.getSongPosition()).toBe(5) // unlooped, unmoved
+      runtime.dispose()
+    })
+
+    it('no-ops on an engine without setLoopRange (non-Strudel)', async () => {
+      const engine = createMockEngine()
+      engine.setComponents({
+        streaming: makeStreamingComponent(),
+        audio: makeAudioComponent(),
+        queryable: makeQueryableComponent(),
+      })
+      const runtime = new LiveCodingRuntime('loop-10', engine, () => 'code')
+      await runtime.play()
+      const playsBefore = engine.playFn.mock.calls.length
+      const res = await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      expect(res.error).toBeNull()
+      expect(engine.playFn.mock.calls.length).toBe(playsBefore) // no re-eval
+      expect(runtime.getSongPosition()).toBe(0)
+      runtime.dispose()
+    })
+
+    it('arming while stopped stores the pair without starting playback', async () => {
+      const { engine, setNow, getLoop } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-11', engine, () => 'code')
+      await runtime.play()
+      runtime.stop()
+      const playsBefore = engine.playFn.mock.calls.length
+      setNow(10)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      expect(getLoop()).toEqual({ startCycle: 3, cycles: 2 })
+      expect(engine.playFn.mock.calls.length).toBe(playsBefore) // no play() while stopped
+      runtime.dispose()
+    })
+  })
+
+  // -------------------------------------------------------------------------
   // evaluateForTimeline (#977) — populate song patterns pre-play WITHOUT
   // starting playback, so the Song timeline draws eval-faithful marks before
   // Play. Must reuse the real evaluate (single oracle), never publish/play,

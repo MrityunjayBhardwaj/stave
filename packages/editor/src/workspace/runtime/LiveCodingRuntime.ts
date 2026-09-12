@@ -103,6 +103,16 @@ import type { HapStream } from '../../engine/HapStream'
 import type { IREvent } from '../../ir/IREvent'
 import type { BreakpointStore } from '../../engine/BreakpointStore'
 import { BufferedScheduler } from '../../engine/BufferedScheduler'
+// #1570 — the transport frame's arithmetic only. The WRAPS it describes are
+// applied engine-side at the `.p` seam; nothing here touches Pattern.prototype
+// (PV2 / P2 source-grep guard).
+import {
+  songPositionAt,
+  transportOffsetForSeek,
+  normalizeLoopRange,
+  isInsideLoop,
+  type LoopRange,
+} from '../../engine/transportFrame'
 import { workspaceAudioBus } from '../WorkspaceAudioBus'
 import type {
   AudioPayload,
@@ -1019,9 +1029,73 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       | ((offset: number) => void)
       | undefined
     if (now === null || typeof setOffset !== 'function') return { error: null }
-    setOffset.call(this.engine, now - targetCycle)
+    // #1570 — the offset is decided against the loop frame in force, not by
+    // bare subtraction: under a ribbon the scheduler's cycle 0 is the loop's
+    // start, so `now - targetCycle` would seek to a cycle nobody asked for.
+    // With no loop armed this is `now - targetCycle`, unchanged.
+    setOffset.call(this.engine, transportOffsetForSeek(now, targetCycle, this.currentLoopRange()))
     // Re-eval through the normal hot-swap so the wrap takes effect. If we're
     // not playing yet, play() also starts the transport at the sought cycle.
+    return this.play()
+  }
+
+  /** #1570 — the loop range the engine currently holds (`null` on non-Strudel engines). */
+  private currentLoopRange(): LoopRange | null {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const get = (this.engine as any).getLoopRange as (() => LoopRange | null) | undefined
+    return typeof get === 'function' ? (get.call(this.engine) ?? null) : null
+  }
+
+  /**
+   * #1570 — arm a loop over `[startCycle, startCycle + cycles)` song cycles, or
+   * clear it with `null`. One re-eval (the existing hot-swap), not one per lap.
+   *
+   * ⚠ THE RANGE AND THE OFFSET ARE ONE DECISION, MADE HERE. `ribbon` re-bases
+   * the looped span to cycle 0, so arming a range alone would leave the playhead
+   * reading loop-relative cycles while the ears hear the middle of the song.
+   * This sets both, in one place, so `getSongPosition` stays song-absolute —
+   * the same pairing `seekTo` already makes for `.late()`, for the same reason.
+   *
+   * Where playback lands:
+   *   · arming while the ears are already INSIDE the new span — stays put, so
+   *     the loop closes around the music that is playing rather than jumping;
+   *   · arming from outside it — starts at the loop's start, the only other
+   *     answer that is predictable;
+   *   · clearing — continues from wherever the ears are, now running straight on.
+   */
+  async setLoopRange(
+    range: { startCycle: number; cycles: number } | null,
+  ): Promise<{ error: Error | null }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const engine = this.engine as any
+    const setRange = engine.setLoopRange as ((r: LoopRange | null) => void) | undefined
+    const setOffset = engine.setTransportOffset as ((offset: number) => void) | undefined
+    // Non-Strudel engines have neither — no-op, like `seekTo`.
+    if (typeof setRange !== 'function') return { error: null }
+
+    const next = normalizeLoopRange(range)
+    const now = this.rawSchedulerNow()
+    // Where the ears are under the frame still in force. Read BEFORE the range
+    // changes — afterwards the old frame is gone and this number is unrecoverable.
+    const before =
+      now === null
+        ? null
+        : songPositionAt(now, engine.getTransportOffset?.() ?? 0, this.currentLoopRange())
+
+    setRange.call(this.engine, next)
+
+    if (now !== null && typeof setOffset === 'function') {
+      const target = next
+        ? before !== null && isInsideLoop(before, next)
+          ? before
+          : next.startCycle
+        : (before ?? 0)
+      setOffset.call(this.engine, transportOffsetForSeek(now, target, next))
+    }
+
+    // Stopped: the pair is stored and takes effect at the next play(), exactly
+    // as a seek does. Playing: re-eval through the normal hot-swap.
+    if (!this.isPlayingState) return { error: null }
     return this.play()
   }
 
@@ -1037,7 +1111,12 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     if (now === null) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const offset = (this.engine as any).getTransportOffset?.() ?? 0
-    return now - (Number.isFinite(offset) ? offset : 0)
+    // #1570 — read back through the transport frame, not by bare subtraction.
+    // With a loop armed the engine's pattern is ribboned, so `now - offset`
+    // counts LOOP-relative cycles: the playhead would sit at the top of the song
+    // while the ears hear the middle of it. `songPositionAt` folds it back into
+    // the span the audio is actually sounding. With no loop this is unchanged.
+    return songPositionAt(now, offset, this.currentLoopRange())
   }
 
   /**
