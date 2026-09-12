@@ -546,6 +546,16 @@ describe('listSectionParts — what a section may be pointed at (#1560)', () => 
     ])
   })
 
+  it('drops a part declared AFTER the call — it is in its dead zone there', () => {
+    // ⚠ Also the mutual-recursion case the enclosing-declarator guard misses:
+    // two arrangements pointed at each other, where the second is always the
+    // later declaration.
+    const doc = 'let bass = s("bd")\nlet song = arrange([2, bass])\nlet later = s("hh")'
+    const parts = listArrangeSectionParts(doc, detectArrangeAt(doc, doc.indexOf('arrange'))!)
+    expect(parts).toEqual(['bass'])
+    expect(parts).not.toContain('later')
+  })
+
   it('offers nothing when the document does not parse', () => {
     const good = 'let bass = s("bd")\narrange([2, bass])'
     const call = detectArrangeAt(good, good.indexOf('arrange'))!

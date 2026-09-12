@@ -24,6 +24,15 @@
  * downstream can catch it — the serializer sees a valid identifier and the
  * document is syntactically correct — so it has to be absent from the list.
  *
+ * ## And a part must already exist where the call is
+ *
+ * ⚠ A BINDING DECLARED AFTER THE CALL IS NOT REFERENCEABLE FROM IT. `let`/`const`
+ * are in their temporal dead zone until their declaration runs, so an arm naming
+ * one throws at evaluation rather than playing it; a `var` is `undefined` there,
+ * which is quieter and no better. This also closes the mutual case the enclosing
+ * guard alone misses — two arrangements, each pointed at the other — because the
+ * second one is always declared after the first.
+ *
  * ## What is not a part
  *
  * A top-level binding is offered unless it cannot be arranged:
@@ -82,6 +91,8 @@ export function listSectionParts(doc: string, call: ArrangeCall): string[] {
       // into, so referencing its name from inside the call defines it in terms
       // of itself.
       if (decl.start <= callStart && decl.end >= callEnd) continue
+      // Declared after the call: in its dead zone where the arm would run.
+      if (decl.start > callStart) continue
       if (!names.includes(decl.id.name)) names.push(decl.id.name)
     }
   }
