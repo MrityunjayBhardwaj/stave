@@ -65,7 +65,7 @@ const auto = (over: Partial<SignalAutomation> = {}): SignalAutomation => ({
 const lane = (automations: readonly SignalAutomation[]): SceneLane => ({
   laneKey: 'd1', displayName: 'd1', color: '#7af', density: [1, 1, 1, 1],
   notes: [], pitchMin: null, pitchMax: null, voices: [], clips: [],
-  sourceOffset: null, arrangeOffset: null, labelOffset: null, automations,
+  sourceOffset: null, arrangeOffset: null, labelOffset: null, automations, stepped: [],
 })
 
 const sceneWith = (automations: readonly SignalAutomation[]): TimelineScene => ({

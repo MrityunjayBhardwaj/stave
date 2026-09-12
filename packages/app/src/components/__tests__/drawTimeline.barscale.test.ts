@@ -45,7 +45,7 @@ function scene(): TimelineScene {
       notes: [{ cycle: 0.1, end: 0.2, pitch: null, gain: 1 }],
       pitchMin: null, pitchMax: null, voices: [],
       clips: [{ armIndex: -1, startCycle: 0, endCycle: 1, label: null, nameRange: null, sectionName: '' }],
-      sourceOffset: null, arrangeOffset: null, labelOffset: null, automations: [],
+      sourceOffset: null, arrangeOffset: null, labelOffset: null, automations: [], stepped: [],
     }],
     sections: [], displayCycles: 1, windowOriginCycles: 0, period: null, peakDensity: 1,
     notesCapped: false,

@@ -21,7 +21,8 @@
  * (`SongTimelineCanvas`) owns the surface, sizing, and dirty-flagged scheduling.
  */
 
-import type { TimelineScene, SceneLane, SceneNote, SceneClip } from './timelineScene'
+import type { TimelineScene, SceneLane, SceneNote, SceneClip, SceneStepped } from './timelineScene'
+import { stepSegments, stepY, type StepBand } from './steppedLane'
 import { NO_VOICE } from './timelineScene'
 import type { LaneLayout, LaneBox } from './laneLayout'
 import type { DisplayMeter } from '../../lib/meter'
@@ -353,8 +354,15 @@ export function drawTimeline(
     // Continuous automation (#1464 Stage 1) — over the marks, under the silence
     // wash, so a muted track's curve dims with the rest of its lane.
     drawAutomation(
-      ctx, lane.automations, top, rowHeight, viewportWidth, theme,
+      ctx, lane.automations, lane.stepped.length, top, rowHeight, viewportWidth, theme,
       firstCycle, lastCycle, toScreenX, expanded,
+    )
+    // Stepped automation (#1463 Stage 2) — the same band, the same floor and the
+    // same colour rule as the curves, so a lane carrying both classes reads as one
+    // vocabulary rather than two overlays.
+    drawSteppedAutomation(
+      ctx, lane.stepped, lane.automations.length, top, rowHeight, theme,
+      firstCycle, lastCycle, toScreenX,
     )
     // Silenced (muted / soloed-out) lane fade (#731): wash the whole band toward
     // the background so it reads ~55% dimmer — the Mixer's dimmed-strip look —
@@ -680,9 +688,67 @@ function signalUnit(kind: string, phase: number): number {
  * along the floor. Each curve answers "how does THIS control move", which is the
  * question the lane exists to answer at this stage.
  */
+/**
+ * The STEPPED automation staircase (#1463 Stage 2) — one flat run per step, joined
+ * by risers, over the same band the continuous curves use.
+ *
+ * ⚠ The geometry is `steppedLane`'s, not this function's: `stepSegments` decides
+ * what a segment is (one STEP, not one value) and `stepY` where it sits. Stage 3's
+ * hit-test reads the same two, which is the only way a press can land on the step
+ * that was drawn under it.
+ *
+ * Never dashed. A dashed line on this lane means "indicative, not a literal
+ * trace" (#1486); a stepped value is the literal value the document writes.
+ */
+function drawSteppedAutomation(
+  ctx: CanvasRenderingContext2D,
+  stepped: readonly SceneStepped[],
+  curveCount: number,
+  top: number,
+  rowHeight: number,
+  theme: DrawTheme,
+  firstCycle: number,
+  lastCycle: number,
+  toScreenX: (cycle: number) => number,
+): void {
+  if (stepped.length === 0) return
+  // The floor the curves abstain at — one constant, so a lane never draws a
+  // staircase whose levels cannot be told apart.
+  if (rowHeight - AUTOMATION_PAD_Y * 2 < AUTOMATION_MIN_BAND_H) return
+  const band: StepBand = { top, rowHeight, padY: AUTOMATION_PAD_Y, minBandH: AUTOMATION_MIN_BAND_H }
+  const total = curveCount + stepped.length
+
+  ctx.save()
+  ctx.lineWidth = 1.5
+  ctx.lineJoin = 'miter'
+  ctx.setLineDash([])
+  for (const { automation, axis } of stepped) {
+    const segments = stepSegments(automation, firstCycle, lastCycle)
+    if (segments.length === 0) continue
+    ctx.strokeStyle = automationColorOnLane(automation.paramKey, total, theme.automationLine)
+    ctx.beginPath()
+    segments.forEach((s, i) => {
+      const y = stepY(s.value, axis, band)
+      const x0 = toScreenX(s.startCycle)
+      const x1 = toScreenX(s.endCycle)
+      // Every segment after the first starts where the previous one ended, so
+      // this `lineTo(x0, y)` IS the riser from the previous level.
+      if (i === 0) ctx.moveTo(x0, y)
+      else ctx.lineTo(x0, y)
+      ctx.lineTo(x1, y)
+    })
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
 function drawAutomation(
   ctx: CanvasRenderingContext2D,
   automations: readonly SignalAutomation[],
+  /** How many STEPPED automations share this lane (#1463). Counted into the
+   *  colour rule, or a lane with one curve and one staircase would draw both in
+   *  the theme colour, with nothing tying either line to its parameter. */
+  steppedCount: number,
   top: number,
   rowHeight: number,
   viewportWidth: number,
@@ -729,7 +795,7 @@ function drawAutomation(
    * "which parameter is this".
    */
   const colorOf = (a: SignalAutomation): string =>
-    automationColorOnLane(a.paramKey, automations.length, theme.automationLine)
+    automationColorOnLane(a.paramKey, automations.length + steppedCount, theme.automationLine)
 
   // ── The unresolvable ones, as horizontal SLICES of the band ───────────────
   // State the modulation as a translucent band instead of smearing 128 strokes

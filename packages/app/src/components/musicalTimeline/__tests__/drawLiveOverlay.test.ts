@@ -94,6 +94,7 @@ function sceneFixture(): TimelineScene {
         arrangeOffset: null,
         labelOffset: null,
         automations: [],
+        stepped: [],
       },
     ],
     sections: [],

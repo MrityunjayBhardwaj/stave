@@ -24,7 +24,8 @@ import { containingAnchor } from './laneIdentity'
 import { resolveLaneName } from './trackLabel'
 import { resolveSectionName } from './sectionLabel'
 import type { DeclaredTrack } from './trackOrder'
-import type { SignalAutomation } from '@stave/editor'
+import type { SignalAutomation, SteppedAutomation } from '@stave/editor'
+import type { StepAxis } from './steppedLane'
 
 /** Grouping key for marks with no sample name (`s == null`) — synth notes that
  *  carry only a `note`. Shared by the scene builder and the renderer so a
@@ -35,6 +36,16 @@ export const NO_VOICE = '\0'
 /** One shared empty list, so the common case (a lane with no automation)
  *  allocates nothing per lane per rebuild. */
 const EMPTY_AUTOMATIONS: readonly SignalAutomation[] = []
+const EMPTY_STEPPED: readonly SceneStepped[] = []
+
+/** One stepped automation on a lane (#1463 Stage 2), with the value axis it is
+ *  drawn against. The axis travels WITH the automation because it is resolved by
+ *  the caller that can reach the mixer's knob ranges at runtime — this module and
+ *  the renderer import only types from `@stave/editor`. */
+export interface SceneStepped {
+  readonly automation: SteppedAutomation
+  readonly axis: StepAxis
+}
 
 /** A single read-only mini-note mark within a lane. */
 export interface SceneNote {
@@ -198,10 +209,18 @@ export interface SceneLane {
   readonly arrangeOffset: number | null
   /** Continuous automation this track declares (#1464 Stage 1) — one entry per
    *  automated parameter, or empty, which is the ordinary case (97 of 329 real
-   *  documents carry any). READ-ONLY: the lane draws these and nothing writes
-   *  them back, which is what keeps #1482's byte-verbatim round-trip safe by
-   *  construction rather than by test. */
+   *  documents carry any). Drawn here; since #1464 Stage 2 a caption edits its
+   *  bounds, through source spans the reader supplies — the scene itself still
+   *  writes nothing. */
   readonly automations: readonly SignalAutomation[]
+  /** Stepped automation this track declares (#1463 Stage 2) — `.gain("<0.2 0.8>")`
+   *  and its kin, each with its axis. Drawn in the SAME band as `automations`, and
+   *  counted with them for colour, so a lane carrying both reads as one vocabulary.
+   *
+   *  ⚠ REQUIRED, NOT OPTIONAL. An optional field is empty on every lane nobody
+   *  remembered to fill, and a missing staircase fails at nothing — the type
+   *  checker is what enumerates every place a lane is built. */
+  readonly stepped: readonly SceneStepped[]
 }
 
 /** The full scene the canvas renderer draws. */
@@ -367,6 +386,10 @@ export function buildTimelineScene(
    *  automation gets, so the two are indistinguishable to the renderer and there
    *  is no third state to handle. */
   automationsByTrack?: ReadonlyMap<string, readonly SignalAutomation[]>,
+  /** Stepped automation per track id (#1463 Stage 2), each already paired with
+   *  its axis by the caller — passed in for the same reason `automationsByTrack`
+   *  is. Absent → every lane gets an empty list and draws no staircase. */
+  steppedByTrack?: ReadonlyMap<string, readonly SceneStepped[]>,
 ): TimelineScene {
   // The span comes from the window, always — there is no longer a fallback that
   // infers it from the analysis. The caller owns the authoritative span because
@@ -568,6 +591,7 @@ export function buildTimelineScene(
       sourceOffset: marks.sourceByLane.get(laneKey) ?? null,
       arrangeOffset: marks.arrangeByLane.get(laneKey) ?? null,
       automations: automationsByTrack?.get(laneKey) ?? EMPTY_AUTOMATIONS,
+      stepped: steppedByTrack?.get(laneKey) ?? EMPTY_STEPPED,
       labelOffset: marks.labelOffsetByLane.get(laneKey) ?? null,
     }
   }

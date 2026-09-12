@@ -40,6 +40,7 @@ function laneWith(notes: SceneNote[], laneKey = 'vox'): SceneLane {
     arrangeOffset: 6,
     labelOffset: null,
     automations: [],
+    stepped: [],
   } as unknown as SceneLane
 }
 
