@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { drawTimeline, laneRenderMode, COARSEN_PX, MIN_MARK_W, type DrawTransform, type DrawTheme } from '../drawTimeline'
+import { DEFAULT_METER } from '../../../lib/meter'
 import { computeLaneLayout } from '../laneLayout'
 import type { TimelineScene, SceneNote } from '../timelineScene'
 
@@ -111,7 +112,7 @@ describe('drawTimeline', () => {
 
   it('draws mini-note marks when zoomed in (a mark lands at the fractional cycle 2.5)', () => {
     // contentWidth 4000 over 4 cycles = 1000px/cycle ≫ COARSEN_PX → marks mode.
-    const transform: DrawTransform = { scrollLeft: 0, contentWidth: 4000, viewportWidth: vw }
+    const transform: DrawTransform = { scrollLeft: 0, contentWidth: 4000, viewportWidth: vw, meter: DEFAULT_METER }
     const { ctx, rects } = mockCtx()
     drawTimeline(ctx, scene, transform, theme, flat)
     // cycle 2.5 → contentX = (2.5/4)*4000 = 2500; with scrollLeft 0 it's off-screen
@@ -130,7 +131,7 @@ describe('drawTimeline', () => {
 
   it('draws coarse density when zoomed out (no fractional-cycle rect)', () => {
     // contentWidth 40 over 4 cycles = 10px/cycle < COARSEN_PX → density mode.
-    const transform: DrawTransform = { scrollLeft: 0, contentWidth: 40, viewportWidth: vw }
+    const transform: DrawTransform = { scrollLeft: 0, contentWidth: 40, viewportWidth: vw, meter: DEFAULT_METER }
     const { ctx, rects } = mockCtx()
     drawTimeline(ctx, scene, transform, theme, flat)
     const screenXof = (cycle: number) => (cycle / 4) * 40
@@ -142,7 +143,7 @@ describe('drawTimeline', () => {
 
   it('no-ops cleanly on a degenerate transform', () => {
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, scene, { scrollLeft: 0, contentWidth: 0, viewportWidth: 0 }, theme, flat)
+    drawTimeline(ctx, scene, { scrollLeft: 0, contentWidth: 0, viewportWidth: 0, meter: DEFAULT_METER }, theme, flat)
     expect(rects.length).toBe(0)
   })
 
@@ -156,7 +157,7 @@ describe('drawTimeline', () => {
     expect(layout.boxes[1].top).toBe(88)
     const { ctx, rects } = mockCtx()
     // Zoomed out so each lane draws density (integer cells) at its own top.
-    drawTimeline(ctx, two, { scrollLeft: 0, contentWidth: 40, viewportWidth: vw }, theme, layout)
+    drawTimeline(ctx, two, { scrollLeft: 0, contentWidth: 40, viewportWidth: vw, meter: DEFAULT_METER }, theme, layout)
     // bass density cells sit in its band [88, 110) — i.e. at least one rect with y >= 88.
     expect(rects.some((r) => r.y >= 88 && r.y < 110)).toBe(true)
   })
@@ -165,7 +166,7 @@ describe('drawTimeline', () => {
     // 1000px/cycle → 250px/beat ≫ BEAT_GRID_MIN_PX → beat grid shows.
     const layout = computeLaneLayout(scene.lanes, new Set(['lead']), 22, 88)
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, scene, { scrollLeft: 0, contentWidth: 4000, viewportWidth: vw }, theme, layout)
+    drawTimeline(ctx, scene, { scrollLeft: 0, contentWidth: 4000, viewportWidth: vw, meter: DEFAULT_METER }, theme, layout)
     // A beat gridline is a 1px-wide column the full height of the 88px band.
     const beatGrid = rects.filter((r) => r.w === 1 && r.h === 88 && r.y === 0)
     expect(beatGrid.length).toBeGreaterThan(0)
@@ -186,7 +187,7 @@ describe('drawTimeline', () => {
     }
     // 4000px / 4 cycles = 1000 px/cycle ≫ COARSEN_PX → marks mode.
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, durScene, { scrollLeft: 0, contentWidth: 4000, viewportWidth: 4000 }, theme, flat)
+    drawTimeline(ctx, durScene, { scrollLeft: 0, contentWidth: 4000, viewportWidth: 4000, meter: DEFAULT_METER }, theme, flat)
     const marks = rects.filter((r) => r.h === 4) // mark height (collapsed, rowHeight 22 → 4; #459)
     const short = marks.find((r) => Math.abs(r.x - 0) < 1)!
     const long = marks.find((r) => Math.abs(r.x - 1000) < 1)! // cycle 1 → x=1000
@@ -229,7 +230,7 @@ describe('drawTimeline', () => {
     const layout = computeLaneLayout(drumScene.lanes, new Set(['drums']), 22, 88, 22)
     expect(layout.boxes[0].subRows?.length).toBe(2)
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, drumScene, { scrollLeft: 0, contentWidth: 4000, viewportWidth: 4000 }, theme, layout)
+    drawTimeline(ctx, drumScene, { scrollLeft: 0, contentWidth: 4000, viewportWidth: 4000, meter: DEFAULT_METER }, theme, layout)
     // Marks are the short rects at x≈0 (cycle 0). #459 — the sub-row mark scales
     // with the sub-row height: barHeightForBand(22 − 2·2) = max(3, 18 − 12) = 6.
     // The two voices must land on DIFFERENT baselines — bd sub-row 0, sd sub-row 1.
@@ -261,7 +262,7 @@ describe('drawClips (#386)', () => {
       ],
     }
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, clipScene, { scrollLeft: 0, contentWidth: 400, viewportWidth: vw }, theme, flat)
+    drawTimeline(ctx, clipScene, { scrollLeft: 0, contentWidth: 400, viewportWidth: vw, meter: DEFAULT_METER }, theme, flat)
     // Clip fills span their cycle range: arm0 [0,200), arm1 [200,400).
     const fill0 = rects.find((r) => r.x === 0 && r.w === 200 && r.h === 22)
     const fill1 = rects.find((r) => r.x === 200 && r.w === 200 && r.h === 22)
@@ -278,7 +279,7 @@ describe('drawClips (#386)', () => {
       lanes: [{ ...scene.lanes[0], notes: [], clips: [{ armIndex: -1, startCycle: 0, endCycle: 4, label: null, nameRange: null, sectionName: '' }] }],
     }
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, oneClip, { scrollLeft: 0, contentWidth: 400, viewportWidth: vw }, theme, flat)
+    drawTimeline(ctx, oneClip, { scrollLeft: 0, contentWidth: 400, viewportWidth: vw, meter: DEFAULT_METER }, theme, flat)
     expect(rects.some((r) => r.x === 0 && r.w === 400 && r.h === 22)).toBe(true)
   })
 })
@@ -308,7 +309,7 @@ describe('drawClips — empty clip outline (#1100)', () => {
   const emptyScene: TimelineScene = { ...scene, lanes: [emptyLane] }
   const draw = (s: TimelineScene, silenced?: ReadonlySet<string>) => {
     const { ctx, rects } = mockCtx()
-    drawTimeline(ctx, s, { scrollLeft: 0, contentWidth: 400, viewportWidth: vw }, theme, flat, silenced)
+    drawTimeline(ctx, s, { scrollLeft: 0, contentWidth: 400, viewportWidth: vw, meter: DEFAULT_METER }, theme, flat, silenced)
     return rects
   }
   /** 1px-tall rects in the lane's own colour = the outline's horizontal edges. */
@@ -465,7 +466,7 @@ describe('clip captions — the section name on the canvas', () => {
 
   it('draws the section name inside its clip', () => {
     const { ctx, texts } = mockCtx()
-    drawTimeline(ctx, clipScene('verse'), { scrollLeft: 0, contentWidth: 400, viewportWidth: 400 }, theme, flat)
+    drawTimeline(ctx, clipScene('verse'), { scrollLeft: 0, contentWidth: 400, viewportWidth: 400, meter: DEFAULT_METER }, theme, flat)
     const caption = texts.find((t) => t.text === 'verse')
     expect(caption, `no caption drawn — got ${JSON.stringify(texts)}`).toBeDefined()
     // Inside the clip's own horizontal span, not at the canvas origin.
@@ -476,7 +477,7 @@ describe('clip captions — the section name on the canvas', () => {
 
   it('draws the positional name for an unnamed section', () => {
     const { ctx, texts } = mockCtx()
-    drawTimeline(ctx, clipScene('§2'), { scrollLeft: 0, contentWidth: 400, viewportWidth: 400 }, theme, flat)
+    drawTimeline(ctx, clipScene('§2'), { scrollLeft: 0, contentWidth: 400, viewportWidth: 400, meter: DEFAULT_METER }, theme, flat)
     expect(texts.map((t) => t.text)).toContain('§2')
   })
 
@@ -484,7 +485,7 @@ describe('clip captions — the section name on the canvas', () => {
     // The implicit whole-song clip of a non-arranged lane carries `''`, and a
     // caption there would invent a section the document does not have.
     const { ctx, texts } = mockCtx()
-    drawTimeline(ctx, clipScene(''), { scrollLeft: 0, contentWidth: 400, viewportWidth: 400 }, theme, flat)
+    drawTimeline(ctx, clipScene(''), { scrollLeft: 0, contentWidth: 400, viewportWidth: 400, meter: DEFAULT_METER }, theme, flat)
     expect(texts).toEqual([])
   })
 
@@ -497,7 +498,7 @@ describe('clip captions — the section name on the canvas', () => {
     drawTimeline(
       ctx,
       clipScene('averylongsectionname', 0, 1),
-      { scrollLeft: 0, contentWidth: 240, viewportWidth: 240 },
+      { scrollLeft: 0, contentWidth: 240, viewportWidth: 240, meter: DEFAULT_METER },
       theme,
       flat,
     )
@@ -515,7 +516,7 @@ describe('clip captions — the section name on the canvas', () => {
     drawTimeline(
       ctx,
       clipScene('verse', 0, 4),
-      { scrollLeft: 0, contentWidth: 12, viewportWidth: 12 },
+      { scrollLeft: 0, contentWidth: 12, viewportWidth: 12, meter: DEFAULT_METER },
       theme,
       flat,
     )

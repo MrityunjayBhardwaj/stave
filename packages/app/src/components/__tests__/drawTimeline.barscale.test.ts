@@ -6,6 +6,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { drawTimeline, type DrawTheme, type DrawTransform } from '../musicalTimeline/drawTimeline'
+import { DEFAULT_METER } from '../../lib/meter'
 import type { TimelineScene } from '../musicalTimeline/timelineScene'
 import type { LaneLayout } from '../musicalTimeline/laneLayout'
 
@@ -34,7 +35,7 @@ const THEME: DrawTheme = {
   gridline: '#333', clipFill: '#444', clipCaption: '#fff', clipBorder: '#555',
   automationLine: '#automationLine',
 }
-const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 100, viewportWidth: 100 }
+const TRANSFORM: DrawTransform = { scrollLeft: 0, contentWidth: 100, viewportWidth: 100, meter: DEFAULT_METER }
 
 // One percussive note at cycle 0.1 spanning 0.1 cycle → 10px wide at pxPerCycle 100.
 function scene(): TimelineScene {

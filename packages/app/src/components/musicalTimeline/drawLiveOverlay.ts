@@ -20,7 +20,7 @@ import {
   laneMarkBands,
   markRect,
   laneRenderMode,
-  type DrawTransform,
+  type ViewTransform,
   type WaveformSource,
 } from './drawTimeline'
 import { waveformFit } from './waveformLane'
@@ -120,7 +120,7 @@ export function pickLitNotes(
 export function drawLiveOverlay(
   ctx: CanvasRenderingContext2D,
   scene: TimelineScene,
-  transform: DrawTransform,
+  transform: ViewTransform,
   layout: LaneLayout,
   playheadCycle: number | null,
   activeSigs: ReadonlySet<string>,

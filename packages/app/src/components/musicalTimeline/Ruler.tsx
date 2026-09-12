@@ -27,7 +27,7 @@
 
 import * as React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { BEATS_PER_BAR } from '../../lib/meter'
+import { useDisplayMeter } from '../../state/displayMeter'
 
 import {
   WINDOW_CYCLES,
@@ -45,6 +45,9 @@ const MINOR_TICK_HIDE_THRESHOLD = 200
 
 export function Ruler(props: RulerProps): React.ReactElement {
   const { currentCycle, gridContentWidth } = props
+  // The app-wide time signature (#1568) — the same one the song ruler and the
+  // transport readout count in, so the live window cannot drift from them.
+  const meter = useDisplayMeter()
   const rulerAreaRef = useRef<HTMLDivElement>(null)
   const [rulerAreaWidth, setRulerAreaWidth] = useState(0)
 
@@ -72,14 +75,14 @@ export function Ruler(props: RulerProps): React.ReactElement {
       label: String(i),
     }))
 
-  // Minor ticks at 1/4 cycle intervals, EXCLUDING positions that
+  // Minor ticks at the meter's beat divisions, EXCLUDING positions that
   // coincide with major ticks.
   const minorTicks: ReadonlyArray<{ key: string; x: number }> =
     rulerAreaWidth >= MINOR_TICK_HIDE_THRESHOLD
       ? Array.from({ length: WINDOW_CYCLES }).flatMap((_, cycleIdx) =>
-          Array.from({ length: BEATS_PER_BAR - 1 }).map((__, beatIdxMinusOne) => {
-            const beatIdx = beatIdxMinusOne + 1 // 1..BEATS_PER_BAR-1
-            const cycle = cycleIdx + beatIdx / BEATS_PER_BAR
+          Array.from({ length: meter.beatsPerBar - 1 }).map((__, beatIdxMinusOne) => {
+            const beatIdx = beatIdxMinusOne + 1 // 1..beatsPerBar-1
+            const cycle = cycleIdx + beatIdx / meter.beatsPerBar
             return {
               key: `${cycleIdx}-${beatIdx}`,
               x: (cycle / WINDOW_CYCLES) * rulerAreaWidth,

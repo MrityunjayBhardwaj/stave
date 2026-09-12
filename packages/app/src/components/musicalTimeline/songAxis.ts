@@ -9,7 +9,7 @@
  * playhead becomes drivable, a deliberate, logged veto revision).
  */
 
-import { BEATS_PER_BAR, barNumber } from '../../lib/meter'
+import { barNumber, type DisplayMeter } from '../../lib/meter'
 
 /**
  * The stretch of song the view is currently showing (#1108).
@@ -358,12 +358,13 @@ export interface RulerTick {
  *
  * CYCLES mode → 0-indexed labels (matches Strudel cycle numbering and the cell
  *   tooltips); no beats. BARS mode → 1-indexed labels (DAW convention: bar 1 is
- *   the first bar) with beat ticks at multiples of 1/BEATS_PER_BAR.
+ *   the first bar) with beat ticks at multiples of 1/`meter.beatsPerBar`.
  */
 export function rulerTicks(
   win: SongWindow,
   pxPerCycle: number,
   mode: 'cycles' | 'bars',
+  meter: DisplayMeter,
 ): RulerTick[] {
   const { originCycle, spanCycles } = win
   if (spanCycles <= 0 || !Number.isFinite(pxPerCycle) || pxPerCycle <= 0) return []
@@ -380,8 +381,8 @@ export function rulerTicks(
   const showBeats =
     mode === 'bars' &&
     step === 1 &&
-    pxPerCycle / BEATS_PER_BAR >= BEAT_MIN_PX &&
-    majorCount * BEATS_PER_BAR <= MAX_TICKS
+    pxPerCycle / meter.beatsPerBar >= BEAT_MIN_PX &&
+    majorCount * meter.beatsPerBar <= MAX_TICKS
   const ticks: RulerTick[] = []
   // Majors land on ABSOLUTE multiples of `step`, not on offsets from the window
   // start (#1108). Anchoring to the window would relabel the same musical
@@ -394,8 +395,8 @@ export function rulerTicks(
   for (let c = first; c < end; c += step) {
     ticks.push({ cycle: c, label: mode === 'bars' ? String(barNumber(c)) : String(c), major: true })
     if (showBeats) {
-      for (let b = 1; b < BEATS_PER_BAR; b++) {
-        ticks.push({ cycle: c + b / BEATS_PER_BAR, label: null, major: false })
+      for (let b = 1; b < meter.beatsPerBar; b++) {
+        ticks.push({ cycle: c + b / meter.beatsPerBar, label: null, major: false })
       }
     }
   }

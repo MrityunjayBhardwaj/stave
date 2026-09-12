@@ -7,6 +7,7 @@ import {
   type DrawTransform,
   type WaveformSource,
 } from '../drawTimeline'
+import { DEFAULT_METER } from '../../../lib/meter'
 import { computeLaneLayout } from '../laneLayout'
 import { MIN_WAVEFORM_H } from '../waveformLane'
 import type { SceneNote, TimelineScene } from '../timelineScene'
@@ -89,7 +90,7 @@ const oneTake: SceneNote[] = [{ cycle: 0, end: 0.25, pitch: null, gain: 1, voice
 /** A tall row, so the height gate is open and the width gate is what is tested. */
 const tall = computeLaneLayout(sceneWith(oneTake).lanes, new Set(), 60, 88)
 /** 1000px per cycle → a quarter-cycle mark is 250px wide. */
-const transform: DrawTransform = { scrollLeft: 0, contentWidth: 4000, viewportWidth: 400 }
+const transform: DrawTransform = { scrollLeft: 0, contentWidth: 4000, viewportWidth: 400, meter: DEFAULT_METER }
 
 /** An envelope that is full-scale everywhere, so every column is unmistakable. */
 function fullScalePeaks(duration: number, columns = 16) {

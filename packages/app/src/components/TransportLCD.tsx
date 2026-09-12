@@ -3,7 +3,8 @@
 import React, { useEffect, useRef } from "react";
 import { perf } from "@stave/editor";
 import { useRulerUnits, toggleRulerUnits } from "../state/rulerUnits";
-import { barBeatTick, cpsToBpm } from "../lib/meter";
+import { useDisplayMeter } from "../state/displayMeter";
+import { barBeatTick, cpsToBpm, type DisplayMeter } from "../lib/meter";
 import { healthClass, healthBars } from "./transportLcdHealth";
 
 /**
@@ -98,24 +99,30 @@ function fmtCycle(c: number): string {
   return `${a.padStart(3, "0")}.${b}`;
 }
 
-/** `011.3.1` — bar·beat·tick, read in the app's one display meter (#1565). */
-function fmtBar(c: number): string {
-  const { bar, beat, tick } = barBeatTick(c);
+/** `011.3.1` — bar·beat·tick, counted in the app's display meter (#1565/#1568). */
+function fmtBar(c: number, meter: DisplayMeter): string {
+  const { bar, beat, tick } = barBeatTick(c, meter);
   return `${String(bar).padStart(3, "0")}.${beat}.${tick}`;
 }
 
 export function TransportLCD({ isPlaying, getCycle, getCps }: TransportLCDProps): React.ReactElement {
   const units = useRulerUnits();
   const cycleMode = units === "cycles";
+  const meter = useDisplayMeter();
 
   // Keep the fast-path accessors and the current mode in refs so the rAF loop
   // (mounted once) always reads the latest without restarting per render.
   const getCycleRef = useRef(getCycle);
   const getCpsRef = useRef(getCps);
   const cycleModeRef = useRef(cycleMode);
+  // The meter rides a ref for the same reason the mode does: the rAF loop is
+  // mounted once and must read the CURRENT value, not the one captured when it
+  // started, or the readout keeps counting in whatever meter was set at mount.
+  const meterRef = useRef(meter);
   getCycleRef.current = getCycle;
   getCpsRef.current = getCps;
   cycleModeRef.current = cycleMode;
+  meterRef.current = meter;
 
   const posRef = useRef<HTMLSpanElement>(null);
   const tempoRef = useRef<HTMLSpanElement>(null);
@@ -168,7 +175,7 @@ export function TransportLCD({ isPlaying, getCycle, getCps }: TransportLCDProps)
 
         if (posRef.current) {
           posRef.current.textContent =
-            cyc === null ? `${DASH} ${DASH}` : inCycle ? fmtCycle(cyc) : fmtBar(cyc);
+            cyc === null ? `${DASH} ${DASH}` : inCycle ? fmtCycle(cyc) : fmtBar(cyc, meterRef.current);
         }
         if (tempoRef.current) {
           tempoRef.current.textContent =
@@ -178,7 +185,7 @@ export function TransportLCD({ isPlaying, getCycle, getCps }: TransportLCDProps)
                 ? cps.toFixed(2)
                 // `cpsToBpm` is null only for a non-finite tempo, which the
                 // dash already describes better than `NaN` did.
-                : (cpsToBpm(cps)?.toString() ?? `${DASH}${DASH}`);
+                : (cpsToBpm(cps, meterRef.current)?.toString() ?? `${DASH}${DASH}`);
         }
       }
 
