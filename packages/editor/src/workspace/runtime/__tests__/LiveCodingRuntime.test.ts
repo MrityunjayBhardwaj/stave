@@ -1185,6 +1185,38 @@ describe('LiveCodingRuntime', () => {
       runtime.dispose()
     })
 
+    // The app pushes the current locators at mount and on every active-file
+    // swap, so "arm what is already armed" is the common case, not a rare one.
+    // Without the guard each of those pushes would re-evaluate — an audible
+    // hot-swap — for changing nothing.
+    it('re-arming the SAME range costs no re-eval', async () => {
+      const { engine, setNow } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-idem', engine, () => 'code')
+      await runtime.play()
+      setNow(0)
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      const playsAfterArm = engine.playFn.mock.calls.length
+
+      await runtime.setLoopRange({ startCycle: 3, cycles: 2 })
+      expect(engine.playFn.mock.calls.length).toBe(playsAfterArm)
+
+      // …and a DIFFERENT range still does, which is the arm that stops the
+      // guard from swallowing real changes.
+      await runtime.setLoopRange({ startCycle: 5, cycles: 2 })
+      expect(engine.playFn.mock.calls.length).toBe(playsAfterArm + 1)
+      runtime.dispose()
+    })
+
+    it('pushing "no loop" to a document that has none costs no re-eval', async () => {
+      const { engine } = makeLoopEngine()
+      const runtime = new LiveCodingRuntime('loop-idem-2', engine, () => 'code')
+      await runtime.play()
+      const playsBefore = engine.playFn.mock.calls.length
+      await runtime.setLoopRange(null)
+      expect(engine.playFn.mock.calls.length).toBe(playsBefore)
+      runtime.dispose()
+    })
+
     it('a seek inside the loop lands on the cycle asked for', async () => {
       const { engine, setNow } = makeLoopEngine()
       const runtime = new LiveCodingRuntime('loop-6', engine, () => 'code')
