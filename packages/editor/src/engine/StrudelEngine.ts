@@ -17,6 +17,7 @@ import { resolveAlias } from './aliases'
 import { isSoundfontZoneError, soundfontRangeMessage } from './friendlyErrors'
 import { installMiniStringParser } from './stringParser'
 import { resolveBareCaptureId } from './bareCapture'
+import { normalizeLoopRange, type LoopRange } from './transportFrame'
 
 type HapHandler = (event: HapEvent) => void
 
@@ -490,7 +491,8 @@ export class StrudelEngine implements LiveCodingEngine {
   private pauseChangedListeners: Set<(paused: boolean) => void> = new Set()
 
   // #384 — transport seek offset, in cycles. The song position the user sees
-  // is `scheduler.now() - transportOffset`; `0` means normal playback (no
+  // is `scheduler.now() - transportOffset` (folded into the loop span when one
+  // is armed — see `loopRange` below); `0` means normal playback (no
   // seek). Set by `setTransportOffset()` (the runtime's `seekTo` computes
   // `now - targetCycle`). Applied at the `.p` capture seam inside evaluate()
   // by wrapping the pattern with `.late(transportOffset)` — the IR-level
@@ -500,6 +502,18 @@ export class StrudelEngine implements LiveCodingEngine {
   // guard). Exact only for stateless-cyclic patterns; state-accumulating
   // patterns seek approximately (documented edge, design §7.4).
   private transportOffset = 0
+
+  // #1570 — the user's loop range, in SONG cycles, or `null` when the transport
+  // runs straight through. Applied at the same `.p` capture seam as the seek
+  // wrap, as `.ribbon(startCycle, cycles)` BEFORE the `.late()` — so the span
+  // repeats natively, applied once when the range changes rather than on every
+  // lap. (Looping by seeking would re-evaluate the whole document every few
+  // seconds: `seekTo` ends in `play()`.)
+  //
+  // ⚠ `ribbon` re-bases the slice to cycle 0, so this field is only ever half a
+  // decision: the transport offset that keeps song position song-absolute is the
+  // other half, and `transportFrame.ts` owns the arithmetic that binds them.
+  private loopRange: LoopRange | null = null
 
   // Phase 20-14 α-5 — tier flags read at boot. β-4 wires `midi` to call
   // enableWebMidi(); the other 7 (csound, tidal, osc, serial, gamepad,
@@ -543,6 +557,35 @@ export class StrudelEngine implements LiveCodingEngine {
   /** #384 — current transport offset (cycles). `0` when no seek is active. */
   getTransportOffset(): number {
     return this.transportOffset
+  }
+
+  /**
+   * #1570 — set the user's loop range (song cycles), or `null` to clear it.
+   * Like `setTransportOffset`, this does NOT re-evaluate by itself: the
+   * runtime's `setLoopRange` pairs it with a compensating transport offset and
+   * then re-evals through the normal hot-swap, which re-reads both here and
+   * applies them together at the `.p` seam.
+   *
+   * ⚠ THE PAIRING IS NOT OPTIONAL. `ribbon` re-bases the slice to cycle 0, so a
+   * range set without the matching offset leaves the scheduler clock counting
+   * loop-relative cycles while every readout is song-absolute. The arithmetic
+   * that keeps them in one frame lives in `transportFrame.ts`, and both this
+   * engine and the runtime read it rather than re-deriving it.
+   *
+   * Input is normalised here (not at the caller): an inverted or zero-length
+   * drag becomes "no loop" rather than a wrap that cannot be heard.
+   *
+   * Kept off the `LiveCodingEngine` interface (v1) and reached via
+   * `(engine as any).setLoopRange?.()` so non-Strudel engines no-op, mirroring
+   * the `setTransportOffset` convention.
+   */
+  setLoopRange(range: { startCycle: number; cycles: number } | null): void {
+    this.loopRange = normalizeLoopRange(range)
+  }
+
+  /** #1570 — the armed loop range, or `null` when the transport runs straight through. */
+  getLoopRange(): LoopRange | null {
+    return this.loopRange
   }
 
   /**
@@ -1048,6 +1091,10 @@ export class StrudelEngine implements LiveCodingEngine {
     // here (evaluate's body); the `.p` value function below closes over this
     // const, so each re-eval (every play()/seekTo) applies the current offset.
     const transportOffset = this.transportOffset
+    // #1570 — snapshot the loop range for this evaluate, beside the seek offset
+    // and for the same reason: the `.p` value function below closes over both,
+    // so one re-eval applies the pair the runtime decided together.
+    const loopRange = this.loopRange
     const probeExplicitOrbit = (pat: any): boolean => { // eslint-disable-line @typescript-eslint/no-explicit-any
       try {
         const haps = pat.queryArc(0, 1)
@@ -1248,6 +1295,28 @@ export class StrudelEngine implements LiveCodingEngine {
               // timeline's static marks (and the IR lanes they sit in) are drawn
               // on. Captured post-orbit so both frames route identically.
               capturedSongPatterns.set(captureId, effectivePattern)
+              // #1570 — the LOOP wrap. `.ribbon(start, cycles)` cuts the span
+              // and repeats it natively, so the loop costs ONE re-eval when the
+              // range changes rather than a hot-swap per lap (which is what
+              // looping via `seekTo` would cost — it ends in `play()`).
+              //
+              // Placed AFTER the song-frame capture above and BEFORE the seek
+              // wrap below, and both placements are load-bearing:
+              //   · after the capture, because the ribbon folds song time onto
+              //     itself — marks read from a ribboned pattern would repeat the
+              //     looped bars across the whole song axis (#863's shape);
+              //   · before `.late`, because the offset the runtime paired with
+              //     this range is a SCHEDULER-frame shift of the already-cut
+              //     ribbon. Applied the other way round it would shift the cut
+              //     instead, and the audio would sound a span the user never set.
+              // Guarded like the seek wrap: exotic patterns may lack `.ribbon`
+              // (registered by @strudel/core) → keep them unlooped rather than
+              // throwing inside the `.p` seam.
+              if (loopRange && typeof effectivePattern.ribbon === 'function') {
+                try {
+                  effectivePattern = effectivePattern.ribbon(loopRange.startCycle, loopRange.cycles)
+                } catch { /* keep unlooped */ }
+              }
               if (transportOffset !== 0 && typeof effectivePattern.late === 'function') {
                 try { effectivePattern = effectivePattern.late(transportOffset) } catch { /* keep unshifted */ }
               }

@@ -103,6 +103,16 @@ import type { HapStream } from '../../engine/HapStream'
 import type { IREvent } from '../../ir/IREvent'
 import type { BreakpointStore } from '../../engine/BreakpointStore'
 import { BufferedScheduler } from '../../engine/BufferedScheduler'
+// #1570 — the transport frame's arithmetic only. The WRAPS it describes are
+// applied engine-side at the `.p` seam; nothing here touches Pattern.prototype
+// (PV2 / P2 source-grep guard).
+import {
+  songPositionAt,
+  transportOffsetForSeek,
+  normalizeLoopRange,
+  isInsideLoop,
+  type LoopRange,
+} from '../../engine/transportFrame'
 import { workspaceAudioBus } from '../WorkspaceAudioBus'
 import type {
   AudioPayload,
@@ -643,16 +653,23 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
    * silent. So a bounce rewinds first and the export is reproducible: the same
    * document bounces to the same audio however long you had been playing it.
    *
-   * The rewind is three steps and each is load-bearing:
+   * The rewind is four steps and each is load-bearing:
    *   1. `stop()` — resets the scheduler's query cursor (`cyclist.stop()` sets
    *      `lastEnd = 0`, and each tick queries from `lastEnd`). `pause()` does
    *      NOT, which is exactly why this cannot be a pause.
    *   2. `setTransportOffset(0)` — clears any earlier seek. Song position is
-   *      `scheduler.now() - transportOffset`, applied as a `.late()` wrap, so
-   *      resetting the clock WITHOUT resetting the offset would rewind the
-   *      scheduler and leave the pattern shifted — a subtler version of the
-   *      same bug. Optional-chained: non-Strudel engines have no seek.
-   *   3. `play()` — re-evaluates and starts from cycle 0.
+   *      the scheduler clock read through the transport frame, applied as a
+   *      `.late()` wrap, so resetting the clock WITHOUT resetting the offset
+   *      would rewind the scheduler and leave the pattern shifted — a subtler
+   *      version of the same bug. Optional-chained: non-Strudel engines have
+   *      no seek.
+   *   3. `setLoopRange(null)` — clears any armed loop (#1572), which is the
+   *      OTHER half of that frame and fails in exactly the same shape: a
+   *      bounce with a loop over bars 3–5 would capture those two bars
+   *      repeating for the whole duration. Restored afterwards, unlike the
+   *      offset: rewinding is what the user asked for, disarming the locators
+   *      they set is not.
+   *   4. `play()` — re-evaluates and starts from cycle 0.
    *
    * ⚠ The old comment here warned against calling `play()` when already
    * playing, because `play()` re-evaluates and would restart the audio
@@ -673,6 +690,8 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       record?: (s: number, sig?: AbortSignal) => Promise<Blob>
       waitUntilQuiet?: () => Promise<boolean>
       setTransportOffset?: (offset: number) => void
+      getLoopRange?: () => LoopRange | null
+      setLoopRange?: (range: LoopRange | null) => void
     }
     if (this.isDisposed || typeof engine.record !== 'function') return null
 
@@ -693,6 +712,18 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     // Clear any earlier seek, so song cycle 0 is scheduler cycle 0.
     engine.setTransportOffset?.(0)
 
+    // #1572 — and clear the LOOP, which is the second thing that decides what
+    // the take contains. The recorder taps the master analyser in real time, so
+    // a bounce with a loop armed over bars 3–5 would capture those two bars
+    // repeating for the whole duration instead of the song — the same silent
+    // failure the offset reset above was written to end (#1371), one field
+    // later: the file is valid, full-length and not silent.
+    //
+    // Restored in the `finally` below, not left cleared: rewinding is what the
+    // user asked for, disarming their locators is not.
+    const loopBeforeBounce = engine.getLoopRange?.() ?? null
+    if (loopBeforeBounce) engine.setLoopRange?.(null)
+
     const { error } = await this.play()
     if (error) throw error
 
@@ -703,6 +734,9 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       return await engine.record(seconds, signal)
     } finally {
       this.stop()
+      // Give the locators back — including when the capture threw or was
+      // aborted, which is why this sits with the stop rather than after it.
+      if (loopBeforeBounce) engine.setLoopRange?.(loopBeforeBounce)
     }
   }
 
@@ -1019,14 +1053,83 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       | ((offset: number) => void)
       | undefined
     if (now === null || typeof setOffset !== 'function') return { error: null }
-    setOffset.call(this.engine, now - targetCycle)
+    // #1570 — the offset is decided against the loop frame in force, not by
+    // bare subtraction: under a ribbon the scheduler's cycle 0 is the loop's
+    // start, so `now - targetCycle` would seek to a cycle nobody asked for.
+    // With no loop armed this is `now - targetCycle`, unchanged.
+    setOffset.call(this.engine, transportOffsetForSeek(now, targetCycle, this.currentLoopRange()))
     // Re-eval through the normal hot-swap so the wrap takes effect. If we're
     // not playing yet, play() also starts the transport at the sought cycle.
     return this.play()
   }
 
+  /** #1570 — the loop range the engine currently holds (`null` on non-Strudel engines). */
+  private currentLoopRange(): LoopRange | null {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const get = (this.engine as any).getLoopRange as (() => LoopRange | null) | undefined
+    return typeof get === 'function' ? (get.call(this.engine) ?? null) : null
+  }
+
   /**
-   * #384 — current SONG position in cycles: `scheduler.now() - transportOffset`.
+   * #1570 — arm a loop over `[startCycle, startCycle + cycles)` song cycles, or
+   * clear it with `null`. One re-eval (the existing hot-swap), not one per lap.
+   *
+   * ⚠ THE RANGE AND THE OFFSET ARE ONE DECISION, MADE HERE. `ribbon` re-bases
+   * the looped span to cycle 0, so arming a range alone would leave the playhead
+   * reading loop-relative cycles while the ears hear the middle of the song.
+   * This sets both, in one place, so `getSongPosition` stays song-absolute —
+   * the same pairing `seekTo` already makes for `.late()`, for the same reason.
+   *
+   * Where playback lands:
+   *   · arming while the ears are already INSIDE the new span — stays put, so
+   *     the loop closes around the music that is playing rather than jumping;
+   *   · arming from outside it — starts at the loop's start, the only other
+   *     answer that is predictable;
+   *   · clearing — continues from wherever the ears are, now running straight on.
+   */
+  async setLoopRange(
+    range: { startCycle: number; cycles: number } | null,
+  ): Promise<{ error: Error | null }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const engine = this.engine as any
+    const setRange = engine.setLoopRange as ((r: LoopRange | null) => void) | undefined
+    const setOffset = engine.setTransportOffset as ((offset: number) => void) | undefined
+    // Non-Strudel engines have neither — no-op, like `seekTo`.
+    if (typeof setRange !== 'function') return { error: null }
+
+    const next = normalizeLoopRange(range)
+    const now = this.rawSchedulerNow()
+    // Where the ears are under the frame still in force. Read BEFORE the range
+    // changes — afterwards the old frame is gone and this number is unrecoverable.
+    const before =
+      now === null
+        ? null
+        : songPositionAt(now, engine.getTransportOffset?.() ?? 0, this.currentLoopRange())
+
+    setRange.call(this.engine, next)
+
+    if (now !== null && typeof setOffset === 'function') {
+      const target = next
+        ? before !== null && isInsideLoop(before, next)
+          ? before
+          : next.startCycle
+        : (before ?? 0)
+      setOffset.call(this.engine, transportOffsetForSeek(now, target, next))
+    }
+
+    // Stopped: the pair is stored and takes effect at the next play(), exactly
+    // as a seek does. Playing: re-eval through the normal hot-swap.
+    if (!this.isPlayingState) return { error: null }
+    return this.play()
+  }
+
+  /**
+   * #384 — current SONG position in cycles: the scheduler clock read through
+   * the transport frame. `scheduler.now() - transportOffset` with no loop
+   * armed; folded into the looped span when one is (#1570), because a ribboned
+   * pattern re-bases its slice to cycle 0 and the raw difference would count
+   * loop-relative cycles.
+   *
    * The full-song timeline playhead reads this (vs `getCurrentCycle`'s raw
    * window clock). Gated on `isPlayingState` like `getCurrentCycle` so the
    * playhead clears on stop. `null` on non-Strudel engines / when stopped.
@@ -1037,7 +1140,12 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     if (now === null) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const offset = (this.engine as any).getTransportOffset?.() ?? 0
-    return now - (Number.isFinite(offset) ? offset : 0)
+    // #1570 — read back through the transport frame, not by bare subtraction.
+    // With a loop armed the engine's pattern is ribboned, so `now - offset`
+    // counts LOOP-relative cycles: the playhead would sit at the top of the song
+    // while the ears hear the middle of it. `songPositionAt` folds it back into
+    // the span the audio is actually sounding. With no loop this is unchanged.
+    return songPositionAt(now, offset, this.currentLoopRange())
   }
 
   /**

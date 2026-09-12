@@ -1233,6 +1233,41 @@ declare function setTierFlag(name: TierName, on: boolean): void;
  */
 declare function listTiers(): readonly TierName[];
 
+/**
+ * #1570 — THE TRANSPORT FRAME: the one place the scheduler clock and the song
+ * position are converted into each other.
+ *
+ * Two things shift time between "what the scheduler is playing" and "where the
+ * user is in the song", and they must be decided together:
+ *
+ *  1. the SEEK offset (#384) — the pattern is wrapped `.late(transportOffset)`
+ *     at the engine's `.p` seam, so the scheduler plays song-cycle
+ *     `now - transportOffset` at wall-clock `now`;
+ *  2. the LOOP range (#1570) — the pattern is wrapped `.ribbon(start, cycles)`
+ *     at the SAME seam, so the span repeats without a re-eval per lap.
+ *
+ * ⚠ `ribbon` RE-BASES THE SLICE TO CYCLE 0. Measured against `@strudel/core`
+ * 1.2.6 (and asserted in this module's own tests against the real pattern
+ * library, not a model of it): `ribbon(1, 2)` over `a b c d` plays `b` at cycle
+ * **0.00**, not 1.00. So under a loop the scheduler's clock counts LOOP-relative
+ * cycles while every readout in the app — the playhead, the marks, follow-scroll,
+ * the seek inversion — is song-absolute. Left unpaired, the playhead sits at the
+ * start of the song while the ears hear the middle of it, and only the ears are
+ * right.
+ *
+ * That is why this is a module and not two expressions: the wrap the engine
+ * applies and the number the runtime reports are the SAME decision seen from two
+ * sides, and the invariant that binds them ("the song cycle this function names
+ * is the song cycle the ribboned pattern is sounding") can only be enforced
+ * where both are written down. The engine applies the wraps; the runtime reads
+ * the position back through here; neither one re-derives the arithmetic.
+ */
+/** A user-set loop span, in SONG cycles. `cycles` is a length, never an end. */
+interface LoopRange {
+    readonly startCycle: number;
+    readonly cycles: number;
+}
+
 type HapHandler = (event: HapEvent) => void;
 /**
  * A required boot step that did not complete. The engine cannot start.
@@ -1295,6 +1330,7 @@ declare class StrudelEngine implements LiveCodingEngine {
     private isPausedState;
     private pauseChangedListeners;
     private transportOffset;
+    private loopRange;
     private tierFlags;
     private lastAliasResolutions;
     private soundMapRef;
@@ -1311,6 +1347,32 @@ declare class StrudelEngine implements LiveCodingEngine {
     setTransportOffset(offset: number): void;
     /** #384 — current transport offset (cycles). `0` when no seek is active. */
     getTransportOffset(): number;
+    /**
+     * #1570 — set the user's loop range (song cycles), or `null` to clear it.
+     * Like `setTransportOffset`, this does NOT re-evaluate by itself: the
+     * runtime's `setLoopRange` pairs it with a compensating transport offset and
+     * then re-evals through the normal hot-swap, which re-reads both here and
+     * applies them together at the `.p` seam.
+     *
+     * ⚠ THE PAIRING IS NOT OPTIONAL. `ribbon` re-bases the slice to cycle 0, so a
+     * range set without the matching offset leaves the scheduler clock counting
+     * loop-relative cycles while every readout is song-absolute. The arithmetic
+     * that keeps them in one frame lives in `transportFrame.ts`, and both this
+     * engine and the runtime read it rather than re-deriving it.
+     *
+     * Input is normalised here (not at the caller): an inverted or zero-length
+     * drag becomes "no loop" rather than a wrap that cannot be heard.
+     *
+     * Kept off the `LiveCodingEngine` interface (v1) and reached via
+     * `(engine as any).setLoopRange?.()` so non-Strudel engines no-op, mirroring
+     * the `setTransportOffset` convention.
+     */
+    setLoopRange(range: {
+        startCycle: number;
+        cycles: number;
+    } | null): void;
+    /** #1570 — the armed loop range, or `null` when the transport runs straight through. */
+    getLoopRange(): LoopRange | null;
     /**
      * Phase 20-14 β-2 — read-only snapshot of alias rewrites that have fired
      * during the current evaluate() window. Each entry is one hap rewrite;
@@ -8173,16 +8235,23 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
      * silent. So a bounce rewinds first and the export is reproducible: the same
      * document bounces to the same audio however long you had been playing it.
      *
-     * The rewind is three steps and each is load-bearing:
+     * The rewind is four steps and each is load-bearing:
      *   1. `stop()` — resets the scheduler's query cursor (`cyclist.stop()` sets
      *      `lastEnd = 0`, and each tick queries from `lastEnd`). `pause()` does
      *      NOT, which is exactly why this cannot be a pause.
      *   2. `setTransportOffset(0)` — clears any earlier seek. Song position is
-     *      `scheduler.now() - transportOffset`, applied as a `.late()` wrap, so
-     *      resetting the clock WITHOUT resetting the offset would rewind the
-     *      scheduler and leave the pattern shifted — a subtler version of the
-     *      same bug. Optional-chained: non-Strudel engines have no seek.
-     *   3. `play()` — re-evaluates and starts from cycle 0.
+     *      the scheduler clock read through the transport frame, applied as a
+     *      `.late()` wrap, so resetting the clock WITHOUT resetting the offset
+     *      would rewind the scheduler and leave the pattern shifted — a subtler
+     *      version of the same bug. Optional-chained: non-Strudel engines have
+     *      no seek.
+     *   3. `setLoopRange(null)` — clears any armed loop (#1572), which is the
+     *      OTHER half of that frame and fails in exactly the same shape: a
+     *      bounce with a loop over bars 3–5 would capture those two bars
+     *      repeating for the whole duration. Restored afterwards, unlike the
+     *      offset: rewinding is what the user asked for, disarming the locators
+     *      they set is not.
+     *   4. `play()` — re-evaluates and starts from cycle 0.
      *
      * ⚠ The old comment here warned against calling `play()` when already
      * playing, because `play()` re-evaluates and would restart the audio
@@ -8298,8 +8367,38 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
     seekTo(targetCycle: number): Promise<{
         error: Error | null;
     }>;
+    /** #1570 — the loop range the engine currently holds (`null` on non-Strudel engines). */
+    private currentLoopRange;
     /**
-     * #384 — current SONG position in cycles: `scheduler.now() - transportOffset`.
+     * #1570 — arm a loop over `[startCycle, startCycle + cycles)` song cycles, or
+     * clear it with `null`. One re-eval (the existing hot-swap), not one per lap.
+     *
+     * ⚠ THE RANGE AND THE OFFSET ARE ONE DECISION, MADE HERE. `ribbon` re-bases
+     * the looped span to cycle 0, so arming a range alone would leave the playhead
+     * reading loop-relative cycles while the ears hear the middle of the song.
+     * This sets both, in one place, so `getSongPosition` stays song-absolute —
+     * the same pairing `seekTo` already makes for `.late()`, for the same reason.
+     *
+     * Where playback lands:
+     *   · arming while the ears are already INSIDE the new span — stays put, so
+     *     the loop closes around the music that is playing rather than jumping;
+     *   · arming from outside it — starts at the loop's start, the only other
+     *     answer that is predictable;
+     *   · clearing — continues from wherever the ears are, now running straight on.
+     */
+    setLoopRange(range: {
+        startCycle: number;
+        cycles: number;
+    } | null): Promise<{
+        error: Error | null;
+    }>;
+    /**
+     * #384 — current SONG position in cycles: the scheduler clock read through
+     * the transport frame. `scheduler.now() - transportOffset` with no loop
+     * armed; folded into the looped span when one is (#1570), because a ribboned
+     * pattern re-bases its slice to cycle 0 and the raw difference would count
+     * loop-relative cycles.
+     *
      * The full-song timeline playhead reads this (vs `getCurrentCycle`'s raw
      * window clock). Gated on `isPlayingState` like `getCurrentCycle` so the
      * playhead clears on stop. `null` on non-Strudel engines / when stopped.

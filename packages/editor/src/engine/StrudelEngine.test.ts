@@ -33,15 +33,39 @@ class MockPattern {
   // Accumulated `.late()` shift (#863) — the seek wrap the engine applies to the
   // SCHEDULER-frame pattern. `0` for a pattern in the song frame.
   private shift: number
-  constructor(clone?: { instanceId: number; shift: number }) {
+  // #1570 — the transport wraps this pattern has been through, IN ORDER.
+  //
+  // `ribbon` cannot be modelled on this mock's time axis: it re-bases the slice
+  // it cuts, so what it changes is WHICH song cycle sounds, and these haps carry
+  // time rather than song-cycle values. (The real semantics are asserted against
+  // the actual @strudel/core in `__tests__/transportFrame.test.ts` — that is the
+  // authority; this records the WIRING.) The ops ride out on the hap value,
+  // where `normalizeStrudelHap` passes unknown fields through as `params`, so a
+  // test can read back exactly which wraps the engine applied to which frame.
+  private ops: string[]
+  constructor(clone?: { instanceId: number; shift: number; ops: string[] }) {
     this.instanceId = clone ? clone.instanceId : ++patternInstanceCounter
     this.shift = clone ? clone.shift : 0
+    this.ops = clone ? clone.ops : []
   }
   // Models `@strudel/core`'s `.late(offset)`: delays every onset by `offset`
   // cycles. Returns a NEW pattern (as Strudel does) that keeps the same
   // instanceId, so the orbit each analyser test asserts on is unaffected.
   late(offset: number) {
-    return new MockPattern({ instanceId: this.instanceId, shift: this.shift + offset })
+    return new MockPattern({
+      instanceId: this.instanceId,
+      shift: this.shift + offset,
+      ops: [...this.ops, `late(${offset})`],
+    })
+  }
+  // #1570 — `.ribbon(offset, cycles)`: cut a span and loop it. Recorded, not
+  // simulated (see `ops` above).
+  ribbon(offset: number, cycles: number) {
+    return new MockPattern({
+      instanceId: this.instanceId,
+      shift: this.shift,
+      ops: [...this.ops, `ribbon(${offset},${cycles})`],
+    })
   }
   queryArc(begin: number, end: number) {
     return [{
@@ -49,7 +73,14 @@ class MockPattern {
       // `orbit` field is read by StrudelEngine.resolveOrbit() to decide which
       // superdough orbit to side-tap for per-track analysers. Using instanceId
       // gives each pattern a distinct orbit in tests.
-      value: { note: `note_${this.instanceId}`, s: `inst_${this.instanceId}`, orbit: this.instanceId },
+      value: {
+        note: `note_${this.instanceId}`,
+        s: `inst_${this.instanceId}`,
+        orbit: this.instanceId,
+        // Omitted entirely on an unwrapped pattern, so the mock adds no
+        // `params` to the haps every other test in this file reads.
+        ...(this.ops.length > 0 ? { transportOps: this.ops } : {}),
+      },
     }]
   }
 }
@@ -657,6 +688,101 @@ describe('StrudelEngine.getTimelineEvents (song frame, #863)', () => {
     // LIVE frame — still shifted by the offset, as the audio/playhead/viz need.
     const sched = engine.getTrackSchedulers().get('$0')!
     expect(sched.query(0, 4)[0].begin).toBe(2)
+    engine.dispose()
+  })
+
+  // -------------------------------------------------------------------------
+  // Loop locators (#1570) — the wrap, and the frame it must not reach.
+  // -------------------------------------------------------------------------
+  // These are WIRING assertions: which wraps were applied, in which order, to
+  // which frame. What `ribbon` actually does to time is asserted against the
+  // real @strudel/core in `__tests__/transportFrame.test.ts`.
+  //
+  // ⚠ The order and the placement are both load-bearing, and both fail SILENTLY:
+  // a ribbon applied after `.late` cuts a span the user never set, and a ribbon
+  // that reaches the SONG frame folds the looped bars across the whole song axis
+  // — the marks repeat under the lanes, which is #863 wearing a different hat.
+  it('wraps the SCHEDULER-frame pattern in .ribbon when a loop is armed', async () => {
+    const engine = new StrudelEngine()
+    await engine.init()
+    engine.setLoopRange({ startCycle: 3, cycles: 2 })
+    await engine.evaluate('one-track')
+
+    const sched = engine.getTrackSchedulers().get('$0')!
+    const hap = sched.query(0, 4)[0] as unknown as { params?: { transportOps?: string[] } }
+    expect(hap.params?.transportOps).toEqual(['ribbon(3,2)'])
+    engine.dispose()
+  })
+
+  it('applies the ribbon BEFORE the seek wrap, not after', async () => {
+    const engine = new StrudelEngine()
+    await engine.init()
+    engine.setLoopRange({ startCycle: 3, cycles: 2 })
+    engine.setTransportOffset(1)
+    await engine.evaluate('one-track')
+
+    const sched = engine.getTrackSchedulers().get('$0')!
+    const hap = sched.query(0, 4)[0] as unknown as { params?: { transportOps?: string[] } }
+    // The offset is a scheduler-frame shift of the already-cut ribbon. Reversed,
+    // it would shift the cut instead and the loop would sound the wrong bars.
+    expect(hap.params?.transportOps).toEqual(['ribbon(3,2)', 'late(1)'])
+    engine.dispose()
+  })
+
+  it('leaves the SONG frame unlooped, so the marks stay song-absolute', async () => {
+    const engine = new StrudelEngine()
+    await engine.init()
+    engine.setLoopRange({ startCycle: 3, cycles: 2 })
+    engine.setTransportOffset(1)
+    await engine.evaluate('one-track')
+
+    const marks = engine.getTimelineEvents(4) as unknown as Array<{
+      begin: number
+      params?: { transportOps?: string[] }
+    }>
+    expect(marks.length).toBe(1)
+    expect(marks[0].begin).toBe(0) // unmoved by either wrap
+    expect(marks[0].params?.transportOps).toBeUndefined()
+    engine.dispose()
+  })
+
+  it('applies NO ribbon with no loop armed (the control for the arms above)', async () => {
+    const engine = new StrudelEngine()
+    await engine.init()
+    engine.setTransportOffset(1)
+    await engine.evaluate('one-track')
+
+    const sched = engine.getTrackSchedulers().get('$0')!
+    const hap = sched.query(0, 4)[0] as unknown as { params?: { transportOps?: string[] } }
+    expect(hap.params?.transportOps).toEqual(['late(1)'])
+    engine.dispose()
+  })
+
+  it('normalises an unusable range to no loop at all', async () => {
+    const engine = new StrudelEngine()
+    await engine.init()
+    engine.setLoopRange({ startCycle: 3, cycles: 0 }) // a drag that never moved
+    expect(engine.getLoopRange()).toBeNull()
+    await engine.evaluate('one-track')
+
+    const sched = engine.getTrackSchedulers().get('$0')!
+    const hap = sched.query(0, 4)[0] as unknown as { params?: { transportOps?: string[] } }
+    expect(hap.params?.transportOps).toBeUndefined()
+    engine.dispose()
+  })
+
+  it('clears the loop when handed null, and the next eval runs straight through', async () => {
+    const engine = new StrudelEngine()
+    await engine.init()
+    engine.setLoopRange({ startCycle: 3, cycles: 2 })
+    await engine.evaluate('one-track')
+    engine.setLoopRange(null)
+    expect(engine.getLoopRange()).toBeNull()
+    await engine.evaluate('one-track')
+
+    const sched = engine.getTrackSchedulers().get('$0')!
+    const hap = sched.query(0, 4)[0] as unknown as { params?: { transportOps?: string[] } }
+    expect(hap.params?.transportOps).toBeUndefined()
     engine.dispose()
   })
 
