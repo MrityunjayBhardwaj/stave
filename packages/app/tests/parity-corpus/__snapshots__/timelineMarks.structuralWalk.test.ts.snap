@@ -139,9 +139,30 @@ exports[`collectNoteMarks structure maps are frozen (structuralWalk snapshot, #9
   "d1": {
     "armByCycle": null,
     "armLabels": null,
-    "arrangeOffset": 2,
-    "labelOffset": null,
+    "arrangeOffset": 3,
+    "labelOffset": 2,
     "sourceOffset": 2,
+  },
+  "d2": {
+    "armByCycle": null,
+    "armLabels": null,
+    "arrangeOffset": 2,
+    "labelOffset": 7,
+    "sourceOffset": 7,
+  },
+  "d3": {
+    "armByCycle": null,
+    "armLabels": null,
+    "arrangeOffset": 2,
+    "labelOffset": 12,
+    "sourceOffset": 12,
+  },
+  "d4": {
+    "armByCycle": null,
+    "armLabels": null,
+    "arrangeOffset": 2,
+    "labelOffset": 17,
+    "sourceOffset": 17,
   },
 }
 `;
@@ -355,9 +376,16 @@ exports[`collectNoteMarks structure maps are frozen (structuralWalk snapshot, #9
   "d1": {
     "armByCycle": null,
     "armLabels": null,
-    "arrangeOffset": 10,
-    "labelOffset": 0,
+    "arrangeOffset": 0,
+    "labelOffset": 11,
     "sourceOffset": 12,
+  },
+  "d2": {
+    "armByCycle": null,
+    "armLabels": null,
+    "arrangeOffset": 0,
+    "labelOffset": 56,
+    "sourceOffset": 64,
   },
 }
 `;
@@ -395,9 +423,23 @@ exports[`collectNoteMarks structure maps are frozen (structuralWalk snapshot, #9
   "d1": {
     "armByCycle": null,
     "armLabels": null,
-    "arrangeOffset": 42,
-    "labelOffset": null,
+    "arrangeOffset": 55,
+    "labelOffset": 42,
     "sourceOffset": 42,
+  },
+  "d2": {
+    "armByCycle": null,
+    "armLabels": null,
+    "arrangeOffset": 42,
+    "labelOffset": 44,
+    "sourceOffset": 44,
+  },
+  "d3": {
+    "armByCycle": null,
+    "armLabels": null,
+    "arrangeOffset": 42,
+    "labelOffset": 46,
+    "sourceOffset": 47,
   },
 }
 `;

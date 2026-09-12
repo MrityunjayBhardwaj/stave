@@ -256,6 +256,11 @@ interface StructCtx {
    *  keeps the outer arm's identity, so it must keep the outer arm's name too,
    *  or the clip would be captioned by a section it is not a section of. */
   armRange?: readonly [number, number]
+  /** #1553 — root-comma-stack arm → its own lane id, by node IDENTITY. Keyed
+   *  on the node rather than on a positional flag so it can only ever fire for
+   *  the arms `rootStackArms` actually named: a stack nested deeper in the
+   *  tree is a different object and simply does not match. */
+  armLaneOf?: ReadonlyMap<PatternIR, string>
   params: Record<string, number | string>
 }
 
@@ -307,6 +312,28 @@ function safeCountLeaves(node: PatternIR): number {
   }
 }
 
+/**
+ * Tags that wrap exactly one `body` and pass its VOICE STRUCTURE through
+ * unchanged — they neither add a voice nor remove one.
+ *
+ * ⚠ ONE LIST, TWO READERS (#1553). `countLeavesInIR` uses it to decide that a
+ * wrapped subtree contributes its body's leaf count, and `rootStackArms` uses
+ * it to walk from a `Track` down to the stack holding that track's own voices.
+ * They are the same question — "does this node change what the voices are?" —
+ * and answering it twice is how `s("bd, cp").gain(.5)` and `s("bd, cp").slow(2)`
+ * end up with different lane counts for no reason a user could name. (They did,
+ * for as long as this descent kept its own shorter list.)
+ *
+ * `Range` rescales a signal's VALUES (#1481) and `Slice` carves the body into
+ * ranges (#1352); both leave the voices exactly as they found them, which is
+ * why they belong here rather than looking like omissions.
+ */
+const VOICE_PRESERVING_WRAPPERS: ReadonlySet<PatternIR['tag']> = new Set([
+  'Param', 'Fast', 'Slow', 'Elongate', 'Late', 'Degrade', 'Ply', 'Struct',
+  'Swing', 'Shuffle', 'Scramble', 'Chop', 'Range', 'Slice', 'When', 'Every',
+  'Loop', 'Ramp',
+])
+
 /** Count voice-leaves a subtree contributes to its Track — mirror of collect.ts:246 so the
  *  Stack leafIndex counter advances identically. */
 function countLeavesInIR(node: PatternIR): number {
@@ -321,34 +348,10 @@ function countLeavesInIR(node: PatternIR): number {
   if (node.tag === 'Code' && node.via && !('literal' in node.via) && node.via.inner) {
     return countLeavesInIR(node.via.inner)
   }
-  switch (node.tag) {
-    case 'Param':
-    case 'Fast':
-    case 'Slow':
-    case 'Elongate':
-    case 'Late':
-    case 'Degrade':
-    case 'Ply':
-    case 'Struct':
-    case 'Swing':
-    case 'Shuffle':
-    case 'Scramble':
-    case 'Chop':
-    // #1481 — `range` rescales a signal's VALUES; it neither adds nor removes
-    // events, so the leaf count is exactly the body's.
-    case 'Range':
-    // #1352 — `slice` carves the BODY into ranges; the leaves are the body's,
-    // exactly as for `chop`. The index pattern chooses the ORDER those leaves
-    // play in, which is a projection question rather than a leaf-count one.
-    case 'Slice':
-    case 'When':
-    case 'Every':
-    case 'Loop':
-    case 'Ramp':
-      return countLeavesInIR(node.body)
-    default:
-      return 1
+  if (VOICE_PRESERVING_WRAPPERS.has(node.tag)) {
+    return countLeavesInIR((node as { body: PatternIR }).body)
   }
+  return 1
 }
 
 /**
@@ -439,7 +442,28 @@ function walkCycle(ir: PatternIR, ctx: StructCtx): LaneItem[] {
       if (isVoiceDefining) {
         let leafIdx = ctx.leafIndex ?? 0
         for (const track of ir.tracks) {
-          out.push(...recurse(track, { ...ctx, leafIndex: leafIdx }))
+          // #1553 — an arm of the root comma stack owns its own lane, so it
+          // overrides the track's id for its subtree. Every other stack passes
+          // the track id down unchanged, which is what keeps a stack inside a
+          // combinator arm on its track's lane.
+          const armLane = ctx.armLaneOf?.get(track)
+          // ⚠ `dollarPos` MOVES WITH THE LANE, and forgetting it is a silent
+          // half-fix. It is the lane's label offset — what `labelOffsetByLane`
+          // publishes and what the mark attribution reads — and it used to come
+          // from the per-arm `Track` wrapper's own `loc`. With one wrapper for
+          // the whole stack, inheriting `ctx.dollarPos` gives every arm the
+          // STATEMENT's offset, so the arms get distinct lanes that all claim
+          // the same source position: two lanes, both anchored at 0, marks
+          // folded back onto one. The arm's own span is the replacement.
+          const armPos = armLane !== undefined ? armSourceSpan(track)?.start : undefined
+          out.push(
+            ...recurse(track, {
+              ...ctx,
+              leafIndex: leafIdx,
+              ...(armLane !== undefined ? { trackId: armLane } : {}),
+              ...(armPos !== undefined ? { dollarPos: armPos } : {}),
+            }),
+          )
           leafIdx += safeCountLeaves(track)
         }
       } else {
@@ -642,6 +666,120 @@ function walkCycle(ir: PatternIR, ctx: StructCtx): LaneItem[] {
 }
 
 /**
+ * The source span an arm of a mini-expanded stack occupies (#950, moved here by #1553).
+ *
+ * Used as the arm's containment anchor when it has no `$:` statement of its own.
+ *
+ * ⚠ MOVED OUT OF THE PARSER (#1553). It was the span the staged pipeline
+ * stamped onto the `Track` wrappers it fabricated per comma arm; those
+ * wrappers are gone and the parse states the source's own shape, so the span
+ * now serves the two LANE readers instead — the walk below and the app's
+ * containment-anchor map.
+ * It is the MINIMUM start and MAXIMUM end over the arm's whole subtree, not the
+ * top node's own `loc` — two shapes make the top node the wrong answer:
+ *
+ *   - a combinator's `loc` covers its OPERATOR, not its content: `bd*2` gives
+ *     `Fast` at [8,10] while the `bd` it plays is at [6,8]. Anchoring on 8 puts
+ *     the anchor AFTER the haps it must catch, so they fall through to the
+ *     previous arm — the very fold this fixes.
+ *   - a multi-element arm has no `loc` at all: `~ sd` is a `Seq` with
+ *     `loc: undefined` over located children.
+ *
+ * Taking the extremes of the subtree is the same reasoning `timelineMarks.ts`
+ * already applies when it picks the minimum start for the outer combinator.
+ * Returns `undefined` when nothing in the subtree is located, so a genuinely
+ * unlocated arm stays unanchored rather than claiming a wrong span.
+ */
+export function armSourceSpan(node: PatternIR): { start: number; end: number } | undefined {
+  let start: number | undefined
+  let end: number | undefined
+  const visit = (n: unknown): void => {
+    if (!n || typeof n !== 'object') return
+    const rec = n as Record<string, unknown>
+    const locs = rec.loc as Array<{ start?: number; end?: number }> | undefined
+    if (Array.isArray(locs)) {
+      for (const l of locs) {
+        if (typeof l?.start === 'number' && Number.isFinite(l.start) && (start === undefined || l.start < start)) {
+          start = l.start
+        }
+        if (typeof l?.end === 'number' && Number.isFinite(l.end) && (end === undefined || l.end > end)) {
+          end = l.end
+        }
+      }
+    }
+    for (const v of Object.values(rec)) {
+      if (Array.isArray(v)) v.forEach(visit)
+      else if (v && typeof v === 'object') visit(v)
+    }
+  }
+  visit(node)
+  return start !== undefined && end !== undefined ? { start, end } : undefined
+}
+
+/**
+ * The arms of a SINGLE-TRACK document's root comma stack, each with the lane
+ * identity it owns (#1553).
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS HERE ─────────────────────────────────────
+ * `$: s("bd, cp")` is one track whose pattern happens to be a stack, and the
+ * timeline draws one lane per arm. That used to be arranged by the PARSER: the
+ * staged pipeline fabricated a top-level `Track` wrapper per arm, so `laneKeyOf`
+ * and `declaredTrackAnchors` both saw N tracks and needed no special case.
+ *
+ * It cost the chain. Once arms are wrappers there is nowhere to put the thing
+ * WRAPPING them, so `.gain()`/`.sound()`/`.room()` applied to the whole stack
+ * were dropped outright (#1553). The split was a presentation concern reshaping
+ * the parse tree, and the parse tree is not presentation's to reshape —
+ * structure is what the source says, lanes are what the view decides.
+ *
+ * So the parse now states the truth (`Track[Param:gain[Stack[bd, cp]]]`,
+ * byte-identical to `parseStrudel`) and the per-arm view lives here, in the
+ * layer that derives lanes. ⚠ ONE DEFINITION, TWO READERS: the structural walk
+ * below keys its lane items from this, and `timelineMarks.declaredTrackAnchors`
+ * keys the eval-side containment anchors from it. A second copy of "which
+ * stack is the root one" would let the skeleton and the marks disagree about
+ * what a lane IS, which is the exact failure #950 was filed for.
+ *
+ * ── SCOPE, DELIBERATELY NARROW ──────────────────────────────────────────────
+ * Only a document whose ROOT is one `Track`. A multi-statement document's
+ * tracks already own `d1…dN`, so splitting a comma inside one of them would
+ * mint a colliding id — and the parser's version never did it either (it split
+ * only the top-level stack), so this is the previous reach exactly, not a
+ * widening. Reached through chain wrappers only (`Param`, structured `Code`):
+ * anything else between the track and a stack means the stack is not the
+ * track's root, and a stack nested inside a combinator arm must not be split.
+ */
+export function rootStackArms(ir: PatternIR): { arm: PatternIR; laneId: string }[] | null {
+  if (ir.tag !== 'Track') return null
+  let node: PatternIR = ir.body
+  for (;;) {
+    if (VOICE_PRESERVING_WRAPPERS.has(node.tag)) {
+      node = (node as { body: PatternIR }).body
+      continue
+    }
+    // A structured `Code` is a modelled-but-unmapped method the walker keeps
+    // whole — `via.inner` is the chain's receiver, so the voices are in there.
+    if (node.tag === 'Code' && node.via && !('literal' in node.via) && node.via.inner) {
+      node = node.via.inner
+      continue
+    }
+    break
+  }
+  if (node.tag !== 'Stack') return null
+  // ⚠ `userMethod === undefined` ONLY — an explicit `stack(a, b)` is excluded,
+  // and that is the previous reach rather than an oversight. The parser's guard
+  // read `userMethod === undefined` too, so a written-out `stack(...)` has
+  // always drawn ONE lane while a top-level comma drew one per arm. Admitting
+  // `'stack'` here (which `isVoiceDefining` does, for a different question)
+  // moved 149 archive documents from one lane to several — a silent widening
+  // of what a lane means, in a change whose whole point is that lane identity
+  // is preserved.
+  if (node.userMethod !== undefined) return null
+  if (node.tracks.length < 2) return null
+  return node.tracks.map((arm, i) => ({ arm, laneId: `d${i + 1}` }))
+}
+
+/**
  * Walk the IR over `[0, nCycles)` and return the RAW per-leaf items — one per
  * Play leaf reached, pre-aggregation. Anchors only, never onsets; per-node
  * resilient (a bad sub-node degrades its own branch, never the whole walk).
@@ -668,9 +806,13 @@ export function walkLeafItems(ir: PatternIR, nCycles: number): LaneItem[] {
 export function walkLeafItemsInWindow(ir: PatternIR, window: WalkWindow): LaneItem[] {
   const { origin, span } = normalizeWindow(window)
   const items: LaneItem[] = []
+  // Computed ONCE for the whole window, not per cycle — it is a property of
+  // the tree, and the walk visits the same arm objects on every cycle.
+  const arms = rootStackArms(ir)
+  const armLaneOf = arms ? new Map(arms.map((a) => [a.arm, a.laneId])) : undefined
   for (let c = origin; c < origin + span; c++) {
     try {
-      items.push(...walkCycle(ir, { cycle: c, outputCycle: c, params: {} }))
+      items.push(...walkCycle(ir, { cycle: c, outputCycle: c, params: {}, ...(armLaneOf ? { armLaneOf } : {}) }))
     } catch {
       // A whole-cycle failure degrades that cycle only.
     }

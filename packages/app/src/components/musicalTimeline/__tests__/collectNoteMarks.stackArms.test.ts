@@ -33,6 +33,12 @@ vi.mock('@stave/editor', async () => ({
   // it hands `undefined` to a call site tsc cannot check, because a vi.mock
   // factory is untyped.
   wholeWalkWindow: (await import('./structuralWalkTestStub')).wholeWalkWindow,
+  // #1553 — `declaredTrackAnchors` derives a comma stack's per-arm anchors
+  // from these. Omitted, they are `undefined` at an untyped call site and every
+  // arm anchors at 0, which folds the lanes back together and fails these very
+  // tests for a reason that has nothing to do with the code under test.
+  rootStackArms: (await import('./structuralWalkTestStub')).rootStackArms,
+  armSourceSpan: (await import('./structuralWalkTestStub')).armSourceSpan,
   laneKeyOf: (ev: { trackId?: string; s?: string }) => ev?.trackId ?? ev?.s ?? '$default',
 }))
 

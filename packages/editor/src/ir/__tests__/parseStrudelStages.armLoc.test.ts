@@ -21,6 +21,21 @@
  * Measured in the running app before the fix: `labelOffsetByLane` empty and
  * `marksByLane` `[["d1", 8]]`; after, anchors `[["d1",6],["d2",10]]` and
  * `marksByLane` `[["d1",4],["d2",4]]`.
+ *
+ * ── WHERE THIS NOW LIVES (#1553) ────────────────────────────────────────────
+ * The property is unchanged and still pinned; what moved is WHO PROVIDES IT.
+ * It used to be arranged by the staged parser, which fabricated a top-level
+ * `Track` wrapper per comma arm so the anchor map would see them. That reshaped
+ * the parse tree to serve a presentation need, and it cost the chain: with the
+ * arms wrapped there was nowhere to put the thing wrapping THEM, so `.gain()`,
+ * `.sound()` and `.room()` applied to the whole stack were dropped outright —
+ * six archive documents, one of which kept 7 of its 66 notes.
+ *
+ * The parse now states the source's own shape (`Track[Param:gain[Stack[…]]]`,
+ * byte-identical to `parseStrudel`) and the per-arm lanes are derived in the
+ * lane layer from `rootStackArms`. The assertions below read that layer — the
+ * same question, asked of whoever answers it. `declaredTrackAnchors` keys the
+ * eval-side marks from the same rule, so skeleton and marks cannot drift.
  */
 import { describe, it, expect } from 'vitest'
 import { IR, type PatternIR } from '../PatternIR'
@@ -31,6 +46,7 @@ import {
   runFinalStage,
 } from '../parseStrudelStages'
 import { runPasses, type Pass } from '../passes'
+import { rootStackArms, armSourceSpan } from '../structuralWalk'
 
 const PASSES: readonly Pass<PatternIR>[] = [
   { name: 'RAW', run: runRawStage },
@@ -44,17 +60,24 @@ function pipeline(code: string): PatternIR {
   return passes[passes.length - 1].ir
 }
 
-/** Every `Track` wrapper as `[trackId, loc.start]` — the anchor map's input. */
-function trackAnchors(node: unknown, out: Array<[string, number | undefined]> = []): Array<[string, number | undefined]> {
-  if (!node || typeof node !== 'object') return out
-  const n = node as Record<string, unknown>
-  if (n.tag === 'Track') {
-    const loc = (n.loc as Array<{ start?: number }> | undefined)?.[0]
-    out.push([String(n.trackId), loc?.start])
-  }
-  for (const v of Object.values(n)) {
-    if (Array.isArray(v)) v.forEach((x) => trackAnchors(x, out))
-    else if (v && typeof v === 'object') trackAnchors(v, out)
+/**
+ * Every LANE with its containment anchor, as the timeline derives them.
+ *
+ * ⚠ READS THE LANE LAYER, NOT THE `Track` WRAPPERS (#1553). A comma arm is no
+ * longer a `Track` — the parse keeps the stack whole so a chain applied to it
+ * survives — so interrogating the wrappers would answer a question nobody is
+ * asking. `rootStackArms` + `armSourceSpan` are exactly what
+ * `timelineMarks.declaredTrackAnchors` calls, so this pins the value the app
+ * actually consumes rather than a proxy for it.
+ */
+function trackAnchors(ir: PatternIR): Array<[string, number | undefined]> {
+  const arms = rootStackArms(ir)
+  if (arms) return arms.map(({ arm, laneId }) => [laneId, armSourceSpan(arm)?.start])
+  const tracks = ir.tag === 'Stack' ? ir.tracks : [ir]
+  const out: Array<[string, number | undefined]> = []
+  for (const t of tracks) {
+    if (t.tag !== 'Track') continue
+    out.push([String(t.trackId), t.loc?.[0]?.start])
   }
   return out
 }
