@@ -36,7 +36,7 @@ import {
   AUTOMATION_PAD_Y,
   type CaptionHit,
 } from './musicalTimeline/automationCaption'
-import { automationColorOnLane } from './musicalTimeline/colors'
+import { automationColorOnLane, automationCountOnLane } from './musicalTimeline/colors'
 import { DEFAULT_THEME } from './SongTimelineCanvas'
 import type { WaveformSource } from './musicalTimeline/drawTimeline'
 
@@ -1987,11 +1987,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setEditingStep({
           hit: step.hit,
           left: e.clientX - (areaRef.current?.getBoundingClientRect().left ?? 0),
-          color: automationColorOnLane(
-            paramKey,
-            step.lane.automations.length + step.lane.stepped.length,
-            DEFAULT_THEME.automationLine,
-          ),
+          color: automationColorOnLane(paramKey, automationCountOnLane(step.lane), DEFAULT_THEME.automationLine),
           seq: ++stepSeqRef.current,
         })
         return
@@ -3035,9 +3031,10 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                     // from one place — see `automationColorOnLane`.
                     color: automationColorOnLane(
                       editingCaption.row.automation.paramKey,
-                      sceneRef.current.lanes.find(
-                        (l) => l.laneKey === editingCaption.row.automation.trackId,
-                      )?.automations.length ?? 1,
+                      // Curves AND staircases — the canvas counts both (#1576).
+                      automationCountOnLane(
+                        sceneRef.current.lanes.find((l) => l.laneKey === editingCaption.row.automation.trackId),
+                      ),
                       DEFAULT_THEME.automationLine,
                     ),
                   }}

@@ -254,3 +254,16 @@ export function automationColorOnLane(
 ): string {
   return laneAutomationCount <= 1 ? singleColor : colorForAutomation(paramKey)
 }
+
+/**
+ * The count `automationColorOnLane` is asked with, for a lane: curves AND
+ * staircases together, the way the canvas counts them (#1463). A DOM editor
+ * coloured to match what the canvas painted asks here, so it cannot count one
+ * class and open in a different colour from the text it covers (#1576).
+ * A lane that is not found counts as one, which is the single-colour answer.
+ */
+export function automationCountOnLane(
+  lane: { readonly automations: readonly unknown[]; readonly stepped: readonly unknown[] } | undefined,
+): number {
+  return lane ? lane.automations.length + lane.stepped.length : 1
+}

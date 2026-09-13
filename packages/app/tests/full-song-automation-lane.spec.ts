@@ -592,3 +592,103 @@ test('a drum lane can have its bounds read and retyped (#1495)', async ({ page }
 
   expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
 })
+
+/** Open the bound reading `value` by walking the caption line, as the arms above do.
+ *  A press between two fields can land on a staircase level instead, which opens
+ *  a STEP editor — that is abandoned and the walk continues. */
+async function openBound(page: Page, value: string): Promise<boolean> {
+  const bound = page.locator('[data-full-song="automation-bound"]')
+  const step = page.locator('[data-full-song="automation-step"]')
+  for (let x = 6; x <= 160; x += 3) {
+    await clickCanvasAt(page, x, 8)
+    await page.waitForTimeout(90)
+    if (await bound.count()) {
+      if ((await bound.inputValue()) === value) return true
+      await page.keyboard.press('Escape')
+    } else if (await step.count()) {
+      await page.keyboard.press('Escape')
+    }
+    await page.waitForTimeout(40)
+  }
+  return false
+}
+
+/** The bound input's computed colour, and `want` resolved by the same engine. */
+async function boundColour(page: Page, want: string): Promise<{ actual: string; want: string }> {
+  return page.evaluate((w) => {
+    const input = document.querySelector('[data-full-song="automation-bound"]') as HTMLElement
+    const probe = document.createElement('span')
+    document.body.appendChild(probe)
+    probe.style.color = w
+    const resolved = getComputedStyle(probe).color
+    probe.remove()
+    return { actual: getComputedStyle(input).color, want: resolved }
+  }, want)
+}
+
+/**
+ * #1576 — a bound opens in the colour its caption was PAINTED in, on a lane that
+ * also carries a stepped parameter. The canvas counts curves and staircases
+ * together, so a curve sharing its lane with a staircase is painted in its
+ * palette hue; an editor that counted curves alone opened in the single colour.
+ *
+ * ⚠ CONTROL IN THE SAME RUN: the same curve alone on its lane. Its bound must open
+ * in a DIFFERENT colour, or "the input is the palette hue" could be true of every
+ * lane and prove nothing about the count.
+ */
+test('a bound opens in its caption\'s colour on a lane that also steps a parameter (#1576)', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+  // ⚠ `pan`, NOT `cutoff`. `cutoff` hashes to palette slot 0, which is the theme's
+  // own blue at full alpha: the first run of this arm could separate the two
+  // colours by ALPHA alone (`rgb(140,200,255)` against `rgba(140,200,255,0.75)`).
+  // `pan` hashes to the violet slot, so a wrong count changes the hue itself.
+  const LONE_SONG = 's("bd*2").pan(saw.slow(4).range(0.2, 0.8))'
+  const SHARED_SONG = 's("bd*2").pan(saw.slow(4).range(0.2, 0.8)).gain("<.2 .8>")'
+  const hue = colorForAutomation('pan')
+  const rgb = (c: string) => c.replace(/^rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+).*$/, '$1,$2,$3')
+
+  await bootShell(page)
+  const box = async () => {
+    const b = await page.locator('[data-full-song-canvas]').boundingBox()
+    if (!b) throw new Error('no canvas')
+    return b
+  }
+
+  // ── CONTROL: the curve alone. One automation → the single colour.
+  await typeSongAndEval(page, LONE_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+  let b = await box()
+  await page.mouse.dblclick(b.x + 200, b.y + 8)
+  await page.waitForTimeout(800)
+  expect(await openBound(page, '0.8'), 'control: no bound reading 0.8 opened').toBe(true)
+  const alone = await boundColour(page, hue)
+  await page.keyboard.press('Escape')
+
+  // ── SUBJECT: the same curve beside a staircase on the same lane.
+  await typeSongAndEval(page, SHARED_SONG)
+  await page.waitForTimeout(500)
+  b = await box()
+  // The expand survives a re-eval of the same lane; only expand if it did not.
+  if (!(await openBound(page, '0.8'))) {
+    await page.mouse.dblclick(b.x + 200, b.y + 8)
+    await page.waitForTimeout(800)
+    expect(await openBound(page, '0.8'), 'subject: no bound reading 0.8 opened').toBe(true)
+  }
+  const shared = await boundColour(page, hue)
+
+  expect(shared.actual, `the bound opened in a colour its caption was not painted in: ${JSON.stringify({ alone, shared })}`)
+    .toBe(shared.want)
+  expect(alone.actual, `control: a lone curve's bound should not take the palette hue: ${JSON.stringify({ alone, shared })}`)
+    .not.toBe(alone.want)
+  // The instrument's own check: the two answers differ in HUE, not only in alpha.
+  expect(rgb(alone.actual), `the single colour and the hue share an RGB, so only alpha separates them: ${JSON.stringify({ alone, shared })}`)
+    .not.toBe(rgb(shared.want))
+
+  await page.keyboard.press('Escape')
+  expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
+})
