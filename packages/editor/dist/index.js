@@ -1672,7 +1672,9 @@ __name(stepIndexAtCycle, "stepIndexAtCycle");
 function stepValueEdit(a, index, value) {
   const step = a.steps[index];
   if (!step || !Number.isFinite(value) || value === step.value) return null;
-  return { range: [step.valueSpan.start, step.valueSpan.end], text: String(value) };
+  const text = String(value);
+  if (!NUMBER.test(text)) return null;
+  return { range: [step.valueSpan.start, step.valueSpan.end], text };
 }
 __name(stepValueEdit, "stepValueEdit");
 

@@ -9,9 +9,26 @@ import {
   TRACK_PALETTE_32,
   paletteForTrack,
   trackIndexOf,
-  automationColorOnLane, colorForAutomation,
+  automationColorOnLane, colorForAutomation, automationCountOnLane,
   AUTOMATION_PALETTE,
 } from '../colors'
+
+describe('automationCountOnLane — both classes, as the canvas counts them (#1576)', () => {
+  it('counts curves and staircases together', () => {
+    expect(automationCountOnLane({ automations: [1], stepped: [1] })).toBe(2)
+    expect(automationCountOnLane({ automations: [1, 2], stepped: [] })).toBe(2)
+    expect(automationCountOnLane({ automations: [], stepped: [1] })).toBe(1)
+  })
+
+  it('so one curve beside one staircase takes the palette hue, not the single colour', () => {
+    const lane = { automations: [1], stepped: [1] }
+    expect(automationColorOnLane('cutoff', automationCountOnLane(lane), 'single')).toBe(colorForAutomation('cutoff'))
+  })
+
+  it('a lane that is not found counts as one — the single-colour answer', () => {
+    expect(automationCountOnLane(undefined)).toBe(1)
+  })
+})
 
 describe('trackColorFromStem — drum family (DV-04 / DV-11)', () => {
   const drumIds = ['bd', 'hh', 'sd', 'cp', 'hat', 'kick', 'snare', 'drum', 'perc', 'ride', 'crash', 'tom']

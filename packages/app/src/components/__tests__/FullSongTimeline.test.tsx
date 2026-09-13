@@ -73,13 +73,15 @@ vi.mock('@stave/editor', async () => {
   // #1463 Stage 2 — the same trap, twice more: the component now reads stepped
   // automation and resolves each one's axis. Both real, from source (the knob
   // table imports nothing but its own control list).
-  const { steppedAutomations } = await import('../../../../editor/src/ir/steppedAutomation')
+  // Stage 3 adds the write: a press on a step commits through `stepValueEdit`.
+  const { steppedAutomations, stepValueEdit } = await import('../../../../editor/src/ir/steppedAutomation')
   const { knobRangeFor } = await import('../../../../editor/src/visualEdit/panels/knobRanges')
   const eventsForIr = (ir: { bare?: boolean; nested?: boolean } | null) =>
     ir?.bare ? BARE_EVENTS : ir?.nested ? NESTED_EVENTS : ir ? TRIM_EVENTS : []
   return {
     signalAutomations,
     steppedAutomations,
+    stepValueEdit,
     knobRangeFor,
     collectCycles: (ir: { bare?: boolean; nested?: boolean } | null) => eventsForIr(ir),
     structuralWalk: (ir: { bare?: boolean; nested?: boolean } | null, window: { originCycle: number; spanCycles: number }) =>
@@ -1476,5 +1478,226 @@ describe('FullSongTimeline — point a section at a different part (select + P �
     const chooser = utils.container.querySelector('[data-full-song="section-part"]') as HTMLSelectElement
     fireEvent.keyDown(chooser, { key: 'Backspace' })
     expect(onDeleteClip).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit a STEP on a stepped lane (#1463 Stage 3)
+// ---------------------------------------------------------------------------
+describe('FullSongTimeline — edit a STEP on a stepped lane (#1463 Stage 3)', () => {
+  // A hand-built IR with ONE stepped parameter on the `bd` track, read by the
+  // REAL `steppedAutomations` (the barrel mock loads it from source). The spans
+  // are the offsets of the two step numbers, which is all an edit may write.
+  //
+  // Geometry: `bd` is the top lane, and each level's y is READ off the lane's
+  // rendered height (`levelY`), never assumed. ⚠ The first draft assumed the 22px
+  // expanded row the region arms above use, and every arm failed while the
+  // product was right: those arms' haps carry a `trackId`, these have none, and
+  // this lane expands to 96px. `gain`'s knob axis is 0…1. The period (4) fits
+  // 800px → 200px/cycle, and `<0.2 0.8>` plays 0.2 in even cycles, 0.8 in odd.
+  const STEPPED_IR = {
+    tag: 'Stack',
+    tracks: [
+      {
+        tag: 'Track',
+        trackId: 'bd',
+        body: {
+          tag: 'Param',
+          key: 'gain',
+          rawArgs: '"<0.2 0.8>"',
+          loc: [{ start: 30, end: 49 }],
+          value: {
+            tag: 'Cycle',
+            items: [
+              { tag: 'Play', note: '0.2', loc: [{ start: 40, end: 43 }] },
+              { tag: 'Play', note: '0.8', loc: [{ start: 44, end: 47 }] },
+            ],
+          },
+          body: { tag: 'Play', note: 'bd' },
+        },
+      },
+    ],
+  }
+
+  function renderStepped(extra?: Partial<React.ComponentProps<typeof FullSongTimeline>>) {
+    const utils = renderFull({ ir: STEPPED_IR as never, ...extra })
+    const grid = utils.container.querySelector('[data-full-song="grid"]') as HTMLElement
+    grid.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 48, right: 800, bottom: 48, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    return { ...utils, grid }
+  }
+  const settle = () => act(async () => { await Promise.resolve() })
+  async function expandBd(container: HTMLElement) {
+    await settle()
+    await act(async () => {
+      ;(container.querySelector('[data-full-song-lane-expand="bd"]') as HTMLElement).click()
+    })
+  }
+  const stepEditor = (c: HTMLElement) =>
+    c.querySelector('[data-full-song="automation-step"]') as HTMLInputElement | null
+  const press = (grid: HTMLElement, x: number, y: number) =>
+    fireEvent.pointerDown(grid, { clientX: x, clientY: y, pointerId: 1 })
+
+  /** Canvas y of `value`'s level on `bd`, from the lane's RENDERED height:
+   *  `stepY` over the 0…1 gain axis, inset 3 top and bottom. Collapsed or
+   *  expanded, whichever the row currently is. */
+  const levelY = (container: HTMLElement, value: number) => {
+    const h = parseFloat((container.querySelector('[data-full-song-lane="bd"]') as HTMLElement).style.height)
+    return 3 + (1 - value) * (h - 6)
+  }
+
+  it('a press on a step opens its number, and Enter writes that step alone — with ONLY the automation handler wired', async () => {
+    // Only `onEditAutomation`: the gesture must not depend on a clip handler being
+    // present, which is the class the selectability gate once hid.
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await expandBd(container)
+    press(grid, 300, levelY(container, 0.8))
+    const input = stepEditor(container)
+    expect(input, 'no step editor opened on the 0.8 level').not.toBeNull()
+    expect(input!.value).toBe('0.8')
+    fireEvent.change(input!, { target: { value: '0.4' } })
+    fireEvent.keyDown(input!, { key: 'Enter' })
+    expect(onEditAutomation).toHaveBeenCalledTimes(1)
+    expect(onEditAutomation).toHaveBeenCalledWith({ range: [44, 47], text: '0.4' }, 'automation gain step 1')
+    expect(stepEditor(container), 'the editor lingered after its commit').toBeNull()
+  })
+
+  it('the pressed bar only chooses WHICH step — a later bar playing it opens the same one', async () => {
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await expandBd(container)
+    // Cycle 3 plays step 1 again.
+    press(grid, 700, levelY(container, 0.8))
+    expect(stepEditor(container)?.value).toBe('0.8')
+    fireEvent.change(stepEditor(container)!, { target: { value: '0.6' } })
+    fireEvent.keyDown(stepEditor(container)!, { key: 'Enter' })
+    // Cycle 0 plays step 0.
+    press(grid, 100, levelY(container, 0.2))
+    expect(stepEditor(container)?.value).toBe('0.2')
+    fireEvent.change(stepEditor(container)!, { target: { value: '0.5' } })
+    fireEvent.keyDown(stepEditor(container)!, { key: 'Enter' })
+    expect(onEditAutomation.mock.calls.map((c) => c[0])).toEqual([
+      { range: [44, 47], text: '0.6' },
+      { range: [40, 43], text: '0.5' },
+    ])
+  })
+
+  it('pressing a second step while one is open commits the first and shows the SECOND step\'s number', async () => {
+    // The editor is uncontrolled, so a reused input would keep the first step's
+    // typed text on screen over the second step — and Enter would write it there.
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await expandBd(container)
+    press(grid, 300, levelY(container, 0.8))
+    fireEvent.change(stepEditor(container)!, { target: { value: '0.9' } })
+    press(grid, 100, levelY(container, 0.2))
+    // Pressing away is leaving the field, and leaving commits — as the bounds editor does.
+    expect(onEditAutomation.mock.calls.map((c) => c[0])).toEqual([{ range: [44, 47], text: '0.9' }])
+    expect(stepEditor(container)?.value, 'the second step opened showing the first step\'s text').toBe('0.2')
+  })
+
+  it('a collapsed lane is inert, and so is a level the staircase does not hold at that bar', async () => {
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await settle()
+    press(grid, 300, levelY(container, 0.8))
+    expect(stepEditor(container), 'a collapsed lane opened a step editor').toBeNull()
+    await expandBd(container)
+    // Cycle 0 plays 0.2, so the 0.8 height there is empty space.
+    press(grid, 100, levelY(container, 0.8))
+    expect(stepEditor(container), 'a press where no step is drawn opened one').toBeNull()
+    // The CONTROL, same arm: the same height one bar later is the step.
+    press(grid, 300, levelY(container, 0.8))
+    expect(stepEditor(container)).not.toBeNull()
+  })
+
+  /** A key and the blur behind it, delivered inside ONE act so both handlers run
+   *  before React re-renders — the browser's "Enter (or Escape), then the blur of
+   *  the input being removed". ⚠ Two separate `fireEvent`s cannot show this, and
+   *  the first version of these arms used them: the first event unmounts the
+   *  input, the second reaches nothing, and a break of the once-only guard turned
+   *  no arm red. */
+  const keyThenBlur = (input: HTMLInputElement, key: string) =>
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+
+  it('Escape writes nothing, even with a blur arriving behind it', async () => {
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await expandBd(container)
+    press(grid, 300, levelY(container, 0.8))
+    const input = stepEditor(container)!
+    fireEvent.change(input, { target: { value: '0.9' } })
+    keyThenBlur(input, 'Escape')
+    expect(onEditAutomation, 'the blur behind Escape committed what was abandoned').not.toHaveBeenCalled()
+    expect(stepEditor(container)).toBeNull()
+  })
+
+  it('an emptied entry writes nothing — not a step of zero', async () => {
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await expandBd(container)
+    press(grid, 300, levelY(container, 0.8))
+    fireEvent.change(stepEditor(container)!, { target: { value: '' } })
+    fireEvent.keyDown(stepEditor(container)!, { key: 'Enter' })
+    expect(onEditAutomation, 'an emptied step was written').not.toHaveBeenCalled()
+  })
+
+  it('Enter with a blur arriving behind it commits exactly once', async () => {
+    const onEditAutomation = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation })
+    await expandBd(container)
+    press(grid, 300, levelY(container, 0.8))
+    const input = stepEditor(container)!
+    fireEvent.change(input, { target: { value: '0.3' } })
+    keyThenBlur(input, 'Enter')
+    expect(onEditAutomation).toHaveBeenCalledTimes(1)
+    expect(onEditAutomation.mock.calls[0][0]).toEqual({ range: [44, 47], text: '0.3' })
+  })
+
+  it('typing in the step editor cannot delete the selected clip, while the same key on the grid does', async () => {
+    const onEditAutomation = vi.fn()
+    const onDeleteClip = vi.fn()
+    const { grid, container } = renderStepped({ onEditAutomation, onDeleteClip })
+    await expandBd(container)
+    fireEvent.pointerDown(grid, { clientX: 200, clientY: levelY(container, 0.5), pointerId: 1 })
+    fireEvent.pointerUp(grid, { clientX: 200, clientY: levelY(container, 0.5), pointerId: 1 })
+    const selection = () => container.querySelector('[data-full-song="clip-selection"]')
+    expect(selection(), 'no clip is selected, so the guard is untested').not.toBeNull()
+
+    press(grid, 300, levelY(container, 0.8))
+    const input = stepEditor(container)!
+    expect(input).not.toBeNull()
+    expect(selection(), 'opening a step dropped the selection — the dangerous state is gone').not.toBeNull()
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    fireEvent.keyDown(input, { key: 'Delete' })
+    expect(onDeleteClip).not.toHaveBeenCalled()
+
+    // The CONTROL, same arm: the selection was live, so the key on the grid deletes.
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.keyDown(grid, { key: 'Backspace' })
+    expect(onDeleteClip).toHaveBeenCalledTimes(1)
+  })
+
+  it('a double-click on a step keeps the lane open, while one off the staircase collapses it', async () => {
+    const { grid, container } = renderStepped({ onEditAutomation: vi.fn() })
+    await expandBd(container)
+    const expanded = () =>
+      (container.querySelector('[data-full-song-lane="bd"]') as HTMLElement).getAttribute('data-expanded')
+    expect(expanded()).toBe('true')
+    fireEvent.doubleClick(grid, { clientX: 300, clientY: levelY(container, 0.8) })
+    expect(expanded(), 'a double-click on a step collapsed its lane').toBe('true')
+    fireEvent.doubleClick(grid, { clientX: 300, clientY: levelY(container, 0.5) })
+    expect(expanded()).toBe('false')
+  })
+
+  it('with no automation handler the staircase stays read-only', async () => {
+    const { grid, container } = renderStepped()
+    await expandBd(container)
+    press(grid, 300, levelY(container, 0.8))
+    expect(stepEditor(container)).toBeNull()
   })
 })

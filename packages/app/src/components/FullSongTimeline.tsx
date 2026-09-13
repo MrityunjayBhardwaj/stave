@@ -32,9 +32,11 @@ import {
   captionHit,
   captionEdit,
   AUTOMATION_LABEL_FONT,
+  AUTOMATION_MIN_BAND_H,
+  AUTOMATION_PAD_Y,
   type CaptionHit,
 } from './musicalTimeline/automationCaption'
-import { automationColorOnLane } from './musicalTimeline/colors'
+import { automationColorOnLane, automationCountOnLane } from './musicalTimeline/colors'
 import { DEFAULT_THEME } from './SongTimelineCanvas'
 import type { WaveformSource } from './musicalTimeline/drawTimeline'
 
@@ -93,8 +95,8 @@ import {
 } from './musicalTimeline/stableVoiceOrder'
 import { collectNoteMarks, readEventsInBand } from './musicalTimeline/timelineMarks'
 import { declaredTracks } from './musicalTimeline/trackOrder'
-import { signalAutomations, steppedAutomations, knobRangeFor, type SignalAutomation } from '@stave/editor'
-import { stepAxis } from './musicalTimeline/steppedLane'
+import { signalAutomations, steppedAutomations, stepValueEdit, knobRangeFor, type SignalAutomation } from '@stave/editor'
+import { stepAxis, stepEdit, stepHitAt, type StepHit } from './musicalTimeline/steppedLane'
 import type { SceneStepped } from './musicalTimeline/timelineScene'
 import { computeLaneLayout, laneAtY, type LaneLayout } from './musicalTimeline/laneLayout'
 import {
@@ -1124,13 +1126,18 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     const events = readWindowEvents()
     const byLane: Record<
       string,
-      { count: number; onsets: number[]; pitches: Array<number | null> }
+      { count: number; onsets: number[]; pitches: Array<number | null>; gains: number[] }
     > = {}
     for (const [key, notes] of marks.marksByLane) {
       byLane[key] = {
         count: notes.length,
         onsets: notes.map((n) => n.cycle),
         pitches: notes.map((n) => n.pitch),
+        // #1463 Stage 3 — each mark's gain, read off the evaluated hap, so a
+        // browser arm can see what the ENGINE plays after a step edit rather
+        // than what the document text says. ⚠ Clamped to 0…1, as the mark is
+        // drawn: a step above 1 reads back as 1 here.
+        gains: notes.map((n) => n.gain),
       }
     }
     ;(
@@ -1672,6 +1679,74 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
     [editingCaption, onEditAutomation],
   )
 
+  // ── Edit a STEP of a stepped automation (#1463 Stage 3) ───────────────────
+  // A press on a step's level opens its number, and Enter writes the new number
+  // into that step's own bytes of the mini-notation. The idiom and the guards are
+  // the bounds caption's, for the caption's reasons: a real input whose key
+  // handler stops propagation (so the clip shortcuts cannot eat the keystrokes),
+  // a ref that commits once per opened field, and precedence over every clip
+  // test.
+  //
+  // ⚠ A STEP IS ADDRESSED BY ITS INDEX, NOT BY THE BAR THAT WAS PRESSED. A step
+  // plays in every cycle whose place in the period selects it, so the edit moves
+  // every bar that plays it; the pressed bar only chooses WHICH step. Changing
+  // one bar alone would mean rewriting the pattern's period, which nobody asked
+  // for.
+  //
+  // ⚠ A TYPED VALUE IS A DELIBERATE FIRST CUT. A DAW's gesture for a stepped
+  // lane is dragging the level up or down. That needs the inverse of `stepY` and
+  // a preview that redraws without re-evaluating, and it can land on this same
+  // commit path when it comes.
+  const [editingStep, setEditingStep] = useState<{
+    hit: StepHit
+    /** Viewport x of the press — the editor opens where the user pointed. */
+    left: number
+    /** The staircase's own colour, counted over both classes as the draw does. */
+    color: string
+    /** Remounts the input per opening, so `defaultValue` is never a stale step's. */
+    seq: number
+  } | null>(null)
+  const stepSeqRef = useRef(0)
+
+  /** The step under a client point, or null. The SAME frame the staircase is
+   *  drawn in: x through the one axis inversion the seek and loop gestures
+   *  share, y content-relative, the band from the lane's layout box. */
+  const stepAt = React.useCallback(
+    (clientX: number, clientY: number): { hit: StepHit; lane: (typeof sceneRef.current.lanes)[number] } | null => {
+      if (!onEditAutomation) return null
+      const el = areaRef.current
+      if (!el) return null
+      const rect = el.getBoundingClientRect()
+      const contentY = clientY - rect.top + scrollTopRef.current
+      const laneKey = laneAtY(layoutRef.current, contentY)
+      if (laneKey == null) return null
+      const box = layoutRef.current.boxes.find((b) => b.laneKey === laneKey)
+      const lane = sceneRef.current.lanes.find((l) => l.laneKey === laneKey)
+      const cycle = cycleAtClientX(clientX)
+      if (!box || !lane || cycle == null) return null
+      const band = { top: box.top, rowHeight: box.height, padY: AUTOMATION_PAD_Y, minBandH: AUTOMATION_MIN_BAND_H }
+      const hit = stepHitAt(lane.stepped, band, box.expanded, cycle, contentY)
+      return hit ? { hit, lane } : null
+    },
+    [onEditAutomation, cycleAtClientX],
+  )
+
+  /** Commit the step editor, once — see `captionCommittedRef` for why a ref. */
+  const stepCommittedRef = useRef(false)
+  const commitStep = React.useCallback(
+    (value: string): void => {
+      if (stepCommittedRef.current) return
+      stepCommittedRef.current = true
+      const editing = editingStep
+      setEditingStep(null)
+      if (!editing || !onEditAutomation) return
+      const edit = stepEdit(editing.hit, value, stepValueEdit)
+      if (!edit) return
+      onEditAutomation(edit, `automation ${editing.hit.entry.automation.paramKey} step ${editing.hit.index}`)
+    },
+    [editingStep, onEditAutomation],
+  )
+
   const clipEdgeAt = React.useCallback(
     (clientX: number, clientY: number): { lane: (typeof sceneRef.current.lanes)[number]; clip: NonNullable<ReturnType<typeof clipAtCycle>> } | null => {
       if (!onTrimClip) return null
@@ -1899,6 +1974,24 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
         setEditingCaption(caption)
         return
       }
+      // #1463 Stage 3 — a STEP, right behind the caption and ahead of every clip
+      // test, for the caption's reason: the staircase is drawn over the clip
+      // body, so testing the body first would turn every press on a step into a
+      // select. `stepHitAt` answers only on EXPANDED lanes, so a collapsed row
+      // keeps selecting the clip it always selected.
+      const step = stepAt(e.clientX, e.clientY)
+      if (step) {
+        e.preventDefault()
+        const { paramKey } = step.hit.entry.automation
+        stepCommittedRef.current = false
+        setEditingStep({
+          hit: step.hit,
+          left: e.clientX - (areaRef.current?.getBoundingClientRect().left ?? 0),
+          color: automationColorOnLane(paramKey, automationCountOnLane(step.lane), DEFAULT_THEME.automationLine),
+          seq: ++stepSeqRef.current,
+        })
+        return
+      }
       const hit = clipEdgeAt(e.clientX, e.clientY)
       if (!hit) {
         // #1527 — a MARK's edge, tested after the clip edge and before the clip
@@ -2008,7 +2101,7 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
       const cw = dragAwareContentWidth(areaRef.current!.getBoundingClientRect().width)
       setTrimEdgeX(songCycleToX(hit.clip.endCycle, songWindow, cw))
     },
-    [editableCaptionAt, clipEdgeAt, regionEdgeAtClient, applyRegionTrim, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip, onRenameSection, onAssignSectionPart],
+    [editableCaptionAt, stepAt, clipEdgeAt, regionEdgeAtClient, applyRegionTrim, clipBodyAt, jumpToLaneAtClientY, displayCycles, dragAwareContentWidth, onDeleteClip, onMoveClip, onDuplicateClip, onSplitClip, onRippleDeleteClip, onInsertSilenceClip, onRenameSection, onAssignSectionPart],
   )
 
   const handleGridPointerMove = React.useCallback(
@@ -2834,7 +2927,9 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
             // A double-click is the natural gesture for "select this number to
             // retype it", and expanding/collapsing here would remove the very
             // caption being aimed at — captions are drawn on EXPANDED lanes only.
-            if (editableCaptionAt(e.clientX, e.clientY)) return
+            // A step is the same case: collapsing would take away the staircase
+            // whose number was just opened.
+            if (editableCaptionAt(e.clientX, e.clientY) || stepAt(e.clientX, e.clientY)) return
             handleExpandAtClientY(e.clientY)
           }}
         >
@@ -2936,9 +3031,10 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                     // from one place — see `automationColorOnLane`.
                     color: automationColorOnLane(
                       editingCaption.row.automation.paramKey,
-                      sceneRef.current.lanes.find(
-                        (l) => l.laneKey === editingCaption.row.automation.trackId,
-                      )?.automations.length ?? 1,
+                      // Curves AND staircases — the canvas counts both (#1576).
+                      automationCountOnLane(
+                        sceneRef.current.lanes.find((l) => l.laneKey === editingCaption.row.automation.trackId),
+                      ),
                       DEFAULT_THEME.automationLine,
                     ),
                   }}
@@ -2971,6 +3067,44 @@ export function FullSongTimeline(props: FullSongTimelineProps): React.ReactEleme
                   // and `captionEdit` returns null for anything it cannot do
                   // honestly, so a stray blur writes nothing on its own.
                   onBlur={(e) => commitCaption(e.currentTarget.value)}
+                />
+              )}
+              {/* #1463 Stage 3 — the step editor, centred on the step's level at
+                  the x that was pressed. The bounds editor's overlay frame
+                  (pinned left, scrolled in Y), so `hit.y` needs no correction. */}
+              {editingStep && (
+                <input
+                  key={editingStep.seq}
+                  data-full-song="automation-step"
+                  autoFocus
+                  defaultValue={String(editingStep.hit.entry.automation.steps[editingStep.hit.index].value)}
+                  aria-label={`${editingStep.hit.entry.automation.paramKey} step ${editingStep.hit.index + 1}`}
+                  style={{
+                    ...styles.captionInput,
+                    left: Math.max(0, editingStep.left - 22),
+                    top: editingStep.hit.y - 6,
+                    width: 44,
+                    color: editingStep.color,
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    // ⚠ THE GUARD, as on the bounds editor: this input is a DOM
+                    // descendant of the element carrying `handleGridKeyDown`, and
+                    // React's `onKeyDown` bubbles. Without this line BACKSPACE
+                    // while retyping a step deletes the selected clip.
+                    e.stopPropagation()
+                    if (e.key === 'Escape') {
+                      // Disarm as well as close, as the bounds editor does: a
+                      // blur arriving behind Escape must not commit what was typed.
+                      stepCommittedRef.current = true
+                      setEditingStep(null)
+                      return
+                    }
+                    if (e.key !== 'Enter') return
+                    commitStep(e.currentTarget.value)
+                  }}
+                  onBlur={(e) => commitStep(e.currentTarget.value)}
                 />
               )}
               {editingSection && selectionRect && (

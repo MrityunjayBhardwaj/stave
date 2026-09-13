@@ -180,3 +180,147 @@ test('a stepped parameter draws a staircase on its lane', async ({ page }) => {
   // (5) The new scene field and the two new barrel imports flow cleanly.
   expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
 })
+
+// ── Stage 3: edit a step from the lane ───────────────────────────────────────
+
+/**
+ * Two tracks, so the song is FOUR cycles long while the gain alternates every
+ * cycle: step 1 (`.9`) plays in cycles 1 and 3, and both are on screen. That is
+ * what makes "an edit moves every bar that plays the step, and only those"
+ * observable rather than inferred.
+ */
+const EDIT_SONG = '$: s("bd*2").gain("<.2 .9>")\n$: s("<hh cp hh cp>")'
+
+type MarksProbe = {
+  byLane: Record<string, { count: number; onsets: number[]; gains: number[] }>
+}
+
+/** Replace the document and evaluate it. `setValue` rather than typing, so the
+ *  editor's bracket and indent helpers cannot reshape a two-line song. */
+async function setSongAndEval(page: Page, code: string): Promise<void> {
+  await page.locator('.monaco-editor').first().click()
+  await page.evaluate((c) => {
+    const eds = ((window as unknown as { monaco?: { editor?: { getEditors?: () => Array<{ getModel: () => { setValue: (s: string) => void; getLanguageId?: () => string } | null }> } } }).monaco?.editor?.getEditors?.()) ?? []
+    const t = eds.find((e) => e.getModel()?.getLanguageId?.() === 'strudel') ?? eds[0]
+    t?.getModel()?.setValue(c)
+  }, code)
+  await page.waitForTimeout(400)
+  await page.keyboard.press(`${MOD}+Enter`)
+  await page.waitForTimeout(1800)
+}
+
+async function readDoc(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const eds = ((window as unknown as { monaco?: { editor?: { getEditors?: () => Array<{ getModel: () => { getValue: () => string; getLanguageId?: () => string } | null }> } } }).monaco?.editor?.getEditors?.()) ?? []
+    const t = eds.find((e) => e.getModel()?.getLanguageId?.() === 'strudel') ?? eds[0]
+    return t?.getModel()?.getValue() ?? ''
+  })
+}
+
+/**
+ * What the ENGINE plays on the `bd` lane, per bar: the gain of every evaluated
+ * hap, grouped by whole cycle. Read from the timeline's marks probe, which is fed
+ * by the scheduler's own query — not from the document text.
+ */
+async function gainsByBar(page: Page): Promise<Record<number, number[]>> {
+  const probe = await page.evaluate(
+    () => (window as unknown as { __staveTimelineMarks?: MarksProbe }).__staveTimelineMarks ?? null,
+  )
+  if (!probe) return {}
+  // The kick lane is the one with eight onsets over four cycles.
+  const lane = Object.values(probe.byLane).find((l) => l.count === 8)
+  if (!lane) return {}
+  const out: Record<number, number[]> = {}
+  lane.onsets.forEach((onset, i) => {
+    const bar = Math.floor(onset)
+    ;(out[bar] ??= []).push(Math.round(lane.gains[i] * 100) / 100)
+  })
+  return out
+}
+
+/** Click down one column of the lane until a step editor opens showing `value`. */
+async function openStepShowing(page: Page, x: number, value: string): Promise<boolean> {
+  const editor = page.locator('[data-full-song="automation-step"]')
+  const box = await page.locator('[data-full-song-canvas]').boundingBox()
+  if (!box) throw new Error('no canvas')
+  for (let y = 1; y <= 40; y++) {
+    await page.mouse.click(box.x + x, box.y + y)
+    await page.waitForTimeout(60)
+    if (await editor.count()) {
+      if ((await editor.inputValue()) === value) return true
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(40)
+    }
+  }
+  return false
+}
+
+test('a step retyped on the lane changes what the engine plays, in every bar that plays it (#1463 Stage 3)', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
+  })
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('stave:debug.timelineMarks', '1')
+    } catch {
+      /* ignore */
+    }
+  })
+
+  await bootShell(page)
+  await setSongAndEval(page, EDIT_SONG)
+  await page.locator('[data-full-song-canvas]').waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(500)
+
+  // (0) THE INSTRUMENT READS THE STEPS AT ALL — before any edit, the engine plays
+  //     .2 in the even bars and .9 in the odd ones. Without this, an unchanged
+  //     reading after the edit could mean a probe that never saw a gain.
+  await expect.poll(() => gainsByBar(page), { timeout: 10_000 })
+    .toEqual({ 0: [0.2, 0.2], 1: [0.9, 0.9], 2: [0.2, 0.2], 3: [0.9, 0.9] })
+
+  const editor = page.locator('[data-full-song="automation-step"]')
+  const box = await page.locator('[data-full-song-canvas]').boundingBox()
+  if (!box) throw new Error('no canvas')
+  const barX = (bar: number) => Math.round(box.width * ((bar + 0.5) / 4))
+
+  // (1) COLLAPSED: the staircase is drawn, and nothing along it opens an editor.
+  for (let y = 1; y <= 24; y += 2) {
+    await page.mouse.click(box.x + barX(1), box.y + y)
+    await page.waitForTimeout(40)
+    expect(await editor.count(), `a collapsed lane opened a step editor at y=${y}`).toBe(0)
+  }
+
+  // EXPAND the kick lane.
+  await page.mouse.dblclick(box.x + barX(2), box.y + 8)
+  await page.waitForTimeout(800)
+
+  // (2) THE PRESSED BAR PICKS THE STEP — bar 1 plays .9.
+  expect(await openStepShowing(page, barX(1), '0.9'), 'no step editor showing 0.9 opened over bar 1').toBe(true)
+
+  // (3) THE EDIT REACHES THE DOCUMENT, and only that step's number moved.
+  await page.keyboard.press(`${MOD}+A`)
+  await page.keyboard.type('0.4')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(600)
+  const after = await readDoc(page)
+  expect(after, `the step did not reach the document: ${after}`).toContain('$: s("bd*2").gain("<.2 0.4>")')
+  expect(after).toContain('$: s("<hh cp hh cp>")')
+  expect(await editor.count(), 'the editor lingered after its commit').toBe(0)
+
+  // (4) WHAT THE ENGINE PLAYS: both bars that play step 1 moved to .4, and the
+  //     bars that play step 0 did not move at all.
+  await expect.poll(() => gainsByBar(page), { timeout: 10_000 })
+    .toEqual({ 0: [0.2, 0.2], 1: [0.4, 0.4], 2: [0.2, 0.2], 3: [0.4, 0.4] })
+
+  // (5) ESCAPE WRITES NOTHING — bar 3 plays the same step, now at .4.
+  expect(await openStepShowing(page, barX(3), '0.4'), 'no step editor showing 0.4 opened over bar 3').toBe(true)
+  await page.keyboard.press(`${MOD}+A`)
+  await page.keyboard.type('0.7')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(600)
+  expect(await readDoc(page), 'Escape wrote to the document').toBe(after)
+
+  expect(errors, `page/console errors: ${errors.join(' | ')}`).toEqual([])
+})
