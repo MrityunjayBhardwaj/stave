@@ -28,7 +28,7 @@ import type { LaneLayout, LaneBox } from './laneLayout'
 import type { DisplayMeter } from '../../lib/meter'
 import { songCycleToXUnclamped, type SongWindow } from './songAxis'
 import type { SignalAutomation } from '@stave/editor'
-import { automationColorOnLane } from './colors'
+import { automationColorOnLane, automationCountOnLane } from './colors'
 import {
   AUTOMATION_PAD_Y,
   AUTOMATION_LABEL_FONT,
@@ -354,14 +354,14 @@ export function drawTimeline(
     // Continuous automation (#1464 Stage 1) — over the marks, under the silence
     // wash, so a muted track's curve dims with the rest of its lane.
     drawAutomation(
-      ctx, lane.automations, lane.stepped.length, top, rowHeight, viewportWidth, theme,
+      ctx, lane.automations, automationCountOnLane(lane), top, rowHeight, viewportWidth, theme,
       firstCycle, lastCycle, toScreenX, expanded,
     )
     // Stepped automation (#1463 Stage 2) — the same band, the same floor and the
     // same colour rule as the curves, so a lane carrying both classes reads as one
     // vocabulary rather than two overlays.
     drawSteppedAutomation(
-      ctx, lane.stepped, lane.automations.length, top, rowHeight, theme,
+      ctx, lane.stepped, automationCountOnLane(lane), top, rowHeight, theme,
       firstCycle, lastCycle, toScreenX,
     )
     // Silenced (muted / soloed-out) lane fade (#731): wash the whole band toward
@@ -703,7 +703,9 @@ function signalUnit(kind: string, phase: number): number {
 function drawSteppedAutomation(
   ctx: CanvasRenderingContext2D,
   stepped: readonly SceneStepped[],
-  curveCount: number,
+  /** Curves AND staircases on this lane (`automationCountOnLane`) — the colour
+   *  rule's count, asked in the one place every reader asks it (#1576). */
+  laneAutomationCount: number,
   top: number,
   rowHeight: number,
   theme: DrawTheme,
@@ -716,7 +718,6 @@ function drawSteppedAutomation(
   // staircase whose levels cannot be told apart.
   if (rowHeight - AUTOMATION_PAD_Y * 2 < AUTOMATION_MIN_BAND_H) return
   const band: StepBand = { top, rowHeight, padY: AUTOMATION_PAD_Y, minBandH: AUTOMATION_MIN_BAND_H }
-  const total = curveCount + stepped.length
 
   ctx.save()
   ctx.lineWidth = 1.5
@@ -725,7 +726,7 @@ function drawSteppedAutomation(
   for (const { automation, axis } of stepped) {
     const segments = stepSegments(automation, firstCycle, lastCycle)
     if (segments.length === 0) continue
-    ctx.strokeStyle = automationColorOnLane(automation.paramKey, total, theme.automationLine)
+    ctx.strokeStyle = automationColorOnLane(automation.paramKey, laneAutomationCount, theme.automationLine)
     ctx.beginPath()
     segments.forEach((s, i) => {
       const y = stepY(s.value, axis, band)
@@ -745,10 +746,11 @@ function drawSteppedAutomation(
 function drawAutomation(
   ctx: CanvasRenderingContext2D,
   automations: readonly SignalAutomation[],
-  /** How many STEPPED automations share this lane (#1463). Counted into the
-   *  colour rule, or a lane with one curve and one staircase would draw both in
-   *  the theme colour, with nothing tying either line to its parameter. */
-  steppedCount: number,
+  /** Curves AND staircases on this lane (`automationCountOnLane`, #1463/#1576).
+   *  The colour rule's count: without the staircases a lane with one curve and
+   *  one staircase would draw both in the theme colour, with nothing tying
+   *  either line to its parameter. */
+  laneAutomationCount: number,
   top: number,
   rowHeight: number,
   viewportWidth: number,
@@ -795,7 +797,7 @@ function drawAutomation(
    * "which parameter is this".
    */
   const colorOf = (a: SignalAutomation): string =>
-    automationColorOnLane(a.paramKey, automations.length + steppedCount, theme.automationLine)
+    automationColorOnLane(a.paramKey, laneAutomationCount, theme.automationLine)
 
   // ── The unresolvable ones, as horizontal SLICES of the band ───────────────
   // State the modulation as a translucent band instead of smearing 128 strokes
